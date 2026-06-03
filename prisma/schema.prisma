@@ -1,0 +1,271 @@
+// Prisma Schema for Aura — AI Trading Card Scanner & Collection Platform
+// =======================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Authentication (NextAuth compatible) ───────────────────────────
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+  username      String?   @unique
+  role          String    @default("USER")
+  plan          String    @default("FREE")
+  scansToday    Int       @default(0)
+  scansResetAt  DateTime  @default(now())
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts       Account[]
+  sessions       Session[]
+  collections    Collection[]
+  scanHistory    ScanHistory[]
+  watchlist      Watchlist[]
+  notifications  Notification[]
+  folders        Folder[]
+  decks          Deck[]
+
+  @@map("users")
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// ─── Enums (N/A in SQLite, mapped to strings) ─────────────────────────
+
+
+// ─── Cards ──────────────────────────────────────────────────────────
+
+model Card {
+  id             String   @id @default(cuid())
+  externalId     String?  @unique // TCGPlayer/Scryfall/YGOPro ID
+  name           String
+  game           String
+  setName        String
+  setCode        String?
+  collectorNumber String?
+  rarity         String   @default("COMMON")
+  imageUrl       String?
+  thumbnailUrl   String?
+  artist         String?
+  description    String?
+  types          String? // e.g., "Fire,Stage 2" or "Creature,Dragon"
+  supertypes     String? // e.g., "Pokémon,Legendary"
+  subtypes       String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  prices          CardPrice?
+  priceHistory    PriceHistory[]
+  collectionCards CollectionCard[]
+  scanHistory     ScanHistory[]
+  watchlist       Watchlist[]
+
+  @@index([name])
+  @@index([game])
+  @@index([setCode])
+  @@index([game, setCode, collectorNumber])
+  @@map("cards")
+}
+
+model CardPrice {
+  id            String   @id @default(cuid())
+  cardId        String   @unique
+  marketPrice   Float?
+  lowPrice      Float?
+  midPrice      Float?
+  highPrice     Float?
+  foilPrice     Float?
+  currency      String   @default("USD")
+  source        String   @default("tcgplayer") // tcgplayer, scryfall, ygoprodeck
+  lastUpdated   DateTime @default(now())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  card Card @relation(fields: [cardId], references: [id], onDelete: Cascade)
+
+  @@map("card_prices")
+}
+
+model PriceHistory {
+  id          String   @id @default(cuid())
+  cardId      String
+  marketPrice Float?
+  lowPrice    Float?
+  midPrice    Float?
+  highPrice   Float?
+  recordedAt  DateTime @default(now())
+
+  card Card @relation(fields: [cardId], references: [id], onDelete: Cascade)
+
+  @@index([cardId, recordedAt])
+  @@map("price_history")
+}
+
+// ─── Collections ────────────────────────────────────────────────────
+
+model Collection {
+  id        String   @id @default(cuid())
+  userId    String
+  name      String   @default("My Collection")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user  User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  cards CollectionCard[]
+
+  @@map("collections")
+}
+
+model CollectionCard {
+  id           String   @id @default(cuid())
+  collectionId String
+  cardId       String
+  quantity     Int      @default(1)
+  condition    String?  // NM, LP, MP, HP, DMG
+  notes        String?
+  addedAt      DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  collection Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  card       Card       @relation(fields: [cardId], references: [id], onDelete: Cascade)
+
+  @@unique([collectionId, cardId])
+  @@map("collection_cards")
+}
+
+// ─── Scan History ───────────────────────────────────────────────────
+
+model ScanHistory {
+  id             String   @id @default(cuid())
+  userId         String
+  cardId         String?
+  imageUrl       String?  // S3 URL of scanned image
+  ocrText        String?
+  confidence     Float?
+  matchMethod    String?  // ocr, image, hybrid
+  processingTime Int?     // milliseconds
+  createdAt      DateTime @default(now())
+
+  user User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  card Card? @relation(fields: [cardId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@map("scan_history")
+}
+
+// ─── Watchlist ──────────────────────────────────────────────────────
+
+model Watchlist {
+  id             String   @id @default(cuid())
+  userId         String
+  cardId         String
+  alertAbove     Float?   // notify if price goes above this
+  alertBelow     Float?   // notify if price drops below this
+  alertEnabled   Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  card Card @relation(fields: [cardId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, cardId])
+  @@map("watchlist")
+}
+
+// ─── Notifications ──────────────────────────────────────────────────
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  title     String
+  message   String
+  type      String   // price_alert, system, info
+  read      Boolean  @default(false)
+  data      String?  // additional metadata (JSON serialized string)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, read])
+  @@map("notifications")
+}
+
+// ─── Organization ───────────────────────────────────────────────────
+
+model Folder {
+  id        String   @id @default(cuid())
+  userId    String
+  name      String
+  color     String?
+  parentId  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  parent Folder? @relation("FolderToFolder", fields: [parentId], references: [id])
+  children Folder[] @relation("FolderToFolder")
+
+  @@map("folders")
+}
+
+model Deck {
+  id        String   @id @default(cuid())
+  userId    String
+  name      String
+  game      String
+  format    String?  // Standard, Commander, etc.
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("decks")
+}
