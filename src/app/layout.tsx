@@ -3,6 +3,7 @@ import { Inter } from "next/font/google";
 import { ThemeProvider } from "@/components/providers/theme-provider";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppSessionProvider } from "@/components/providers/session-provider";
+import { CookieConsent } from "@/components/cookie-consent";
 import "./globals.css";
 
 const inter = Inter({
@@ -63,6 +64,7 @@ export default function RootLayout({
           <AppSessionProvider>
             <TooltipProvider>
               {children}
+              <CookieConsent />
             </TooltipProvider>
           </AppSessionProvider>
         </ThemeProvider>
