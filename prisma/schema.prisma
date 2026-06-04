@@ -25,6 +25,7 @@ model User {
   scansResetAt  DateTime  @default(now())
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
+  passwordHash  String?
 
   accounts       Account[]
   sessions       Session[]

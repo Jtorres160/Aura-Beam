@@ -2,9 +2,9 @@
 
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { Sparkles, Mail, ArrowRight, Loader2 } from "lucide-react";
+import { Sparkles, Mail, ArrowRight, Loader2, AlertCircle } from "lucide-react";
 import { signIn } from "next-auth/react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
@@ -13,20 +13,49 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Safely check query params on client side
+    const params = new URLSearchParams(window.location.search);
+    const errorParam = params.get("error");
+    if (errorParam) {
+      if (errorParam === "CredentialsSignin" || errorParam === "Credentials") {
+        setError("Invalid email or password.");
+      } else if (errorParam === "Configuration") {
+        setError("OAuth configuration is missing. Google Login may not be configured yet.");
+      } else {
+        setError(`Authentication error: ${errorParam}`);
+      }
+    }
+  }, []);
 
   const handleEmailSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
-    // For mock testing, this will automatically match the dummy credential check in auth.ts
-    // In production, you would validate actual credentials.
+    setError(null);
+
     try {
-      await signIn("credentials", {
+      const result = await signIn("credentials", {
         email,
         password,
         callbackUrl: "/dashboard",
+        redirect: false,
       });
-    } catch (error) {
-      console.error(error);
+
+      if (result?.error) {
+        if (result.error === "CredentialsSignin" || result.error === "Credentials") {
+          setError("Invalid email or password.");
+        } else {
+          setError(result.error);
+        }
+        setIsLoading(false);
+      } else if (result?.url) {
+        window.location.href = result.url;
+      }
+    } catch (err: any) {
+      console.error(err);
+      setError("An unexpected error occurred.");
       setIsLoading(false);
     }
   };
@@ -82,6 +111,13 @@ export default function LoginPage() {
               or
             </span>
           </div>
+
+          {error && (
+            <div className="mb-4 p-3 rounded-xl bg-destructive/10 border border-destructive/20 text-destructive text-sm flex items-center gap-2">
+              <AlertCircle className="h-4 w-4 shrink-0" />
+              <span>{error}</span>
+            </div>
+          )}
 
           {/* Email form */}
           <form className="space-y-4" onSubmit={handleEmailSignIn}>
