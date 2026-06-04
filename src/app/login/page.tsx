@@ -24,6 +24,8 @@ export default function LoginPage() {
         setError("Invalid email or password.");
       } else if (errorParam === "Configuration") {
         setError("OAuth configuration is missing. Google Login may not be configured yet.");
+      } else if (errorParam === "EmailNotVerified") {
+        setError("Please check your inbox and verify your email before logging in.");
       } else {
         setError(`Authentication error: ${errorParam}`);
       }
@@ -46,6 +48,8 @@ export default function LoginPage() {
       if (result?.error) {
         if (result.error === "CredentialsSignin" || result.error === "Credentials") {
           setError("Invalid email or password.");
+        } else if (result.error === "EmailNotVerified") {
+          setError("Please check your inbox and verify your email before logging in.");
         } else {
           setError(result.error);
         }

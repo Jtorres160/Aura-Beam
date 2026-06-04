@@ -46,7 +46,12 @@ export default function RegisterPage() {
         throw new Error(data.message || "Registration failed.");
       }
 
-      // Automatically sign in after successful registration
+      if (data.requiresVerification) {
+        window.location.href = `/verify-email-info?email=${encodeURIComponent(email)}`;
+        return;
+      }
+
+      // Automatically sign in after successful registration (if no verification required)
       const result = await signIn("credentials", {
         email,
         password,

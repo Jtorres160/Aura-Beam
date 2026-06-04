@@ -64,10 +64,28 @@ export async function POST(req: NextRequest) {
       },
     });
 
+    // Generate verification token (expires in 24 hours)
+    const token = crypto.randomUUID();
+    const expires = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+    // Save token to DB
+    await prisma.verificationToken.create({
+      data: {
+        identifier: normalizedEmail,
+        token,
+        expires,
+      },
+    });
+
+    // Send the verification email
+    const { sendVerificationEmail } = await import("@/lib/email");
+    await sendVerificationEmail(normalizedEmail, token);
+
     // Return success without password hash
     return NextResponse.json(
       {
-        message: "Account created successfully.",
+        message: "Account created successfully. Please verify your email.",
+        requiresVerification: true,
         user: {
           id: newUser.id,
           name: newUser.name,

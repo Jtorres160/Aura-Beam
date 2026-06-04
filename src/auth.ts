@@ -62,6 +62,9 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         if (user.passwordHash) {
           const isValid = verifyPassword(password, user.passwordHash);
           if (isValid) {
+            if (!user.emailVerified) {
+              throw new Error("EmailNotVerified");
+            }
             return user;
           }
         } else if (email === "ash@aura.gg" && password === "password") {
