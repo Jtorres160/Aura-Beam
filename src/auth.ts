@@ -10,6 +10,7 @@ const JWT_SECRET = process.env.NEXTAUTH_SECRET || "aura-beam-super-secret-key-fo
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   adapter: PrismaAdapter(prisma),
+  secret: JWT_SECRET,
   session: { strategy: "jwt" },
   jwt: {
     async encode({ token }) {
