@@ -24,7 +24,8 @@ export default function WatchlistPage() {
   useEffect(() => {
     if (!session?.user?.id || !(session as any).accessToken) return;
     
-    fetch(`http://localhost:4000/watchlist`, {
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
+    fetch(`${apiUrl}/watchlist`, {
       headers: {
         Authorization: `Bearer ${(session as any).accessToken}`,
       },
@@ -42,8 +43,9 @@ export default function WatchlistPage() {
   const handleRemove = async (cardId: string) => {
     if (!session?.user?.id || !(session as any).accessToken) return;
     setRemovingId(cardId);
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
     try {
-      const res = await fetch(`http://localhost:4000/watchlist/remove/${cardId}`, {
+      const res = await fetch(`${apiUrl}/watchlist/remove/${cardId}`, {
         method: "DELETE",
         headers: {
           Authorization: `Bearer ${(session as any).accessToken}`,

@@ -33,8 +33,9 @@ export default function SearchPage() {
     if (!session?.user?.id || !(session as any).accessToken) return;
     
     setAddingToWatchlist(cardId);
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
     try {
-      const res = await fetch(`http://localhost:4000/watchlist/add`, {
+      const res = await fetch(`${apiUrl}/watchlist/add`, {
         method: "POST",
         headers: { 
           "Content-Type": "application/json",
@@ -65,7 +66,8 @@ export default function SearchPage() {
       else params.append("game", gameFilter);
     }
 
-    fetch(`http://localhost:4000/cards?${params.toString()}`)
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
+    fetch(`${apiUrl}/cards?${params.toString()}`)
       .then((res) => res.json())
       .then((json) => {
         if (json.success) {

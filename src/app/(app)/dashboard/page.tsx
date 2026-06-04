@@ -42,7 +42,8 @@ export default function DashboardPage() {
   useEffect(() => {
     if (!session?.user?.id || !(session as any).accessToken) return;
     
-    fetch(`http://localhost:4000/dashboard`, {
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
+    fetch(`${apiUrl}/dashboard`, {
       headers: {
         Authorization: `Bearer ${(session as any).accessToken}`,
       },

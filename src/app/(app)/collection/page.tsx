@@ -26,7 +26,8 @@ export default function CollectionPage() {
   useEffect(() => {
     if (!session?.user?.id || !(session as any).accessToken) return;
     
-    fetch(`http://localhost:4000/collections`, {
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
+    fetch(`${apiUrl}/collections`, {
       headers: {
         Authorization: `Bearer ${(session as any).accessToken}`,
       },

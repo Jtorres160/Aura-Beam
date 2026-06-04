@@ -86,7 +86,8 @@ export default function ScannerPage() {
 
       setProcessingProgress(80);
       
-      const res = await fetch("http://localhost:4000/scanner/scan", {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
+      const res = await fetch(`${apiUrl}/scanner/scan`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -126,7 +127,8 @@ export default function ScannerPage() {
     
     setIsAdding(true);
     try {
-      const res = await fetch(`http://localhost:4000/collections/add`, {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
+      const res = await fetch(`${apiUrl}/collections/add`, {
         method: "POST",
         headers: { 
           "Content-Type": "application/json",
