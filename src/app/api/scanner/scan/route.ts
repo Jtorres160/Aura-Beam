@@ -7,7 +7,7 @@ import { auth } from "@/auth";
 import OpenAI from "openai";
 
 const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
+  apiKey: process.env.OPENAI_API_KEY || "dummy_build_key",
 });
 
 export async function POST(req: NextRequest) {
