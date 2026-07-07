@@ -391,8 +391,8 @@ export default function ScannerPage() {
         </div>
       </div>
 
-      <div className="flex-1 p-4 sm:p-6 overflow-y-auto">
-        <div className="max-w-2xl mx-auto space-y-6">
+      <div className="flex-1 p-2 sm:p-6 flex flex-col min-h-0">
+        <div className="max-w-2xl w-full mx-auto flex-1 flex flex-col h-full">
           <AnimatePresence mode="wait">
             
             {/* ── IDLE STATE ── */}
@@ -432,8 +432,8 @@ export default function ScannerPage() {
 
             {/* ── SCANNING STATE ── */}
             {state === "scanning" && (
-              <motion.div key="scanning" initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }}>
-                <div className="relative rounded-2xl overflow-hidden glass border-border/50">
+              <motion.div key="scanning" initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="flex-1 flex flex-col h-full min-h-0">
+                <div className="relative rounded-2xl overflow-hidden glass border-border/50 flex-1 flex flex-col h-full min-h-0">
                   
                   {/* Status Indicators */}
                   <div className="absolute top-4 left-4 z-10 flex flex-col gap-2">
@@ -482,7 +482,7 @@ export default function ScannerPage() {
                     </div>
                   )}
 
-                  <div className="aspect-[3/4] sm:aspect-[4/3] bg-black relative">
+                  <div className="flex-1 min-h-0 bg-black relative">
                     <video 
                       ref={videoRefCallback} 
                       autoPlay 
