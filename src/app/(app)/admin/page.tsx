@@ -6,11 +6,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 
-const stats = [
-  { label: "Total Users", value: "12,847", icon: Users, change: "+324 this week" },
-  { label: "Total Scans", value: "89,421", icon: ScanLine, change: "+2,140 today" },
-  { label: "Cards in DB", value: "52,381", icon: Database, change: "Last sync: 5m ago" },
-  { label: "API Requests", value: "1.2M", icon: Activity, change: "This month" },
+// Default fallback stats while loading
+const defaultStats = [
+  { label: "Total Users", value: "...", icon: Users, change: "Loading..." },
+  { label: "Total Scans", value: "...", icon: ScanLine, change: "Loading..." },
+  { label: "Cards in DB", value: "...", icon: Database, change: "Loading..." },
+  { label: "API Requests", value: "...", icon: Activity, change: "Loading..." },
 ];
 
 const jobs = [
@@ -30,7 +31,27 @@ const statusColors: Record<string, string> = {
 
 const fadeUp = { initial: { opacity: 0, y: 20 }, animate: { opacity: 1, y: 0 } };
 
+import { useEffect, useState } from "react";
+
 export default function AdminPage() {
+  const [stats, setStats] = useState(defaultStats);
+
+  useEffect(() => {
+    fetch("/api/admin/stats")
+      .then((res) => res.json())
+      .then((json) => {
+        if (json.success && json.data) {
+          setStats([
+            { label: "Total Users", value: json.data.totalUsers.toLocaleString(), icon: Users, change: "Registered accounts" },
+            { label: "Total Scans", value: json.data.totalScans.toLocaleString(), icon: ScanLine, change: "Cards identified" },
+            { label: "Cards in DB", value: json.data.cardsInDb.toLocaleString(), icon: Database, change: "Cached in our system" },
+            { label: "API Requests", value: json.data.apiRequests.toLocaleString(), icon: Activity, change: "Lifetime external hits" },
+          ]);
+        }
+      })
+      .catch((err) => console.error(err));
+  }, []);
+
   return (
     <div className="p-4 sm:p-6 lg:p-8 space-y-6">
       <motion.div {...fadeUp} transition={{ duration: 0.4 }}>

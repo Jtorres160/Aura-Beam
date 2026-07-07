@@ -26,12 +26,7 @@ export default function CollectionPage() {
   useEffect(() => {
     if (!session?.user?.id || !(session as any).accessToken) return;
     
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
-    fetch(`${apiUrl}/collections`, {
-      headers: {
-        Authorization: `Bearer ${(session as any).accessToken}`,
-      },
-    })
+    fetch(`/api/collections`)
       .then((res) => res.json())
       .then((json) => {
         if (json.success && json.data) {
@@ -45,6 +40,7 @@ export default function CollectionPage() {
             game: c.card.game,
             rarity: c.card.rarity,
             qty: c.quantity,
+            imageUrl: c.card.imageUrl,
             thumbnailUrl: c.card.thumbnailUrl,
           }));
           setCollection(mapped);
@@ -151,9 +147,9 @@ export default function CollectionPage() {
                 >
                   <Card className="glass border-border/50 card-hover cursor-pointer group overflow-hidden">
                     <div className="aspect-[2.5/3.5] bg-gradient-to-br from-aura-purple/10 to-aura-indigo/5 flex items-center justify-center relative overflow-hidden">
-                      {card.thumbnailUrl ? (
+                      {(card.imageUrl || card.thumbnailUrl) ? (
                         /* eslint-disable-next-line @next/next/no-img-element */
-                        <img src={card.thumbnailUrl} alt={card.name} className="w-full h-full object-cover opacity-90 group-hover:opacity-100 transition-opacity" />
+                        <img src={card.imageUrl || card.thumbnailUrl} alt={card.name} className="w-full h-full object-cover opacity-90 group-hover:opacity-100 transition-opacity" />
                       ) : (
                         <Sparkles className="h-8 w-8 text-aura-purple/30" />
                       )}
@@ -168,7 +164,7 @@ export default function CollectionPage() {
                       <p className="text-sm font-semibold truncate">{card.name}</p>
                       <p className="text-xs text-muted-foreground truncate">{card.set}</p>
                       <div className="flex items-center justify-between mt-2">
-                        <span className="text-sm font-bold">${card.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                        <span className="text-sm font-bold">${(card.price || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                         <Badge variant="secondary" className={`text-[10px] ${gameColors[card.game] || 'bg-accent text-muted-foreground'}`}>
                           {card.game}
                         </Badge>
@@ -189,9 +185,9 @@ export default function CollectionPage() {
                 >
                   <div className="flex items-center gap-4 p-3 rounded-xl glass border-border/50 card-hover cursor-pointer overflow-hidden">
                     <div className="h-12 w-9 rounded-lg bg-aura-purple/10 flex items-center justify-center shrink-0 overflow-hidden relative">
-                      {card.thumbnailUrl ? (
+                      {(card.imageUrl || card.thumbnailUrl) ? (
                         /* eslint-disable-next-line @next/next/no-img-element */
-                        <img src={card.thumbnailUrl} alt={card.name} className="w-full h-full object-cover" />
+                        <img src={card.imageUrl || card.thumbnailUrl} alt={card.name} className="w-full h-full object-cover" />
                       ) : (
                         <Sparkles className="h-4 w-4 text-aura-purple/50" />
                       )}
@@ -204,7 +200,7 @@ export default function CollectionPage() {
                       {card.game}
                     </Badge>
                     <div className="text-right shrink-0">
-                      <p className="text-sm font-bold">${card.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                      <p className="font-semibold whitespace-nowrap text-right pr-2">${(card.price || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
                       <p className="text-xs text-muted-foreground">×{card.qty}</p>
                     </div>
                   </div>

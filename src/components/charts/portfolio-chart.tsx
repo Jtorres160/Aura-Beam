@@ -2,22 +2,19 @@
 
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
-const data = [
-  { date: "Jan", value: 3200 },
-  { date: "Feb", value: 3450 },
-  { date: "Mar", value: 3100 },
-  { date: "Apr", value: 3680 },
-  { date: "May", value: 3520 },
-  { date: "Jun", value: 3890 },
-  { date: "Jul", value: 3750 },
-  { date: "Aug", value: 4100 },
-  { date: "Sep", value: 3950 },
-  { date: "Oct", value: 4200 },
-  { date: "Nov", value: 4050 },
-  { date: "Dec", value: 4287 },
-];
+interface PortfolioChartProps {
+  data: { date: string; value: number }[];
+}
 
-export function PortfolioChart() {
+export function PortfolioChart({ data }: PortfolioChartProps) {
+  if (!data || data.length === 0) {
+    return (
+      <div className="h-[280px] w-full mt-2 flex items-center justify-center text-muted-foreground text-sm">
+        No portfolio history available
+      </div>
+    );
+  }
+
   return (
     <div className="h-[280px] w-full mt-2">
       <ResponsiveContainer width="100%" height="100%">

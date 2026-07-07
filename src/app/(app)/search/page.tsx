@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import Link from "next/link";
 import { useDebounce } from "@/hooks/use-debounce";
 
 const gameColors: Record<string, string> = {
@@ -29,17 +30,16 @@ export default function SearchPage() {
   const [addedToWatchlist, setAddedToWatchlist] = useState<Set<string>>(new Set());
 
   const handleAddToWatchlist = async (e: React.MouseEvent, cardId: string) => {
+    e.preventDefault();
     e.stopPropagation();
     if (!session?.user?.id || !(session as any).accessToken) return;
     
     setAddingToWatchlist(cardId);
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
     try {
-      const res = await fetch(`${apiUrl}/watchlist/add`, {
+      const res = await fetch(`/api/watchlist/add`, {
         method: "POST",
         headers: { 
           "Content-Type": "application/json",
-          Authorization: `Bearer ${(session as any).accessToken}`,
         },
         body: JSON.stringify({ cardId }),
       });
@@ -66,8 +66,7 @@ export default function SearchPage() {
       else params.append("game", gameFilter);
     }
 
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
-    fetch(`${apiUrl}/cards?${params.toString()}`)
+    fetch(`/api/cards?${params.toString()}`)
       .then((res) => res.json())
       .then((json) => {
         if (json.success) {
@@ -137,18 +136,19 @@ export default function SearchPage() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.25, delay: i * 0.03 }}
           >
-            <Card className="glass border-border/50 card-hover cursor-pointer overflow-hidden">
-              <CardContent className="p-4 flex items-center gap-4">
-                <div className="h-16 w-12 rounded-lg bg-aura-purple/10 flex items-center justify-center shrink-0 overflow-hidden relative">
-                  {card.thumbnailUrl ? (
+            <Link href={`/cards/${card.id || card.externalId}`}>
+              <Card className="glass border-border/50 card-hover cursor-pointer overflow-hidden transition-all hover:-translate-y-1">
+                <CardContent className="p-4 flex items-center gap-4">
+                  <div className="h-20 w-16 sm:h-24 sm:w-16 rounded-lg bg-aura-purple/10 flex items-center justify-center shrink-0 overflow-hidden relative shadow-md">
+                  {(card.imageUrl || card.thumbnailUrl) ? (
                     /* eslint-disable-next-line @next/next/no-img-element */
-                    <img src={card.thumbnailUrl} alt={card.name} className="w-full h-full object-cover" />
+                    <img src={card.imageUrl || card.thumbnailUrl} alt={card.name} className="w-full h-full object-cover" />
                   ) : (
                     <Sparkles className="h-5 w-5 text-aura-purple/40" />
                   )}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="font-semibold truncate text-base">{card.name}</p>
+                  <p className="font-semibold truncate text-base sm:text-lg">{card.name}</p>
                   <p className="text-sm text-muted-foreground">{card.setName} · {card.rarity?.replace('_', ' ')}</p>
                 </div>
                 <Badge variant="secondary" className={`text-xs shrink-0 hidden sm:inline-flex ${gameColors[card.game] || 'bg-accent'}`}>
@@ -156,7 +156,7 @@ export default function SearchPage() {
                 </Badge>
                 <div className="text-right shrink-0 flex flex-col items-end gap-2">
                   <div>
-                    <p className="text-lg font-bold leading-none">${card.prices?.marketPrice?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '0.00'}</p>
+                    <p className="text-lg font-bold leading-none">${(card.prices?.marketPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
                     <p className="text-xs text-muted-foreground mt-1">Market</p>
                   </div>
                   <Button 
@@ -177,7 +177,8 @@ export default function SearchPage() {
                 </div>
               </CardContent>
             </Card>
-          </motion.div>
+          </Link>
+        </motion.div>
         ))}
       </div>
     </div>

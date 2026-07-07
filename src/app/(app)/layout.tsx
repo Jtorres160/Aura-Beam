@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { motion } from "framer-motion";
 import {
   LayoutDashboard, ScanLine, Library, Search, Eye, Settings,
-  Sparkles, Shield, LogOut, ChevronLeft, ChevronRight,
+  Sparkles, Shield, LogOut, ChevronLeft, ChevronRight, Bell
 } from "lucide-react";
 import { useState } from "react";
 import { useSession, signOut } from "next-auth/react";
@@ -23,6 +23,7 @@ const navItems = [
 ];
 
 const bottomItems = [
+  { icon: Bell, label: "Notifications", href: "/notifications" },
   { icon: Settings, label: "Settings", href: "/settings" },
   { icon: Shield, label: "Admin", href: "/admin" },
 ];

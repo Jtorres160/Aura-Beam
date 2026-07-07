@@ -11,13 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { PortfolioChart } from "@/components/charts/portfolio-chart";
 
-// Mock data for price movers (to be fully dynamic later when cron jobs are active)
-const priceMovers = [
-  { name: "Charizard VSTAR", change: "+$12.40", percent: "+22.1%", trend: "up" as const, game: "Pokémon" },
-  { name: "Force of Will", change: "+$8.75", percent: "+6.3%", trend: "up" as const, game: "MTG" },
-  { name: "Ash Blossom", change: "-$2.10", percent: "-4.1%", trend: "down" as const, game: "Yu-Gi-Oh!" },
-  { name: "Umbreon VMAX", change: "+$15.00", percent: "+8.9%", trend: "up" as const, game: "Pokémon" },
-];
+
 
 const fadeUp = {
   initial: { opacity: 0, y: 20 },
@@ -42,12 +36,7 @@ export default function DashboardPage() {
   useEffect(() => {
     if (!session?.user?.id || !(session as any).accessToken) return;
     
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
-    fetch(`${apiUrl}/dashboard`, {
-      headers: {
-        Authorization: `Bearer ${(session as any).accessToken}`,
-      },
-    })
+    fetch(`/api/dashboard`)
       .then((res) => res.json())
       .then((json) => {
         if (json.success) {
@@ -68,6 +57,7 @@ export default function DashboardPage() {
 
   const stats = dashboardData?.stats || { collectionValue: 0, cardsOwned: 0 };
   const recentScans = dashboardData?.recentScans || [];
+  const priceMovers = dashboardData?.priceMovers || [];
 
   const statCards = [
     {
@@ -169,7 +159,7 @@ export default function DashboardPage() {
             </div>
           </CardHeader>
           <CardContent className="pb-4">
-            <PortfolioChart />
+            <PortfolioChart data={dashboardData?.portfolioHistory || []} />
           </CardContent>
         </Card>
       </motion.div>
@@ -198,8 +188,13 @@ export default function DashboardPage() {
                   recentScans.map((scan: any) => (
                     <div key={scan.id} className="flex items-center justify-between py-2 border-b border-border/50 last:border-0">
                       <div className="flex items-center gap-3 min-w-0">
-                        <div className="h-9 w-9 rounded-lg bg-aura-purple/10 flex items-center justify-center shrink-0">
-                          <Sparkles className="h-4 w-4 text-aura-purple" />
+                        <div className="h-10 w-8 sm:h-12 sm:w-9 rounded-lg bg-aura-purple/10 flex items-center justify-center shrink-0 overflow-hidden shadow-sm">
+                          {scan.imageUrl ? (
+                            /* eslint-disable-next-line @next/next/no-img-element */
+                            <img src={scan.imageUrl} alt={scan.name} className="w-full h-full object-cover" />
+                          ) : (
+                            <Sparkles className="h-4 w-4 text-aura-purple" />
+                          )}
                         </div>
                         <div className="min-w-0">
                           <p className="text-sm font-medium truncate">{scan.name}</p>
@@ -232,7 +227,11 @@ export default function DashboardPage() {
             </CardHeader>
             <CardContent className="pb-4">
               <div className="space-y-3">
-                {priceMovers.map((mover) => (
+                {priceMovers.length === 0 ? (
+                  <div className="text-center py-6 text-sm text-muted-foreground">
+                    Add cards to your collection to see price movers!
+                  </div>
+                ) : priceMovers.map((mover: any) => (
                   <div key={mover.name} className="flex items-center justify-between py-2 border-b border-border/50 last:border-0">
                     <div className="min-w-0">
                       <p className="text-sm font-medium truncate">{mover.name}</p>
