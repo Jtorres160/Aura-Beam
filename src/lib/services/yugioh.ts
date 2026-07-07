@@ -1,6 +1,6 @@
 const BASE_URL = "https://db.ygoprodeck.com/api/v7/cardinfo.php";
 
-export async function searchYugiohCards(query: string) {
+export async function searchYugiohCards(query: string, setCode?: string) {
   try {
     // Try exact name first
     const exactRes = await fetch(`${BASE_URL}?name=${encodeURIComponent(query)}`);
@@ -44,10 +44,29 @@ export async function getYugiohCardById(id: string) {
   }
 }
 
-export function formatYugiohCard(externalCard: any) {
-  const cardSet = externalCard.card_sets && externalCard.card_sets.length > 0 ? externalCard.card_sets[0] : null;
+export function formatYugiohCard(externalCard: any, setCode?: string) {
+  // If setCode is provided, try to find the exact set in the card_sets array
+  let cardSet = null;
+  let cardPrice = null;
+
+  if (externalCard.card_sets && externalCard.card_sets.length > 0) {
+    if (setCode) {
+      // Find the specific set (case insensitive)
+      const exactSet = externalCard.card_sets.find((s: any) => 
+        s.set_code?.toLowerCase() === setCode.toLowerCase() || 
+        s.set_name?.toLowerCase().includes(setCode.toLowerCase())
+      );
+      cardSet = exactSet || externalCard.card_sets[0]; // fallback to first if not found
+    } else {
+      cardSet = externalCard.card_sets[0];
+    }
+  }
+
+  // YGOPRODeck price is generally a single object per card, but we map it safely
+  if (externalCard.card_prices && externalCard.card_prices.length > 0) {
+    cardPrice = externalCard.card_prices[0];
+  }
   const cardImage = externalCard.card_images && externalCard.card_images.length > 0 ? externalCard.card_images[0] : null;
-  const cardPrice = externalCard.card_prices && externalCard.card_prices.length > 0 ? externalCard.card_prices[0] : null;
 
   return {
     externalId: externalCard.id.toString(),

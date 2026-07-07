@@ -9,9 +9,16 @@ function getHeaders(): HeadersInit {
   return headers;
 }
 
-export async function searchPokemonCards(query: string) {
+export async function searchPokemonCards(query: string, setCode?: string, collectorNumber?: string) {
   try {
-    const searchQuery = `name:"*${encodeURIComponent(query)}*"`;
+    let searchQuery = `name:"*${encodeURIComponent(query)}*"`;
+    if (setCode) {
+      searchQuery += ` (set.id:${encodeURIComponent(setCode)} OR set.ptcgoCode:${encodeURIComponent(setCode)} OR set.name:"*${encodeURIComponent(setCode)}*")`;
+    }
+    if (collectorNumber) {
+      searchQuery += ` number:${encodeURIComponent(collectorNumber)}`;
+    }
+    
     const response = await fetch(`${BASE_URL}?q=${searchQuery}&pageSize=50`, {
       headers: getHeaders(),
     });

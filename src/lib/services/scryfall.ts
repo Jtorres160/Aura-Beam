@@ -13,13 +13,16 @@ const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
  * Primary search: Uses Scryfall's "named" endpoint for exact/fuzzy single-card lookup.
  * This is the most reliable way to find a card by name.
  */
-export async function searchScryfallCardByName(query: string) {
+export async function searchScryfallCardByName(query: string, setCode?: string) {
   try {
+    let url = `${NAMED_URL}?exact=${encodeURIComponent(query)}`;
+    if (setCode) url += `&set=${encodeURIComponent(setCode)}`;
+
     // Try exact match first
-    const exactRes = await fetch(`${NAMED_URL}?exact=${encodeURIComponent(query)}`, { headers: SCRYFALL_HEADERS });
+    const exactRes = await fetch(url, { headers: SCRYFALL_HEADERS });
     if (exactRes.ok) {
       const card = await exactRes.json();
-      console.log(`[Scryfall] Exact match found: "${card.name}"`);
+      console.log(`[Scryfall] Exact match found: "${card.name}" (Set: ${setCode || 'any'})`);
       return card;
     }
 
@@ -27,7 +30,9 @@ export async function searchScryfallCardByName(query: string) {
     await delay(100);
 
     // Fall back to fuzzy match (handles minor typos/variations)
-    const fuzzyRes = await fetch(`${NAMED_URL}?fuzzy=${encodeURIComponent(query)}`, { headers: SCRYFALL_HEADERS });
+    let fuzzyUrl = `${NAMED_URL}?fuzzy=${encodeURIComponent(query)}`;
+    if (setCode) fuzzyUrl += `&set=${encodeURIComponent(setCode)}`;
+    const fuzzyRes = await fetch(fuzzyUrl, { headers: SCRYFALL_HEADERS });
     if (fuzzyRes.ok) {
       const card = await fuzzyRes.json();
       console.log(`[Scryfall] Fuzzy match found: "${card.name}"`);
@@ -46,16 +51,19 @@ export async function searchScryfallCardByName(query: string) {
  * Fallback search: Uses Scryfall's full-text search endpoint.
  * Returns an array of results. Less precise but catches edge cases.
  */
-export async function searchScryfallCards(query: string) {
+export async function searchScryfallCards(query: string, setCode?: string, collectorNumber?: string) {
   try {
-    // Use exact name search syntax first
-    const exactQuery = `!"${query}"`;
+    // Use advanced search syntax
+    let exactQuery = `!"${query}"`;
+    if (setCode) exactQuery += ` set:${setCode}`;
+    if (collectorNumber) exactQuery += ` cn:${collectorNumber}`;
+
     const response = await fetch(`${SEARCH_URL}?q=${encodeURIComponent(exactQuery)}&order=released&dir=desc`, { headers: SCRYFALL_HEADERS });
     
     if (response.ok) {
       const json = await response.json();
       if (json.data && json.data.length > 0) {
-        console.log(`[Scryfall] Exact search found ${json.data.length} results for "${query}"`);
+        console.log(`[Scryfall] Exact search found ${json.data.length} results for "${exactQuery}"`);
         return json.data;
       }
     }
