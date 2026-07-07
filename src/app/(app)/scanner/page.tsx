@@ -73,32 +73,34 @@ export default function ScannerPage() {
     }
   }, []);
 
-  // Bind the camera stream to the video element and handle play robustly
-  useEffect(() => {
-    const video = videoRef.current;
-    if (!video || !stream || state !== "scanning") return;
+  // Callback ref: fires the instant the <video> element mounts into the DOM.
+  // This avoids the race condition where AnimatePresence mode="wait" delays
+  // mounting while the useEffect already fired and found videoRef === null.
+  const videoRefCallback = useCallback(
+    (video: HTMLVideoElement | null) => {
+      // Store in the persistent ref so other code (canvas capture) can use it
+      videoRef.current = video;
 
-    video.srcObject = stream;
-    
-    let playTimeout: ReturnType<typeof setTimeout>;
-    
-    const playVideo = () => {
-      video.play()
-        .then(() => {
-          console.log("[Scanner] Camera stream playing");
-        })
-        .catch((err) => {
-          console.warn("[Scanner] Failed to autoplay video stream, retrying:", err);
-          playTimeout = setTimeout(playVideo, 300);
-        });
-    };
+      if (!video || !streamRef.current) return;
 
-    playVideo();
+      // Attach the live stream to the freshly-mounted video element
+      video.srcObject = streamRef.current;
 
-    return () => {
-      clearTimeout(playTimeout);
-    };
-  }, [stream, state]);
+      const playVideo = () => {
+        video.play()
+          .then(() => {
+            console.log("[Scanner] Camera stream playing");
+          })
+          .catch((err) => {
+            console.warn("[Scanner] Failed to autoplay, retrying:", err);
+            setTimeout(playVideo, 300);
+          });
+      };
+
+      playVideo();
+    },
+    [] // streamRef is a ref — stable across renders, no dependency needed
+  );
 
   const stopCamera = useCallback(() => {
     // Clean up auto-scan
@@ -482,8 +484,7 @@ export default function ScannerPage() {
 
                   <div className="aspect-[3/4] sm:aspect-[4/3] bg-black relative">
                     <video 
-                      key={stream?.id || "scanner-video"}
-                      ref={videoRef} 
+                      ref={videoRefCallback} 
                       autoPlay 
                       playsInline 
                       muted
