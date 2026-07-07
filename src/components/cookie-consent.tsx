@@ -54,22 +54,19 @@ export function CookieConsent() {
         </div>
 
         {/* Actions */}
-        <div className="flex items-center gap-2 self-end sm:self-auto sm:justify-end mt-2">
-          <Button
-            variant="ghost"
-            size="sm"
+        <div className="flex items-center gap-2 self-end sm:self-auto sm:justify-end mt-2 relative z-10">
+          <button
             onClick={handleDecline}
-            className="text-xs text-muted-foreground hover:text-foreground"
+            className="text-xs text-muted-foreground hover:text-foreground h-8 px-3 rounded-md hover:bg-muted transition-colors cursor-pointer"
           >
             Decline
-          </Button>
-          <Button
-            size="sm"
+          </button>
+          <button
             onClick={handleAccept}
-            className="gradient-bg text-white border-0 text-xs font-semibold px-4"
+            className="gradient-bg text-white border-0 text-xs font-semibold px-4 h-8 rounded-md hover:opacity-90 transition-opacity cursor-pointer shadow-sm"
           >
             Accept
-          </Button>
+          </button>
         </div>
 
         {/* Close Button */}
