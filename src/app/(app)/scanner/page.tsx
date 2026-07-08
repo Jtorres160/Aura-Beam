@@ -12,7 +12,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
-type ScanState = "idle" | "scanning" | "processing" | "result" | "bulk-review" | "error";
+type ScanState = "idle" | "scanning" | "processing" | "result" | "bulk-review" | "disambiguation" | "error";
 
 const LOADING_STATUSES = [
   "Detecting card borders...",
@@ -32,6 +32,8 @@ export default function ScannerPage() {
   const [addSuccess, setAddSuccess] = useState(false);
   const [selectedGame, setSelectedGame] = useState<string>("All");
   const [loadingStatusIndex, setLoadingStatusIndex] = useState(0);
+  const [disambiguationCandidates, setDisambiguationCandidates] = useState<any[]>([]);
+  const [disambiguationCardName, setDisambiguationCardName] = useState("");
   
   // Auto-scan feature — use REF not state for the scanning lock to avoid re-render loops
   const [isAutoScan, setIsAutoScan] = useState(false);
@@ -216,6 +218,21 @@ export default function ScannerPage() {
       }
       
       const json = await res.json();
+
+      // AI is uncertain — show disambiguation grid for user to pick
+      if (json.requiresDisambiguation) {
+        setDisambiguationCandidates(json.candidates || []);
+        setDisambiguationCardName(json.cardName || "");
+        // Stop auto-scan loop while user picks
+        if (autoScanIntervalRef.current) {
+          clearInterval(autoScanIntervalRef.current);
+          autoScanIntervalRef.current = null;
+        }
+        isAutoScanningRef.current = false;
+        setState("disambiguation");
+        return;
+      }
+
       const card = json.data;
       
       if (isBulkMode) {
@@ -318,8 +335,41 @@ export default function ScannerPage() {
     setErrorMessage("");
     setAddSuccess(false);
     setBulkQueue([]);
+    setDisambiguationCandidates([]);
+    setDisambiguationCardName("");
     startCamera();
   }, [startCamera]);
+
+  // ─── Handle user selecting a specific variant from disambiguation ─────
+  const handleSelectCandidate = async (candidate: any) => {
+    setIsAdding(true);
+    try {
+      const res = await fetch("/api/scanner/save-selection", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ candidate }),
+      });
+      if (!res.ok) throw new Error("Failed to save selection");
+      const json = await res.json();
+      const card = json.data;
+
+      if (isBulkMode) {
+        setBulkQueue((prev) => {
+          if (prev.length > 0 && prev[prev.length - 1].id === card.id) return prev;
+          return [...prev, card];
+        });
+        setDisambiguationCandidates([]);
+        startCamera();
+      } else {
+        setScanResult(card);
+        setState("result");
+      }
+    } catch (error: any) {
+      alert("Failed to save your selection. Please try again.");
+    } finally {
+      setIsAdding(false);
+    }
+  };
 
   const handleAddToCollection = async () => {
     if (!session?.user?.id || !scanResult?.id) return;
@@ -658,6 +708,95 @@ export default function ScannerPage() {
                 <p className="text-sm text-muted-foreground mb-6 max-w-xs text-center">{errorMessage}</p>
                 <Button variant="outline" className="h-11 px-8 rounded-xl font-medium" onClick={resetScan}>
                   <RotateCcw className="h-4 w-4 mr-2" /> Try Again
+                </Button>
+              </motion.div>
+            )}
+
+            {/* ── DISAMBIGUATION STATE ── */}
+            {state === "disambiguation" && disambiguationCandidates.length > 0 && (
+              <motion.div
+                key="disambiguation"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                className="space-y-4"
+              >
+                {/* Header */}
+                <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-start gap-3">
+                  <div className="shrink-0 mt-0.5">
+                    <Scan className="h-4 w-4 text-amber-400" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-amber-400">Which printing is this?</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      The AI identified &ldquo;<span className="font-medium text-foreground">{disambiguationCardName}</span>&rdquo; but couldn&apos;t determine the exact set. Tap the correct version below.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Candidate Grid */}
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 max-h-[60vh] overflow-y-auto pr-1 custom-scrollbar">
+                  {disambiguationCandidates.map((candidate, idx) => (
+                    <motion.button
+                      key={`${candidate.externalId}-${idx}`}
+                      initial={{ opacity: 0, scale: 0.9 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      transition={{ delay: idx * 0.04 }}
+                      onClick={() => !isAdding && handleSelectCandidate(candidate)}
+                      disabled={isAdding}
+                      className={cn(
+                        "group relative rounded-xl overflow-hidden border bg-background/50 text-left transition-all duration-200",
+                        "hover:border-aura-purple/60 hover:shadow-lg hover:shadow-aura-purple/10 hover:scale-[1.02]",
+                        "border-border/50 focus:outline-none focus:ring-2 focus:ring-aura-purple/50",
+                        isAdding && "opacity-50 cursor-not-allowed"
+                      )}
+                    >
+                      {/* Card Image */}
+                      <div className="aspect-[2.5/3.5] w-full bg-black/30 overflow-hidden">
+                        {candidate.thumbnailUrl || candidate.imageUrl ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={candidate.thumbnailUrl || candidate.imageUrl}
+                            alt={candidate.setName}
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                          />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center">
+                            <Sparkles className="h-8 w-8 text-aura-purple/30" />
+                          </div>
+                        )}
+                        {/* Hover overlay */}
+                        <div className="absolute inset-0 bg-aura-purple/0 group-hover:bg-aura-purple/10 transition-colors duration-200 flex items-center justify-center">
+                          <div className="opacity-0 group-hover:opacity-100 transition-opacity bg-aura-purple rounded-full p-2 shadow-lg">
+                            <Check className="h-4 w-4 text-white" />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Card Info */}
+                      <div className="p-2">
+                        <p className="text-[11px] font-semibold leading-tight line-clamp-2 text-foreground">{candidate.setName}</p>
+                        <div className="flex items-center justify-between mt-1 gap-1">
+                          {candidate.rarity && (
+                            <span className="text-[10px] text-muted-foreground truncate">{candidate.rarity}</span>
+                          )}
+                          <span className="text-[11px] font-bold text-aura-purple shrink-0">
+                            ${candidate.price?.marketPrice?.toFixed(2) || "0.00"}
+                          </span>
+                        </div>
+                      </div>
+                    </motion.button>
+                  ))}
+                </div>
+
+                {/* Actions */}
+                <Button
+                  variant="outline"
+                  className="w-full h-11 rounded-xl"
+                  onClick={resetScan}
+                  disabled={isAdding}
+                >
+                  <RotateCcw className="h-4 w-4 mr-2" /> None of these — Scan Again
                 </Button>
               </motion.div>
             )}

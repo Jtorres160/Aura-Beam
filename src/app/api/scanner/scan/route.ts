@@ -116,7 +116,9 @@ Return ONLY raw JSON. No markdown. No explanation.`
       return await saveAndRespond(candidates[0], session.user.id);
     }
 
-    let bestMatchIndex = 0;
+    let bestMatchIndex: number = 0;
+    let isUncertain = false;
+
     try {
       const candidateImages = validCandidates.map((p: any) => ({
         type: "image_url" as const,
@@ -128,7 +130,9 @@ Return ONLY raw JSON. No markdown. No explanation.`
         messages: [
           {
             role: "system",
-            content: `You are an expert trading card artwork identifier. The user has scanned a physical card (first image). You are given ${validCandidates.length} candidate card images (images 2 through ${validCandidates.length + 1}). Compare the artwork, border style, foil pattern, and layout of the scanned card against each candidate. Respond with ONLY a single integer: the 0-based index of the candidate that best matches the scanned card. If unsure, respond with 0.`
+            content: `You are an expert trading card artwork identifier. The user has scanned a physical card (first image). You are given ${validCandidates.length} candidate card images (images 2 through ${validCandidates.length + 1}). Compare the artwork, border style, foil pattern, and card layout of the scanned card against each candidate. Respond with ONLY a single integer:
+- The 0-based index of the candidate that CLEARLY matches the scanned card.
+- Return -1 if you are not confident or if multiple candidates look similar.`
           },
           {
             role: "user",
@@ -142,14 +146,43 @@ Return ONLY raw JSON. No markdown. No explanation.`
         temperature: 0.0,
       });
 
-      const raw = (visualResponse.choices[0]?.message?.content || "0").trim();
+      const raw = (visualResponse.choices[0]?.message?.content || "-1").trim();
       const parsed = parseInt(raw, 10);
-      if (!isNaN(parsed) && parsed >= 0 && parsed < validCandidates.length) {
+      if (parsed === -1) {
+        isUncertain = true;
+        console.log(`[Scanner] AI is uncertain — requesting user disambiguation.`);
+      } else if (!isNaN(parsed) && parsed >= 0 && parsed < validCandidates.length) {
         bestMatchIndex = parsed;
+        console.log(`[Scanner] Visual match selected index: ${bestMatchIndex} (${validCandidates[bestMatchIndex]?.setName})`);
+      } else {
+        isUncertain = true;
       }
-      console.log(`[Scanner] Visual match selected index: ${bestMatchIndex} (${validCandidates[bestMatchIndex]?.setName})`);
     } catch (visualErr: any) {
-      console.warn("[Scanner] Visual comparison failed, using first result:", visualErr?.message);
+      console.warn("[Scanner] Visual comparison failed, falling back to disambiguation:", visualErr?.message);
+      isUncertain = true;
+    }
+
+    // ─── Step 4: If AI is uncertain, return candidates for user to pick ──
+    if (isUncertain) {
+      const disambigCandidates = validCandidates.map((c: any) => ({
+        externalId: c.externalId,
+        name: c.name,
+        game: c.game,
+        setName: c.setName,
+        setCode: c.setCode || null,
+        collectorNumber: c.collectorNumber || null,
+        rarity: c.rarity,
+        imageUrl: c.imageUrl,
+        thumbnailUrl: c.thumbnailUrl,
+        price: c.price,
+      }));
+
+      return NextResponse.json({
+        success: true,
+        requiresDisambiguation: true,
+        cardName: cardName,
+        candidates: disambigCandidates,
+      });
     }
 
     const matchedCard = validCandidates[bestMatchIndex] || candidates[0];
