@@ -44,25 +44,43 @@ export async function getYugiohCardById(id: string) {
   }
 }
 
+/**
+ * Extract all unique card_images from a Yugioh card for visual comparison.
+ * Yugioh alternate arts are stored as separate items in card_images[].
+ * Returns an array of { imageUrl, imageUrlSmall, setCode, setName, rarity, price }
+ */
+export function getYugiohPrintings(externalCard: any): any[] {
+  const images = externalCard.card_images || [];
+  const sets = externalCard.card_sets || [];
+  const prices = externalCard.card_prices || [];
+
+  return images.map((img: any, idx: number) => ({
+    imageUrl: img.image_url || null,
+    thumbnailUrl: img.image_url_small || null,
+    // Best-effort set association: map by index (alternate arts often have separate set entries)
+    setName: sets[idx]?.set_name || sets[0]?.set_name || "Unknown Set",
+    setCode: sets[idx]?.set_code || sets[0]?.set_code || null,
+    rarity: sets[idx]?.set_rarity || sets[0]?.set_rarity || "Common",
+    price: parseFloat(prices[0]?.tcgplayer_price || "0"),
+  }));
+}
+
 export function formatYugiohCard(externalCard: any, setCode?: string) {
-  // If setCode is provided, try to find the exact set in the card_sets array
   let cardSet = null;
   let cardPrice = null;
 
   if (externalCard.card_sets && externalCard.card_sets.length > 0) {
     if (setCode) {
-      // Find the specific set (case insensitive)
       const exactSet = externalCard.card_sets.find((s: any) => 
         s.set_code?.toLowerCase() === setCode.toLowerCase() || 
         s.set_name?.toLowerCase().includes(setCode.toLowerCase())
       );
-      cardSet = exactSet || externalCard.card_sets[0]; // fallback to first if not found
+      cardSet = exactSet || externalCard.card_sets[0];
     } else {
       cardSet = externalCard.card_sets[0];
     }
   }
 
-  // YGOPRODeck price is generally a single object per card, but we map it safely
   if (externalCard.card_prices && externalCard.card_prices.length > 0) {
     cardPrice = externalCard.card_prices[0];
   }

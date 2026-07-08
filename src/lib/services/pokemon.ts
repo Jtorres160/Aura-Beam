@@ -11,7 +11,7 @@ function getHeaders(): HeadersInit {
 
 export async function searchPokemonCards(query: string, setCode?: string, collectorNumber?: string) {
   try {
-    let searchQuery = `name:"*${encodeURIComponent(query)}*"`;
+    let searchQuery = `name:"${encodeURIComponent(query)}"`;
     if (setCode) {
       searchQuery += ` (set.id:${encodeURIComponent(setCode)} OR set.ptcgoCode:${encodeURIComponent(setCode)} OR set.name:"*${encodeURIComponent(setCode)}*")`;
     }
@@ -31,6 +31,27 @@ export async function searchPokemonCards(query: string, setCode?: string, collec
     return json.data || [];
   } catch (error) {
     console.error(`Failed to fetch from Pokemon TCG API:`, error);
+    return [];
+  }
+}
+
+/**
+ * Fetch ALL printings of a Pokemon card name for visual comparison.
+ * Returns up to 20 printings including small thumbnail images.
+ */
+export async function fetchAllPokemonPrintings(name: string): Promise<any[]> {
+  try {
+    // Use exact name match to avoid getting unrelated cards
+    const searchQuery = `name:"${encodeURIComponent(name)}"`;
+    const response = await fetch(`${BASE_URL}?q=${searchQuery}&pageSize=50&orderBy=releaseDate`, {
+      headers: getHeaders(),
+    });
+    if (!response.ok) return [];
+    const json = await response.json();
+    // Filter to only exact name matches, cap at 20
+    const exact = (json.data || []).filter((c: any) => c.name.toLowerCase() === name.toLowerCase());
+    return exact.slice(0, 20);
+  } catch {
     return [];
   }
 }

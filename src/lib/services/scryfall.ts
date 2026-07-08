@@ -11,14 +11,12 @@ const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 /**
  * Primary search: Uses Scryfall's "named" endpoint for exact/fuzzy single-card lookup.
- * This is the most reliable way to find a card by name.
  */
 export async function searchScryfallCardByName(query: string, setCode?: string) {
   try {
     let url = `${NAMED_URL}?exact=${encodeURIComponent(query)}`;
     if (setCode) url += `&set=${encodeURIComponent(setCode)}`;
 
-    // Try exact match first
     const exactRes = await fetch(url, { headers: SCRYFALL_HEADERS });
     if (exactRes.ok) {
       const card = await exactRes.json();
@@ -26,10 +24,8 @@ export async function searchScryfallCardByName(query: string, setCode?: string) 
       return card;
     }
 
-    // Rate limit delay before next request
     await delay(100);
 
-    // Fall back to fuzzy match (handles minor typos/variations)
     let fuzzyUrl = `${NAMED_URL}?fuzzy=${encodeURIComponent(query)}`;
     if (setCode) fuzzyUrl += `&set=${encodeURIComponent(setCode)}`;
     const fuzzyRes = await fetch(fuzzyUrl, { headers: SCRYFALL_HEADERS });
@@ -49,11 +45,9 @@ export async function searchScryfallCardByName(query: string, setCode?: string) 
 
 /**
  * Fallback search: Uses Scryfall's full-text search endpoint.
- * Returns an array of results. Less precise but catches edge cases.
  */
 export async function searchScryfallCards(query: string, setCode?: string, collectorNumber?: string) {
   try {
-    // Use advanced search syntax
     let exactQuery = `!"${query}"`;
     if (setCode) exactQuery += ` set:${setCode}`;
     if (collectorNumber) exactQuery += ` cn:${collectorNumber}`;
@@ -68,10 +62,8 @@ export async function searchScryfallCards(query: string, setCode?: string, colle
       }
     }
 
-    // Rate limit delay before next request
     await delay(100);
 
-    // If exact fails, try a broader search
     const broadResponse = await fetch(`${SEARCH_URL}?q=${encodeURIComponent(query)}&order=released&dir=desc`, { headers: SCRYFALL_HEADERS });
     
     if (!broadResponse.ok) {
@@ -91,6 +83,22 @@ export async function searchScryfallCards(query: string, setCode?: string, colle
   }
 }
 
+/**
+ * Fetch ALL unique printings of a card by name for visual comparison.
+ * Returns up to 20 printings with their image URLs for the AI to compare.
+ */
+export async function fetchAllMTGPrintings(name: string): Promise<any[]> {
+  try {
+    const query = `!"${name}" unique:prints`;
+    const res = await fetch(`${SEARCH_URL}?q=${encodeURIComponent(query)}&order=released&dir=desc`, { headers: SCRYFALL_HEADERS });
+    if (!res.ok) return [];
+    const json = await res.json();
+    return (json.data || []).slice(0, 20); // cap at 20
+  } catch {
+    return [];
+  }
+}
+
 export async function getScryfallCardById(id: string) {
   try {
     const response = await fetch(`https://api.scryfall.com/cards/${encodeURIComponent(id)}`, { headers: SCRYFALL_HEADERS });
@@ -104,7 +112,6 @@ export async function getScryfallCardById(id: string) {
 }
 
 export function formatScryfallCard(externalCard: any) {
-  // Handle double-faced cards which have image_uris on the card_faces array
   const imageUris = externalCard.image_uris || externalCard.card_faces?.[0]?.image_uris || {};
   
   return {
@@ -116,7 +123,7 @@ export function formatScryfallCard(externalCard: any) {
     collectorNumber: externalCard.collector_number || undefined,
     rarity: externalCard.rarity || "Common",
     imageUrl: imageUris.large || imageUris.normal || imageUris.png || null,
-    thumbnailUrl: imageUris.normal || imageUris.small || null,
+    thumbnailUrl: imageUris.small || imageUris.normal || null,
     price: {
       marketPrice: parseFloat(externalCard.prices?.usd || externalCard.prices?.usd_foil || "0"),
       lowPrice: null,

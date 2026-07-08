@@ -1,14 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { searchPokemonCards, formatPokemonCard } from "@/lib/services/pokemon";
-import { searchScryfallCardByName, searchScryfallCards, formatScryfallCard } from "@/lib/services/scryfall";
-import { searchYugiohCards, formatYugiohCard } from "@/lib/services/yugioh";
+import { searchPokemonCards, fetchAllPokemonPrintings, formatPokemonCard } from "@/lib/services/pokemon";
+import { searchScryfallCardByName, searchScryfallCards, fetchAllMTGPrintings, formatScryfallCard } from "@/lib/services/scryfall";
+import { searchYugiohCards, getYugiohPrintings, formatYugiohCard } from "@/lib/services/yugioh";
 import { auth } from "@/auth";
 import OpenAI from "openai";
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY || "dummy_build_key",
 });
+
+// ─── Max candidate images sent to AI for visual comparison ────────────────
+// Keep low to minimize token cost. Thumbnails are ~1-2KB each vs 20KB+ for large images.
+const MAX_VISUAL_CANDIDATES = 8;
 
 export async function POST(req: NextRequest) {
   try {
@@ -34,52 +38,40 @@ export async function POST(req: NextRequest) {
       imageUrl = `data:image/jpeg;base64,${imageUrl}`;
     }
 
-    // ─── Step 1: Send image to OpenAI Vision ────────────────────────────
-    let identifiedCard;
+    // ─── Step 1: OCR — Extract card name and game from image ────────────
+    let identifiedCard: any;
     try {
-      console.log("[Scanner] Sending image to OpenAI gpt-4o-mini...");
+      console.log("[Scanner] Step 1: OCR — identifying card name...");
       const aiResponse = await openai.chat.completions.create({
         model: "gpt-4o-mini",
         messages: [
           {
             role: "system",
             content: `You are an expert trading card identifier for Pokemon, Magic: The Gathering (MTG), and Yu-Gi-Oh! cards. Look at the image and identify the card. If there is no trading card visible, respond with: {"name":"","game":"","set":""}. Otherwise return ONLY a valid JSON object with these keys:
-- "name": The EXACT official English main name of the card as printed. CRITICAL: DO NOT include subtitles, epithets, or flavor names (e.g. if a card says "Captain America" and below it says "First Avenger", output "Captain America, First Avenger" only if it's the official name, but otherwise stick to the primary name without subtitles). Do NOT hallucinate words not printed.
+- "name": The EXACT official English main name of the card as printed. Do NOT include subtitles or flavor text that aren't part of the official name.
 - "game": One of "Pokemon", "MTG", or "Yugioh".
-- "set": The set or expansion name if visible, otherwise your best guess.
-- "set_code": The 3-4 letter official set code (e.g., LOB, THB, CRZ) if visible or known.
-- "collector_number": The collector number (e.g., 124/165, EN001) if visible.
-Return ONLY raw JSON. No markdown. No explanation. No extra text.`
+- "set": The set or expansion name if visible, otherwise an empty string.
+Return ONLY raw JSON. No markdown. No explanation.`
           },
           {
             role: "user",
-            content: [
-              {
-                type: "image_url",
-                image_url: {
-                  url: imageUrl,
-                  detail: "high"
-                }
-              }
-            ]
+            content: [{ type: "image_url", image_url: { url: imageUrl, detail: "low" } }]
           }
         ],
-        max_tokens: 80,
+        max_tokens: 60,
         temperature: 0.1,
       });
 
       const aiMessage = aiResponse.choices[0]?.message?.content || "{}";
-      console.log("[Scanner] OpenAI response:", aiMessage);
+      console.log("[Scanner] OCR response:", aiMessage);
 
-      // Clean the response — sometimes the model wraps in ```json blocks
       let cleanMessage = aiMessage.trim();
       if (cleanMessage.startsWith("```")) {
         cleanMessage = cleanMessage.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "");
       }
-
       identifiedCard = JSON.parse(cleanMessage);
     } catch (aiError: any) {
-      console.error("[Scanner] OpenAI API Error:", aiError?.message || aiError);
+      console.error("[Scanner] OCR Error:", aiError?.message || aiError);
       const userMessage = aiError?.code === "invalid_image_format"
         ? "Camera frame was invalid. Please ensure your camera is working and try again."
         : `AI vision error: ${aiError?.message || "Unknown error"}`;
@@ -91,241 +83,252 @@ Return ONLY raw JSON. No markdown. No explanation. No extra text.`
     }
 
     const cardName = identifiedCard.name.trim();
-    // Use the AI's game detection, but allow user's explicit filter to override
     const aiGame = identifiedCard.game || "";
     const effectiveGame = game || aiGame;
-    const setCode = identifiedCard.set_code || "";
-    const collectorNumber = identifiedCard.collector_number || "";
-    console.log(`[Scanner] AI identified: "${cardName}" (${effectiveGame || "unknown game"}) from set "${identifiedCard.set || "unknown"}" (Code: ${setCode}, Num: ${collectorNumber})`);
+    console.log(`[Scanner] Identified: "${cardName}" (${effectiveGame || "unknown game"})`);
 
-    // ─── Step 2: Search TCG databases — prioritize by game ──────────────
-    let matchedCard = await searchByGame(cardName, effectiveGame, setCode, collectorNumber);
+    // ─── Step 2: Fetch all printings of this card ─────────────────────
+    console.log(`[Scanner] Step 2: Fetching all printings for "${cardName}"...`);
+    const { printings, fallbackCard } = await fetchAllPrintings(cardName, effectiveGame);
 
-    // If prioritized search failed, try ALL databases as fallback
-    if (!matchedCard && effectiveGame) {
-      console.log(`[Scanner] Primary search for "${cardName}" in ${effectiveGame} failed. Trying all databases...`);
-      matchedCard = await searchAllDatabases(cardName, effectiveGame, setCode, collectorNumber);
+    // If only 1 printing exists (or database found nothing), skip visual comparison
+    if (!printings || printings.length <= 1) {
+      console.log(`[Scanner] Only ${printings?.length || 0} printing(s) found — skipping visual comparison.`);
+      const matched = printings?.[0] || fallbackCard;
+      if (!matched) {
+        return NextResponse.json({
+          success: false,
+          message: `AI identified "${cardName}" but no match was found in any card database. Try scanning again with better lighting.`
+        }, { status: 404 });
+      }
+      return await saveAndRespond(matched, session.user.id);
     }
 
-    // If still nothing, try with cleaned-up name (remove common AI mistakes) and ignore exact set details
-    if (!matchedCard) {
-      const cleanedName = cleanCardName(cardName);
-      if (cleanedName !== cardName) {
-        console.log(`[Scanner] Retrying with cleaned name: "${cleanedName}"`);
-        matchedCard = await searchAllDatabases(cleanedName, "", setCode, collectorNumber);
-      }
-      
-      // Fallback: If the name contains a comma (likely a subtitle), try searching just the primary name before the comma
-      if (!matchedCard && cardName.includes(',')) {
-        const splitName = cardName.split(',')[0].trim();
-        console.log(`[Scanner] Retrying with split name (no subtitle): "${splitName}"`);
-        matchedCard = await searchAllDatabases(splitName, "", setCode, collectorNumber);
-      }
+    // ─── Step 3: Visual artwork comparison — pick the exact printing ──
+    console.log(`[Scanner] Step 3: Visual comparison across ${printings.length} printings...`);
 
-      // Final fallback: Strip set data, maybe the AI hallucinated the set or read it wrong
-      if (!matchedCard && (setCode || collectorNumber)) {
-        console.log(`[Scanner] Retrying generic name match without set details...`);
-        matchedCard = await searchByGame(cardName, effectiveGame, "", "");
-      }
+    // Cap candidates & use SMALL thumbnails to minimize token cost
+    const candidates = printings.slice(0, MAX_VISUAL_CANDIDATES);
+    const validCandidates = candidates.filter((p: any) => p.thumbnailUrl);
+
+    if (validCandidates.length === 0) {
+      // No images available — fall back to first result
+      return await saveAndRespond(candidates[0], session.user.id);
     }
 
-    if (!matchedCard) {
-      console.error(`[Scanner] FAILED: No match found in any database for "${cardName}"`);
-      return NextResponse.json({ 
-        success: false, 
-        message: `AI identified "${cardName}" but no match was found in any card database. This may be a misread — try scanning again with better lighting.` 
-      }, { status: 404 });
-    }
+    let bestMatchIndex = 0;
+    try {
+      const candidateImages = validCandidates.map((p: any) => ({
+        type: "image_url" as const,
+        image_url: { url: p.thumbnailUrl, detail: "low" as const }
+      }));
 
-    console.log(`[Scanner] ✅ Matched to database card: "${matchedCard.name}" (${matchedCard.game})`);
-
-    // ─── Step 3: Upsert card into local DB ──────────────────────────────
-    let localCard = await prisma.card.findFirst({
-      where: { externalId: matchedCard.externalId }
-    });
-
-    if (!localCard) {
-      localCard = await prisma.card.create({
-        data: {
-          externalId: matchedCard.externalId,
-          name: matchedCard.name,
-          game: matchedCard.game,
-          setName: matchedCard.setName,
-          setCode: matchedCard.setCode || null,
-          collectorNumber: matchedCard.collectorNumber || null,
-          rarity: matchedCard.rarity,
-          imageUrl: matchedCard.imageUrl,
-          thumbnailUrl: matchedCard.thumbnailUrl,
-        }
+      const visualResponse = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: `You are an expert trading card artwork identifier. The user has scanned a physical card (first image). You are given ${validCandidates.length} candidate card images (images 2 through ${validCandidates.length + 1}). Compare the artwork, border style, foil pattern, and layout of the scanned card against each candidate. Respond with ONLY a single integer: the 0-based index of the candidate that best matches the scanned card. If unsure, respond with 0.`
+          },
+          {
+            role: "user",
+            content: [
+              { type: "image_url", image_url: { url: imageUrl, detail: "low" } },
+              ...candidateImages
+            ]
+          }
+        ],
+        max_tokens: 5,
+        temperature: 0.0,
       });
-      await prisma.cardPrice.create({
-        data: {
-          cardId: localCard.id,
-          marketPrice: (matchedCard.price as any)?.marketPrice || 0,
-          lowPrice: (matchedCard.price as any)?.lowPrice || null,
-          midPrice: (matchedCard.price as any)?.midPrice || null,
-          highPrice: (matchedCard.price as any)?.highPrice || null,
-        },
-      });
+
+      const raw = (visualResponse.choices[0]?.message?.content || "0").trim();
+      const parsed = parseInt(raw, 10);
+      if (!isNaN(parsed) && parsed >= 0 && parsed < validCandidates.length) {
+        bestMatchIndex = parsed;
+      }
+      console.log(`[Scanner] Visual match selected index: ${bestMatchIndex} (${validCandidates[bestMatchIndex]?.setName})`);
+    } catch (visualErr: any) {
+      console.warn("[Scanner] Visual comparison failed, using first result:", visualErr?.message);
     }
 
-    // ─── Step 4: Save to ScanHistory ────────────────────────────────────
-    const history = await prisma.scanHistory.create({
-      data: {
-        userId: session.user.id,
-        cardId: localCard.id,
-        confidence: 95,
-        imageUrl: localCard.imageUrl,
-      },
-    });
+    const matchedCard = validCandidates[bestMatchIndex] || candidates[0];
+    return await saveAndRespond(matchedCard, session.user.id);
 
-    console.log(`[Scanner] Success! Card "${localCard.name}" saved.`);
-
-    return NextResponse.json({
-      success: true,
-      data: {
-        id: localCard.id,
-        name: localCard.name,
-        set: localCard.setName,
-        game: localCard.game,
-        prices: {
-          marketPrice: (matchedCard.price as any)?.marketPrice || 0,
-          lowPrice: (matchedCard.price as any)?.lowPrice || 0,
-          midPrice: (matchedCard.price as any)?.midPrice || 0,
-          highPrice: (matchedCard.price as any)?.highPrice || 0,
-        },
-        rarity: localCard.rarity,
-        confidence: 95,
-        imageUrl: localCard.imageUrl,
-        thumbnailUrl: localCard.thumbnailUrl,
-        historyId: history.id,
-      },
-    });
   } catch (error: any) {
     console.error("[Scanner] Pipeline Error:", error?.message || error);
     return NextResponse.json({ success: false, message: "Failed to process card image." }, { status: 500 });
   }
 }
 
-// ─── Helper: Search by the AI-detected game first ─────────────────────────
-async function searchByGame(cardName: string, game: string, setCode?: string, collectorNumber?: string): Promise<any | null> {
+// ─── Fetch all printings for visual comparison ─────────────────────────────
+async function fetchAllPrintings(cardName: string, game: string): Promise<{ printings: any[], fallbackCard: any | null }> {
   const normalizedGame = game?.toUpperCase?.() || "";
-  
+
   if (normalizedGame.includes("MTG") || normalizedGame.includes("MAGIC")) {
-    return await searchMTG(cardName, setCode, collectorNumber);
+    return await fetchMTGPrintings(cardName);
   }
   if (normalizedGame.includes("POKEMON") || normalizedGame.includes("POKÉMON")) {
-    return await searchPokemon(cardName, setCode, collectorNumber);
+    return await fetchPokemonPrintings(cardName);
   }
   if (normalizedGame.includes("YUGIOH") || normalizedGame.includes("YU-GI-OH")) {
-    return await searchYugioh(cardName, setCode);
+    return await fetchYugiohPrintings(cardName);
   }
-  
-  // Game not specified — search all
-  return await searchAllDatabases(cardName, "", setCode, collectorNumber);
+
+  // Unknown game — try all, return first hit
+  const mtg = await fetchMTGPrintings(cardName);
+  if (mtg.printings.length > 0 || mtg.fallbackCard) return mtg;
+
+  const pkmn = await fetchPokemonPrintings(cardName);
+  if (pkmn.printings.length > 0 || pkmn.fallbackCard) return pkmn;
+
+  return await fetchYugiohPrintings(cardName);
 }
 
-// ─── Helper: Search all databases with smart ordering ─────────────────────
-async function searchAllDatabases(cardName: string, skipGame: string, setCode?: string, collectorNumber?: string): Promise<any | null> {
-  const normalizedSkip = skipGame?.toUpperCase?.() || "";
-  
-  // Try each database that we haven't already tried
-  if (!normalizedSkip.includes("MTG") && !normalizedSkip.includes("MAGIC")) {
-    const mtgResult = await searchMTG(cardName, setCode, collectorNumber);
-    if (mtgResult) return mtgResult;
-  }
-  
-  if (!normalizedSkip.includes("POKEMON")) {
-    const pokemonResult = await searchPokemon(cardName, setCode, collectorNumber);
-    if (pokemonResult) return pokemonResult;
-  }
-  
-  if (!normalizedSkip.includes("YUGIOH")) {
-    const yugiohResult = await searchYugioh(cardName, setCode);
-    if (yugiohResult) return yugiohResult;
-  }
-  
-  return null;
-}
-
-// ─── Individual game search functions ─────────────────────────────────────
-
-async function searchMTG(cardName: string, setCode?: string, collectorNumber?: string): Promise<any | null> {
+async function fetchMTGPrintings(cardName: string) {
   try {
-    // Strategy 1: Exact/fuzzy named lookup (most reliable for single cards if set is known)
-    // If we have a collector number, we can't use the named endpoint (it only accepts set code).
-    // So we skip to strategy 2 if collector number is present.
-    if (!collectorNumber) {
-      const namedResult = await searchScryfallCardByName(cardName, setCode);
-      if (namedResult) {
-        return formatScryfallCard(namedResult);
+    // Get all unique printings
+    const allPrintings = await fetchAllMTGPrintings(cardName);
+    const printings = allPrintings.map(formatScryfallCard);
+
+    if (printings.length > 0) {
+      console.log(`[Scanner] MTG: fetched ${printings.length} printings for "${cardName}"`);
+      return { printings, fallbackCard: null };
+    }
+
+    // Fallback: single card lookup
+    const namedResult = await searchScryfallCardByName(cardName);
+    if (namedResult) return { printings: [], fallbackCard: formatScryfallCard(namedResult) };
+
+    return { printings: [], fallbackCard: null };
+  } catch {
+    return { printings: [], fallbackCard: null };
+  }
+}
+
+async function fetchPokemonPrintings(cardName: string) {
+  try {
+    const allPrintings = await fetchAllPokemonPrintings(cardName);
+    const printings = allPrintings.map(formatPokemonCard);
+
+    if (printings.length > 0) {
+      console.log(`[Scanner] Pokemon: fetched ${printings.length} printings for "${cardName}"`);
+      return { printings, fallbackCard: null };
+    }
+
+    // Fallback: fuzzy name search
+    const results = await searchPokemonCards(cardName);
+    const exactMatch = results.find((c: any) => c.name.toLowerCase() === cardName.toLowerCase());
+    const card = exactMatch || results[0];
+    if (card) return { printings: [], fallbackCard: formatPokemonCard(card) };
+
+    return { printings: [], fallbackCard: null };
+  } catch {
+    return { printings: [], fallbackCard: null };
+  }
+}
+
+async function fetchYugiohPrintings(cardName: string) {
+  try {
+    const results = await searchYugiohCards(cardName);
+    const exactMatch = results.find((c: any) => c.name.toLowerCase() === cardName.toLowerCase()) || results[0];
+
+    if (!exactMatch) return { printings: [], fallbackCard: null };
+
+    // Yugioh packs alternate arts into card_images[] — treat each as a separate "printing"
+    const imagePrintings = getYugiohPrintings(exactMatch).map((p: any) => ({
+      externalId: exactMatch.id.toString(),
+      name: exactMatch.name,
+      game: "YUGIOH",
+      setName: p.setName,
+      setCode: p.setCode,
+      rarity: p.rarity,
+      imageUrl: p.imageUrl,
+      thumbnailUrl: p.thumbnailUrl,
+      price: { marketPrice: p.price },
+    }));
+
+    if (imagePrintings.length > 0) {
+      console.log(`[Scanner] Yugioh: fetched ${imagePrintings.length} art variants for "${cardName}"`);
+      return { printings: imagePrintings, fallbackCard: null };
+    }
+
+    return { printings: [], fallbackCard: formatYugiohCard(exactMatch) };
+  } catch {
+    return { printings: [], fallbackCard: null };
+  }
+}
+
+// ─── Save to DB and return response ───────────────────────────────────────
+async function saveAndRespond(matchedCard: any, userId: string) {
+  // Upsert card into local DB
+  let localCard = await prisma.card.findFirst({
+    where: { externalId: matchedCard.externalId }
+  });
+
+  if (!localCard) {
+    localCard = await prisma.card.create({
+      data: {
+        externalId: matchedCard.externalId,
+        name: matchedCard.name,
+        game: matchedCard.game,
+        setName: matchedCard.setName,
+        setCode: matchedCard.setCode || null,
+        collectorNumber: matchedCard.collectorNumber || null,
+        rarity: matchedCard.rarity,
+        imageUrl: matchedCard.imageUrl,
+        thumbnailUrl: matchedCard.thumbnailUrl,
       }
-    }
-    
-    // Strategy 2: Full search endpoint
-    const searchResults = await searchScryfallCards(cardName, setCode, collectorNumber);
-    if (searchResults && searchResults.length > 0) {
-      // Find the best match by exact name comparison
-      const exactMatch = searchResults.find(
-        (c: any) => c.name.toLowerCase() === cardName.toLowerCase()
-      );
-      return formatScryfallCard(exactMatch || searchResults[0]);
-    }
-    
-    console.log(`[Scanner] MTG: No results for "${cardName}"`);
-    return null;
-  } catch (err) {
-    console.error(`[Scanner] MTG search error for "${cardName}":`, err);
-    return null;
+    });
+    await prisma.cardPrice.create({
+      data: {
+        cardId: localCard.id,
+        marketPrice: matchedCard.price?.marketPrice || 0,
+        lowPrice: matchedCard.price?.lowPrice || null,
+        midPrice: matchedCard.price?.midPrice || null,
+        highPrice: matchedCard.price?.highPrice || null,
+      },
+    });
   }
-}
 
-async function searchPokemon(cardName: string, setCode?: string, collectorNumber?: string): Promise<any | null> {
-  try {
-    const results = await searchPokemonCards(cardName, setCode, collectorNumber);
-    if (results && results.length > 0) {
-      // Find exact name match first
-      const exactMatch = results.find(
-        (c: any) => c.name.toLowerCase() === cardName.toLowerCase()
-      );
-      console.log(`[Scanner] Pokemon: Found ${results.length} results for "${cardName}"`);
-      return formatPokemonCard(exactMatch || results[0]);
-    }
-    console.log(`[Scanner] Pokemon: No results for "${cardName}"`);
-    return null;
-  } catch (err) {
-    console.error(`[Scanner] Pokemon search error for "${cardName}":`, err);
-    return null;
-  }
-}
+  const history = await prisma.scanHistory.create({
+    data: {
+      userId,
+      cardId: localCard.id,
+      confidence: 95,
+      imageUrl: localCard.imageUrl,
+    },
+  });
 
-async function searchYugioh(cardName: string, setCode?: string): Promise<any | null> {
-  try {
-    const results = await searchYugiohCards(cardName, setCode);
-    if (results && results.length > 0) {
-      // Find exact name match first
-      const exactMatch = results.find(
-        (c: any) => c.name.toLowerCase() === cardName.toLowerCase()
-      );
-      console.log(`[Scanner] Yugioh: Found ${results.length} results for "${cardName}"`);
-      return formatYugiohCard(exactMatch || results[0], setCode);
-    }
-    console.log(`[Scanner] Yugioh: No results for "${cardName}"`);
-    return null;
-  } catch (err) {
-    console.error(`[Scanner] Yugioh search error for "${cardName}":`, err);
-    return null;
-  }
+  console.log(`[Scanner] ✅ Saved: "${localCard.name}" from "${localCard.setName}"`);
+
+  return NextResponse.json({
+    success: true,
+    data: {
+      id: localCard.id,
+      name: localCard.name,
+      set: localCard.setName,
+      game: localCard.game,
+      prices: {
+        marketPrice: matchedCard.price?.marketPrice || 0,
+        lowPrice: matchedCard.price?.lowPrice || 0,
+        midPrice: matchedCard.price?.midPrice || 0,
+        highPrice: matchedCard.price?.highPrice || 0,
+      },
+      rarity: localCard.rarity,
+      confidence: 95,
+      imageUrl: localCard.imageUrl,
+      thumbnailUrl: localCard.thumbnailUrl,
+      historyId: history.id,
+    },
+  });
 }
 
 // ─── Helper: Clean common AI misreads from card names ─────────────────────
 function cleanCardName(name: string): string {
   let cleaned = name;
-  // Remove trailing punctuation the AI might add
   cleaned = cleaned.replace(/[.,;:!?'"]+$/, "").trim();
-  // Remove leading/trailing quotes
   cleaned = cleaned.replace(/^["']|["']$/g, "").trim();
-  // Remove any "(set name)" suffixes the AI might append
   cleaned = cleaned.replace(/\s*\([^)]*\)\s*$/, "").trim();
   return cleaned;
 }
