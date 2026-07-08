@@ -65,6 +65,77 @@ export function reading<T>(value: T, confidence: Confidence, source: EvidenceSou
   return { value, confidence, source };
 }
 
+// ─── Set/CN sensor trust (Phase 3) ──────────────────────────────────────────
+// Base belief in each sensor's set-code / collector-number reading, BEFORE the
+// reconciler weighs them. The dedicated strip pass reads that tiny bottom-edge
+// text as its whole subject at high detail, so it outranks the full-card pass,
+// which only reads it incidentally. Independent agreement between the two passes
+// is the strongest signal of all — two sensors are unlikely to share a misread.
+export const SET_CN_CONFIDENCE = {
+  full: 0.5,
+  strip: 0.75,
+  agree: 0.95,
+} as const;
+
+/** The reconciled set/CN plus the winning readings, for logging and evidence. */
+export interface ReconciledSetCn {
+  setCode: string;
+  collectorNumber: string;
+  setCodeReading?: FieldReading;
+  collectorNumberReading?: FieldReading;
+}
+
+/** Compare collector numbers by their leading token: "267/303" ≡ "267". */
+function cnKey(cn: string): string {
+  return cn.split("/")[0].trim().toLowerCase();
+}
+
+/**
+ * Reconcile one field across the two OCR passes deterministically. The strip
+ * pass is the targeted sensor, so it wins on disagreement or when the full pass
+ * missed the field; when both passes independently agree we trust the value
+ * most. Returns the winning reading, or undefined when neither pass read it.
+ */
+function reconcileField(
+  fullValue: string,
+  stripReading: FieldReading | undefined,
+  agrees: (a: string, b: string) => boolean,
+): FieldReading | undefined {
+  const full = (fullValue || "").trim();
+  const strip = (stripReading?.value || "").trim();
+  if (strip && full && agrees(strip, full)) return reading(strip, SET_CN_CONFIDENCE.agree, "ocr-strip");
+  if (strip) return reading(strip, stripReading!.confidence, "ocr-strip");
+  if (full) return reading(full, SET_CN_CONFIDENCE.full, "ocr-full");
+  return undefined;
+}
+
+/**
+ * Combine the full-card OCR pass and the dedicated bottom-strip pass (Phase 3)
+ * into the set/CN the decision layer should act on. Pure and deterministic —
+ * the models are sensors; this reconciliation is the code that judges them.
+ */
+export function reconcileSetCn(
+  full: { setCode: string; collectorNumber: string },
+  strip: { setCode?: FieldReading; collectorNumber?: FieldReading },
+): ReconciledSetCn {
+  const setCodeReading = reconcileField(
+    full.setCode,
+    strip.setCode,
+    (a, b) => a.toLowerCase() === b.toLowerCase(),
+  );
+  const collectorNumberReading = reconcileField(
+    full.collectorNumber,
+    strip.collectorNumber,
+    (a, b) => cnKey(a) === cnKey(b),
+  );
+  return {
+    setCode: setCodeReading?.value ?? "",
+    collectorNumber: collectorNumberReading?.value ?? "",
+    setCodeReading,
+    collectorNumberReading,
+  };
+}
+
 // ─── Candidate Printings ────────────────────────────────────────────────────
 // The normalized shape every game service formats external cards into.
 // The printing-evidence fields are complete for MTG (Scryfall provides them);

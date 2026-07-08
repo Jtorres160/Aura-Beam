@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/auth";
-import type { CandidatePrinting } from "@/lib/scanner/evidence";
+import { reconcileSetCn, type CandidatePrinting } from "@/lib/scanner/evidence";
 import {
   type Decision,
   acceptDecision,
@@ -9,7 +9,7 @@ import {
   notFoundDecision,
   gateDecision,
 } from "@/lib/scanner/decision";
-import { extractCardFields } from "@/lib/scanner/extract";
+import { extractBottomStrip, extractCardFields } from "@/lib/scanner/extract";
 import { fetchAllPrintings } from "@/lib/scanner/candidates";
 import { decideAmongPrintings } from "@/lib/scanner/rank";
 
@@ -43,9 +43,27 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, message: extraction.message }, { status: extraction.status });
     }
 
-    const { identifiedCard, cardName, aiGame, setCode, collectorNumber, manaCost, typeLine, powerToughness } = extraction.fields;
+    const { identifiedCard, cardName, aiGame, manaCost, typeLine, powerToughness } = extraction.fields;
+    // Reconciled below by the strip pass, so set/CN are mutable.
+    let { setCode, collectorNumber } = extraction.fields;
     const effectiveGame = game || aiGame;
     console.log(`[Scanner] Identified: "${cardName}" (${effectiveGame || "unknown game"}) [Set: ${setCode}, CN: ${collectorNumber}, Mana: ${manaCost}, Type: ${typeLine}, PT: ${powerToughness}]`);
+
+    // ─── Step 1c: Dedicated bottom-strip OCR pass (Phase 3) ────────────
+    // Re-read the set/collector strip with a targeted high-detail pass and
+    // reconcile it with the full-pass reading. Set/CN drives the strongest
+    // match paths (set-cn-verified 0.97, single-art-group 0.85), so sharpening
+    // it yields more auto-accepts and fewer disambiguation prompts. Yugioh
+    // identification ignores set/CN, so skip the extra call there.
+    if (usesSetCnEvidence(effectiveGame)) {
+      const strip = await extractBottomStrip(imageUrl);
+      const reconciled = reconcileSetCn({ setCode, collectorNumber }, strip);
+      if (reconciled.setCode !== setCode || reconciled.collectorNumber !== collectorNumber) {
+        console.log(`[Scanner] Strip OCR reconciled set/CN: [${setCode || "∅"}, ${collectorNumber || "∅"}] -> [${reconciled.setCode || "∅"}, ${reconciled.collectorNumber || "∅"}]`);
+      }
+      setCode = reconciled.setCode;
+      collectorNumber = reconciled.collectorNumber;
+    }
 
     // ─── Step 1b: Check AI Learning Rules for this card ───────────────
     const learningRule = await prisma.aiLearningRule.findUnique({
@@ -107,6 +125,16 @@ export async function POST(req: NextRequest) {
     console.error("[Scanner] Pipeline Error:", error?.message || error);
     return NextResponse.json({ success: false, message: "Failed to process card image." }, { status: 500 });
   }
+}
+
+// ─── Game gating for the strip pass ─────────────────────────────────────────
+// The bottom-strip OCR pass only pays for itself when set/CN actually feeds the
+// decision. Yugioh identification ignores set/CN (it disambiguates by art
+// variant), so it skips the extra call; every other game — including unknown,
+// which may still resolve to MTG/Pokemon — runs it.
+function usesSetCnEvidence(game: string): boolean {
+  const g = game?.toUpperCase?.() || "";
+  return !(g.includes("YUGIOH") || g.includes("YU-GI-OH"));
 }
 
 // ─── Disambiguation response ────────────────────────────────────────────────
