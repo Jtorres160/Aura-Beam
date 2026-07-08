@@ -16,6 +16,11 @@ import { type LearningRuleInfo, pickArtGroupByVision } from "@/lib/scanner/visua
 // Max images to send to the vision model (detail: low = 85 tokens each, 150 = ~12,750 tokens, $0.0019)
 const MAX_VISUAL_CANDIDATES = 150;
 
+// Above this many distinct artworks, a single vision pick is unreliable (too
+// many near-identical thumbnails) AND slow. Past this point we skip vision
+// entirely and let the user choose — faster, and honest about the uncertainty.
+const VISION_MAX_ART_GROUPS = 6;
+
 // ─── Decide among multiple printings ────────────────────────────────────────
 export async function decideAmongPrintings(
   printings: CandidatePrinting[],
@@ -46,6 +51,13 @@ export async function decideAmongPrintings(
     return disambiguateDecision(printings);
   }
 
+  // Too many distinct artworks for a vision pick to be trustworthy or fast —
+  // skip the model call and let the user choose from the grid straight away.
+  if (groups.length > VISION_MAX_ART_GROUPS) {
+    console.log(`[Scanner] ${groups.length} distinct artworks — beyond reliable vision range; asking the user.`);
+    return disambiguateDecision(printings);
+  }
+
   // Vision compares ONE representative image per art group, not every printing.
   const comparable = groups
     .map((group) => ({ group, rep: group.find((p) => p.thumbnailUrl) }))
@@ -66,13 +78,23 @@ export async function decideAmongPrintings(
   }
 
   const picked = comparable[pickedIndex];
+
+  // Surface vision's pick first, then every other printing as an alternative,
+  // so a below-threshold match never dead-ends on a single un-overridable card.
+  const rest = printings.filter((p) => !picked.group.includes(p));
+  const ordered = [...picked.group, ...rest];
+
   if (picked.group.length === 1) {
     console.log(`[Scanner] Visual match selected art group -> ${picked.group[0].setName}`);
-    return acceptDecision(picked.group[0], "art-group-vision");
+    // Accept semantics stay (so a high-enough confidence would auto-save), but
+    // carry the alternatives + best-match marker for when the gate demotes it.
+    const decision = acceptDecision(picked.group[0], "art-group-vision");
+    return { ...decision, candidates: ordered, bestMatchExternalId: picked.group[0].externalId };
   }
 
   // The matched artwork is shared by several printings (e.g. a set card and
   // its promo). Artwork can go no further — the user picks within the group.
+  // No single member is "best" (identical art), so we don't mark one.
   console.log(`[Scanner] Visual match is an art group of ${picked.group.length} identical-art printings — user must pick.`);
-  return disambiguateDecision(picked.group);
+  return disambiguateDecision(ordered);
 }

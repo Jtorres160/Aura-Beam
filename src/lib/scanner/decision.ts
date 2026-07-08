@@ -22,7 +22,12 @@ export const METHOD_CONFIDENCE: Record<MatchMethod, Confidence> = {
   "set-cn-verified": 0.97,
   "single-printing": 0.9,
   "single-art-group": 0.85,
-  "art-group-vision": 0.8,
+  // A confident vision match to a single UNIQUE-art printing auto-accepts in
+  // interactive scanning — the user shouldn't confirm every card. It stays
+  // below ACCEPT_THRESHOLD_AUTOSCAN, so bulk scans (no review screen) still
+  // fall back to the highlighted disambiguation grid. Shared-art groups and
+  // uncertain matches never reach this method — they go straight to the grid.
+  "art-group-vision": 0.86,
   "user-selection": 1.0,
   "fallback-guess": 0.4,
 };
@@ -43,6 +48,12 @@ export interface Decision {
   method?: MatchMethod;
   printing?: CandidatePrinting;
   candidates?: CandidatePrinting[];
+  /**
+   * externalId of the printing vision judged the best match, when the decision
+   * carries a preferred candidate among its alternatives. Lets the UI highlight
+   * it at the top of the disambiguation grid.
+   */
+  bestMatchExternalId?: string;
 }
 
 // ─── OCR name verification ──────────────────────────────────────────────────
@@ -151,5 +162,8 @@ export function gateDecision(decision: Decision, isAutoScan: boolean): Decision 
   if (decision.action !== "accept" || !decision.printing) return decision;
   const threshold = isAutoScan ? ACCEPT_THRESHOLD_AUTOSCAN : ACCEPT_THRESHOLD;
   if (decision.confidence >= threshold) return decision;
-  return { ...decision, action: "disambiguate", candidates: [decision.printing] };
+  // Below threshold: fall back to user disambiguation. If the decision already
+  // carries a full candidate list (vision's pick plus alternatives), keep it so
+  // the user can override; otherwise show just the printing we would have saved.
+  return { ...decision, action: "disambiguate", candidates: decision.candidates ?? [decision.printing] };
 }

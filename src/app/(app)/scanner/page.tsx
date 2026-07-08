@@ -563,15 +563,15 @@ export default function ScannerPage() {
                     <div className="absolute inset-0 flex items-center justify-center">
                       <div className={cn(
                         "relative w-[70%] max-w-[280px] aspect-[2.5/3.5] border-2 rounded-xl transition-all duration-1000",
-                        isAutoScan ? "border-emerald-400/60 shadow-[0_0_30px_rgba(52,211,153,0.2)]" : "border-aura-purple/60"
+                        isAutoScan ? "border-aura-purple/60 shadow-[0_0_30px_rgba(139,92,246,0.2)]" : "border-aura-purple/60"
                       )}>
-                        <div className={cn("absolute -top-0.5 -left-0.5 w-8 h-8 border-t-3 border-l-3 rounded-tl-xl", isAutoScan ? "border-emerald-400" : "border-aura-purple")} />
-                        <div className={cn("absolute -top-0.5 -right-0.5 w-8 h-8 border-t-3 border-r-3 rounded-tr-xl", isAutoScan ? "border-emerald-400" : "border-aura-purple")} />
-                        <div className={cn("absolute -bottom-0.5 -left-0.5 w-8 h-8 border-b-3 border-l-3 rounded-bl-xl", isAutoScan ? "border-emerald-400" : "border-aura-purple")} />
-                        <div className={cn("absolute -bottom-0.5 -right-0.5 w-8 h-8 border-b-3 border-r-3 rounded-br-xl", isAutoScan ? "border-emerald-400" : "border-aura-purple")} />
-                        
+                        <div className="absolute -top-0.5 -left-0.5 w-8 h-8 border-t-3 border-l-3 rounded-tl-xl border-aura-purple" />
+                        <div className="absolute -top-0.5 -right-0.5 w-8 h-8 border-t-3 border-r-3 rounded-tr-xl border-aura-purple" />
+                        <div className="absolute -bottom-0.5 -left-0.5 w-8 h-8 border-b-3 border-l-3 rounded-bl-xl border-aura-purple" />
+                        <div className="absolute -bottom-0.5 -right-0.5 w-8 h-8 border-b-3 border-r-3 rounded-br-xl border-aura-purple" />
+
                         {isAutoScan && (
-                          <div className="absolute left-0 right-0 h-1 bg-gradient-to-r from-transparent via-emerald-400 to-transparent animate-scan-line opacity-80" />
+                          <div className="absolute left-0 right-0 h-1 bg-gradient-to-r from-transparent via-aura-purple to-transparent animate-scan-line opacity-80" />
                         )}
                       </div>
                     </div>
@@ -758,10 +758,20 @@ export default function ScannerPage() {
                       className={cn(
                         "group relative rounded-xl overflow-hidden border bg-background/50 text-left transition-all duration-200",
                         "hover:border-aura-purple/60 hover:shadow-lg hover:shadow-aura-purple/10 hover:scale-[1.02]",
-                        "border-border/50 focus:outline-none focus:ring-2 focus:ring-aura-purple/50",
+                        "focus:outline-none focus:ring-2 focus:ring-aura-purple/50",
+                        candidate.isBestMatch
+                          ? "border-aura-purple ring-2 ring-aura-purple/50 shadow-lg shadow-aura-purple/20"
+                          : "border-border/50",
                         isAdding && "opacity-50 cursor-not-allowed"
                       )}
                     >
+                      {/* Best-match badge — vision's top pick */}
+                      {candidate.isBestMatch && (
+                        <div className="absolute top-1.5 left-1.5 z-10 flex items-center gap-1 rounded-full bg-aura-purple px-2 py-0.5 shadow-lg">
+                          <Sparkles className="h-3 w-3 text-white" />
+                          <span className="text-[10px] font-semibold text-white">Best match</span>
+                        </div>
+                      )}
                       {/* Card Image */}
                       <div className="aspect-[2.5/3.5] w-full bg-black/30 overflow-hidden">
                         {candidate.thumbnailUrl || candidate.imageUrl ? (
@@ -787,6 +797,14 @@ export default function ScannerPage() {
                       {/* Card Info */}
                       <div className="p-2">
                         <p className="text-[11px] font-semibold leading-tight line-clamp-2 text-foreground">{candidate.setName}</p>
+                        {(candidate.setCode || candidate.collectorNumber) && (
+                          <p className="text-[10px] font-medium text-muted-foreground mt-0.5 truncate">
+                            {[
+                              candidate.setCode ? candidate.setCode.toUpperCase() : null,
+                              candidate.collectorNumber ? `#${candidate.collectorNumber}` : null,
+                            ].filter(Boolean).join(" · ")}
+                          </p>
+                        )}
                         <div className="flex items-center justify-between mt-1 gap-1">
                           {candidate.rarity && (
                             <span className="text-[10px] text-muted-foreground truncate">{candidate.rarity}</span>

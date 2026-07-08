@@ -95,7 +95,7 @@ export async function POST(req: NextRequest) {
 
     if (decision.action === "disambiguate" && decision.candidates && decision.candidates.length > 0) {
       console.log(`[Scanner] Requesting user disambiguation among ${decision.candidates.length} candidate(s).`);
-      return disambiguationResponse(cardName, decision.candidates, identifiedCard);
+      return disambiguationResponse(cardName, decision.candidates, identifiedCard, decision.bestMatchExternalId);
     }
 
     return NextResponse.json({
@@ -110,7 +110,7 @@ export async function POST(req: NextRequest) {
 }
 
 // ─── Disambiguation response ────────────────────────────────────────────────
-function disambiguationResponse(cardName: string, candidates: CandidatePrinting[], ocrData: any) {
+function disambiguationResponse(cardName: string, candidates: CandidatePrinting[], ocrData: any, bestMatchExternalId?: string) {
   const withImages = candidates.filter((c) => c.thumbnailUrl);
   const list = (withImages.length > 0 ? withImages : candidates).map((c) => ({
     externalId: c.externalId,
@@ -123,6 +123,8 @@ function disambiguationResponse(cardName: string, candidates: CandidatePrinting[
     imageUrl: c.imageUrl,
     thumbnailUrl: c.thumbnailUrl,
     price: c.price,
+    // Vision's best guess — the UI highlights this one at the top of the grid.
+    isBestMatch: Boolean(bestMatchExternalId) && c.externalId === bestMatchExternalId,
   }));
 
   return NextResponse.json({

@@ -46,7 +46,10 @@ export async function pickArtGroupByVision(
         {
           role: "user",
           content: [
-            { type: "image_url", image_url: { url: scannedImageUrl, detail: "low" } },
+            // The scanned card goes in at HIGH detail — it's the one image the
+            // model must read precisely to tell near-identical artworks apart.
+            // Candidate references stay low detail to keep the call fast/cheap.
+            { type: "image_url", image_url: { url: scannedImageUrl, detail: "high" } },
             ...candidateImages
           ]
         }
