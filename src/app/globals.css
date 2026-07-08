@@ -288,6 +288,16 @@
   scrollbar-width: none;
 }
 
+/* Full dynamic-viewport height. The dvh unit excludes the mobile browser's
+   collapsing chrome (address bar / toolbar), so a full-height app shell fits
+   the ACTUALLY visible area instead of overflowing behind the toolbars the way
+   100vh does on iOS Safari. The plain vh line is a fallback for browsers that
+   don't understand dvh; modern browsers use the second declaration. */
+.h-dvh-screen {
+  height: 100vh;
+  height: 100dvh;
+}
+
 /* Custom scrollbar */
 .custom-scrollbar::-webkit-scrollbar {
   width: 6px;

@@ -487,16 +487,19 @@ export default function ScannerPage() {
     <div className="flex flex-col h-full">
       <canvas ref={canvasRef} className="hidden" />
 
-      {/* Header */}
-      <div className="p-4 sm:p-6 border-b border-border flex justify-between items-center">
-        <div>
-          <h1 className="text-xl sm:text-2xl font-bold flex items-center gap-2">
-            <Zap className="h-5 w-5 text-aura-purple" />
-            Card Scanner
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">AI-powered instant card identification.</p>
+      {/* Header — hidden while the camera is live so the scan view is immersive
+          and the capture controls always fit within the visible viewport. */}
+      {state !== "scanning" && (
+        <div className="p-4 sm:p-6 border-b border-border flex justify-between items-center">
+          <div>
+            <h1 className="text-xl sm:text-2xl font-bold flex items-center gap-2">
+              <Zap className="h-5 w-5 text-aura-purple" />
+              Card Scanner
+            </h1>
+            <p className="text-sm text-muted-foreground mt-1">AI-powered instant card identification.</p>
+          </div>
         </div>
-      </div>
+      )}
 
       <div className="flex-1 p-2 sm:p-6 flex flex-col min-h-0">
         <div className="max-w-2xl w-full mx-auto flex-1 flex flex-col h-full">
