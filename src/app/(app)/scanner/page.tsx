@@ -260,7 +260,7 @@ export default function ScannerPage() {
 
     } catch (error: any) {
       if (!isBackground) {
-        console.error("[Scanner] Error:", error);
+        // Just set the error state, no need to print scary red console errors
         setErrorMessage(error.message || "Failed to identify card.");
         setState("error");
       }
