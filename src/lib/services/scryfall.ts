@@ -1,3 +1,5 @@
+import type { CandidatePrinting } from "@/lib/scanner/evidence";
+
 const SEARCH_URL = "https://api.scryfall.com/cards/search";
 const NAMED_URL = "https://api.scryfall.com/cards/named";
 
@@ -204,9 +206,11 @@ export async function getScryfallCardById(id: string) {
   }
 }
 
-export function formatScryfallCard(externalCard: any) {
-  const imageUris = externalCard.image_uris || externalCard.card_faces?.[0]?.image_uris || {};
-  
+export function formatScryfallCard(externalCard: any): CandidatePrinting {
+  // Double-faced cards keep images and illustration on the faces
+  const front = externalCard.card_faces?.[0] || {};
+  const imageUris = externalCard.image_uris || front.image_uris || {};
+
   return {
     externalId: externalCard.id,
     name: externalCard.name,
@@ -222,6 +226,15 @@ export function formatScryfallCard(externalCard: any) {
       lowPrice: null,
       midPrice: null,
       highPrice: parseFloat(externalCard.prices?.usd_foil || "0") || null,
-    }
+    },
+    // Printing evidence — same illustrationId means identical artwork, so the
+    // decision layer forbids artwork-based disambiguation between them.
+    oracleId: externalCard.oracle_id || null,
+    illustrationId: externalCard.illustration_id || front.illustration_id || null,
+    frame: externalCard.frame || null,
+    borderColor: externalCard.border_color || null,
+    finishes: externalCard.finishes || [],
+    promoTypes: externalCard.promo_types || [],
+    lang: externalCard.lang || null,
   };
 }
