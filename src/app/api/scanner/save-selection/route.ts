@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/auth";
+import { METHOD_CONFIDENCE } from "@/lib/scanner/decision";
+
+// The user looked at the physical card and picked — that's ground truth.
+const USER_SELECTION_CONFIDENCE = Math.round(METHOD_CONFIDENCE["user-selection"] * 100);
 
 // ─── POST /api/scanner/save-selection ─────────────────────────────────────
 // Called by the frontend when the user manually selects their card variant
@@ -50,12 +54,14 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Save to scan history
+    // Save to scan history. matchMethod "user-selection" is what the learning
+    // analyzer counts as a pipeline failure — the AI couldn't finish the job.
     const history = await prisma.scanHistory.create({
       data: {
         userId: session.user.id,
         cardId: localCard.id,
-        confidence: 90, // Slightly lower confidence since user disambiguated
+        confidence: USER_SELECTION_CONFIDENCE,
+        matchMethod: "user-selection",
         imageUrl: localCard.imageUrl,
       },
     });
@@ -76,7 +82,7 @@ export async function POST(req: NextRequest) {
           highPrice: candidate.price?.highPrice || 0,
         },
         rarity: localCard.rarity,
-        confidence: 90,
+        confidence: USER_SELECTION_CONFIDENCE,
         imageUrl: localCard.imageUrl,
         thumbnailUrl: localCard.thumbnailUrl,
         historyId: history.id,

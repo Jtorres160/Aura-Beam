@@ -1,10 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { searchPokemonCards, fetchAllPokemonPrintings, formatPokemonCard } from "@/lib/services/pokemon";
-import { searchScryfallCardByName, searchScryfallCards, fetchAllMTGPrintings, formatScryfallCard, searchScryfallBySetAndCollector, searchScryfallDeepFallback } from "@/lib/services/scryfall";
+import { searchScryfallCardByName, fetchAllMTGPrintings, formatScryfallCard, searchScryfallBySetAndCollector, searchScryfallDeepFallback } from "@/lib/services/scryfall";
 import { searchYugiohCards, getYugiohPrintings, formatYugiohCard } from "@/lib/services/yugioh";
 import { auth } from "@/auth";
 import OpenAI from "openai";
+import type { CandidatePrinting } from "@/lib/scanner/evidence";
+import {
+  type Decision,
+  type MatchMethod,
+  acceptDecision,
+  disambiguateDecision,
+  notFoundDecision,
+  gateDecision,
+  groupByIllustration,
+  nameMatchesOcr,
+} from "@/lib/scanner/decision";
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY || "dummy_build_key",
@@ -14,6 +25,12 @@ const openai = new OpenAI({
 // Max images to send to the vision model (detail: low = 85 tokens each, 150 = ~12,750 tokens, $0.0019)
 const MAX_VISUAL_CANDIDATES = 150;
 
+/** The slice of an AiLearningRule the pipeline consumes. */
+interface LearningRuleInfo {
+  ruleType: string;
+  content: string;
+}
+
 export async function POST(req: NextRequest) {
   try {
     const session = await auth();
@@ -22,7 +39,7 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { image, game } = body;
+    const { image, game, isAutoScan } = body;
 
     if (!image) {
       return NextResponse.json({ success: false, message: "No image provided from scanner" }, { status: 400 });
@@ -112,137 +129,45 @@ Return ONLY raw JSON. No markdown. No explanation.`
 
     // ─── Step 2: Fetch all printings of this card ─────────────────────
     console.log(`[Scanner] Step 2: Fetching all printings for "${cardName}"...`);
-    const { printings, fallbackCard } = await fetchAllPrintings(cardName, effectiveGame, setCode, collectorNumber, manaCost, typeLine, powerToughness);
+    const { printings, fallbackCard, fallbackMethod } = await fetchAllPrintings(cardName, effectiveGame, setCode, collectorNumber, manaCost, typeLine, powerToughness);
 
-    // If only 1 printing exists (or database found nothing), skip visual comparison
-    if (!printings || printings.length <= 1) {
-      console.log(`[Scanner] Only ${printings?.length || 0} printing(s) found — skipping visual comparison.`);
-      const matched = printings?.[0] || fallbackCard;
-      if (!matched) {
-        return NextResponse.json({
-          success: false,
-          message: `AI identified "${cardName}" but no match was found in any card database. Try scanning again with better lighting.`
-        }, { status: 404 });
-      }
-      return await saveAndRespond(matched, session.user.id, identifiedCard);
-    }
+    // ─── Step 3: Deterministic decision ───────────────────────────────
+    // Models above only produced evidence; the decision layer owns the verdict.
+    let decision: Decision;
 
-    // ─── Step 3: Visual artwork comparison — pick the exact printing ──
-    console.log(`[Scanner] Step 3: Visual comparison across ${printings.length} printings...`);
-
-    // If FORCE_DISAMBIGUATION rule exists, skip AI comparison — we KNOW this card is hard
-    if (learningRule?.ruleType === "FORCE_DISAMBIGUATION") {
+    if (printings.length === 1) {
+      console.log(`[Scanner] Exactly one printing exists — no disambiguation needed.`);
+      decision = acceptDecision(printings[0], "single-printing");
+    } else if (printings.length === 0) {
+      decision = fallbackCard
+        ? acceptDecision(fallbackCard, fallbackMethod ?? "fallback-guess")
+        : notFoundDecision();
+    } else if (learningRule?.ruleType === "FORCE_DISAMBIGUATION") {
+      // We KNOW this card is hard — skip AI comparison entirely
       console.log(`[Scanner] 🧠 FORCE_DISAMBIGUATION rule active for "${cardName}" — skipping AI comparison.`);
-      const disambigCandidates = printings
-        .filter((p: any) => p.thumbnailUrl) // Send ALL printings to the UI
-        .map((c: any) => ({
-          externalId: c.externalId,
-          name: c.name,
-          game: c.game,
-          setName: c.setName,
-          setCode: c.setCode || null,
-          collectorNumber: c.collectorNumber || null,
-          rarity: c.rarity,
-          imageUrl: c.imageUrl,
-          thumbnailUrl: c.thumbnailUrl,
-          price: c.price,
-        }));
-      return NextResponse.json({
-        success: true,
-        requiresDisambiguation: true,
-        cardName,
-        candidates: disambigCandidates,
-        ocrData: identifiedCard,
-      });
+      decision = disambiguateDecision(printings);
+    } else {
+      console.log(`[Scanner] Step 3: Deciding among ${printings.length} printings...`);
+      decision = await decideAmongPrintings(printings, imageUrl, { setCode, collectorNumber }, learningRule);
     }
 
-    // Cap candidates & use SMALL thumbnails to minimize token cost
-    const candidates = printings.slice(0, MAX_VISUAL_CANDIDATES);
-    const validCandidates = candidates.filter((p: any) => p.thumbnailUrl);
+    // ─── Step 4: Gate and respond ──────────────────────────────────────
+    // Auto-scan saves without a review screen, so it demands more confidence.
+    decision = gateDecision(decision, Boolean(isAutoScan));
 
-    if (validCandidates.length === 0) {
-      // No images available — fall back to first result
-      return await saveAndRespond(candidates[0], session.user.id, identifiedCard);
+    if (decision.action === "accept" && decision.printing) {
+      return await saveAndRespond(decision.printing, session.user.id, identifiedCard, decision);
     }
 
-    let bestMatchIndex: number = 0;
-    let isUncertain = false;
-
-    try {
-      const candidateImages = validCandidates.map((p: any) => ({
-        type: "image_url" as const,
-        image_url: { url: p.thumbnailUrl, detail: "low" as const }
-      }));
-
-      const visualResponse = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
-        messages: [
-          {
-            role: "system",
-            content: `You are an expert trading card artwork identifier. The user has scanned a physical card (first image). You are given ${validCandidates.length} candidate card images (images 2 through ${validCandidates.length + 1}). Compare the artwork, border style, foil pattern, and card layout of the scanned card against each candidate. Respond with ONLY a single integer:
-- The 0-based index of the candidate that CLEARLY AND EXACTLY matches the scanned card.
-- Return -1 if NONE of the candidate images match the scanned card perfectly.
-- Return -1 if you are not confident or if multiple candidates look identical.${
-  learningRule?.ruleType === "HINT" ? `\n\nIMPORTANT HINT from past scans: ${learningRule.content}` : ""
-}`
-          },
-          {
-            role: "user",
-            content: [
-              { type: "image_url", image_url: { url: imageUrl, detail: "low" } },
-              ...candidateImages
-            ]
-          }
-        ],
-        max_tokens: 5,
-        temperature: 0.0,
-      });
-
-      const raw = (visualResponse.choices[0]?.message?.content || "-1").trim();
-      const parsed = parseInt(raw, 10);
-      if (parsed === -1) {
-        isUncertain = true;
-        console.log(`[Scanner] AI is uncertain — requesting user disambiguation.`);
-      } else if (!isNaN(parsed) && parsed >= 0 && parsed < validCandidates.length) {
-        bestMatchIndex = parsed;
-        console.log(`[Scanner] Visual match selected index: ${bestMatchIndex} (${validCandidates[bestMatchIndex]?.setName})`);
-      } else {
-        isUncertain = true;
-      }
-    } catch (visualErr: any) {
-      console.warn("[Scanner] Visual comparison failed, falling back to disambiguation:", visualErr?.message);
-      isUncertain = true;
+    if (decision.action === "disambiguate" && decision.candidates && decision.candidates.length > 0) {
+      console.log(`[Scanner] Requesting user disambiguation among ${decision.candidates.length} candidate(s).`);
+      return disambiguationResponse(cardName, decision.candidates, identifiedCard);
     }
 
-    // ─── Step 4: If AI is uncertain, return candidates for user to pick ──
-    if (isUncertain) {
-      // Send ALL printings to the UI for disambiguation, not just the AI candidate slice
-      const disambigCandidates = printings
-        .filter((c: any) => c.thumbnailUrl)
-        .map((c: any) => ({
-          externalId: c.externalId,
-          name: c.name,
-          game: c.game,
-          setName: c.setName,
-          setCode: c.setCode || null,
-          collectorNumber: c.collectorNumber || null,
-          rarity: c.rarity,
-          imageUrl: c.imageUrl,
-          thumbnailUrl: c.thumbnailUrl,
-          price: c.price,
-        }));
-
-      return NextResponse.json({
-        success: true,
-        requiresDisambiguation: true,
-        cardName: cardName,
-        candidates: disambigCandidates,
-        ocrData: identifiedCard,
-      });
-    }
-
-    const matchedCard = validCandidates[bestMatchIndex] || candidates[0];
-    return await saveAndRespond(matchedCard, session.user.id, identifiedCard);
+    return NextResponse.json({
+      success: false,
+      message: `AI identified "${cardName}" but no match was found in any card database. Try scanning again with better lighting.`
+    }, { status: 404 });
 
   } catch (error: any) {
     console.error("[Scanner] Pipeline Error:", error?.message || error);
@@ -250,18 +175,163 @@ Return ONLY raw JSON. No markdown. No explanation.`
   }
 }
 
+// ─── Decide among multiple printings ────────────────────────────────────────
+// Order matters: deterministic evidence (printed set/CN) beats vision, and
+// vision is only consulted where it CAN work — between different illustrations.
+async function decideAmongPrintings(
+  printings: CandidatePrinting[],
+  scannedImageUrl: string,
+  ocr: { setCode: string; collectorNumber: string },
+  learningRule: LearningRuleInfo | null,
+): Promise<Decision> {
+  // Evidence narrowing: an OCR'd set code (plus collector number when read)
+  // that pins exactly one printing decides without any artwork comparison.
+  if (ocr.setCode) {
+    const cleanCn = ocr.collectorNumber ? ocr.collectorNumber.split("/")[0].trim().toLowerCase() : "";
+    const narrowed = printings.filter((p) => {
+      if (!p.setCode || p.setCode.toLowerCase() !== ocr.setCode.toLowerCase()) return false;
+      if (cleanCn) return (p.collectorNumber || "").toLowerCase() === cleanCn;
+      return true;
+    });
+    if (narrowed.length === 1) {
+      console.log(`[Scanner] OCR set/CN evidence narrowed to one printing: ${narrowed[0].setName}`);
+      return acceptDecision(narrowed[0], "single-art-group");
+    }
+  }
+
+  // Illustration guard: if every candidate shares one illustration, vision
+  // would be a coin flip — go straight to the user.
+  const groups = Array.from(groupByIllustration(printings).values());
+  if (groups.length === 1) {
+    console.log(`[Scanner] All ${printings.length} printings share one illustration — vision cannot distinguish them.`);
+    return disambiguateDecision(printings);
+  }
+
+  // Vision compares ONE representative image per art group, not every printing.
+  const comparable = groups
+    .map((group) => ({ group, rep: group.find((p) => p.thumbnailUrl) }))
+    .filter((entry): entry is { group: CandidatePrinting[]; rep: CandidatePrinting } => Boolean(entry.rep))
+    .slice(0, MAX_VISUAL_CANDIDATES);
+
+  if (comparable.length < 2) {
+    // Not enough candidate images to compare anything
+    return disambiguateDecision(printings);
+  }
+
+  console.log(`[Scanner] Visual comparison across ${comparable.length} art groups (${printings.length} printings)...`);
+  const pickedIndex = await pickArtGroupByVision(scannedImageUrl, comparable.map((c) => c.rep), learningRule);
+
+  if (pickedIndex === null) {
+    console.log(`[Scanner] AI is uncertain — requesting user disambiguation.`);
+    return disambiguateDecision(printings);
+  }
+
+  const picked = comparable[pickedIndex];
+  if (picked.group.length === 1) {
+    console.log(`[Scanner] Visual match selected art group -> ${picked.group[0].setName}`);
+    return acceptDecision(picked.group[0], "art-group-vision");
+  }
+
+  // The matched artwork is shared by several printings (e.g. a set card and
+  // its promo). Artwork can go no further — the user picks within the group.
+  console.log(`[Scanner] Visual match is an art group of ${picked.group.length} identical-art printings — user must pick.`);
+  return disambiguateDecision(picked.group);
+}
+
+// ─── Vision: pick the matching art group ───────────────────────────────────
+// Returns the index of the matching representative, or null when the model is
+// uncertain, answers out of range, or the call fails.
+async function pickArtGroupByVision(
+  scannedImageUrl: string,
+  representatives: CandidatePrinting[],
+  learningRule: LearningRuleInfo | null,
+): Promise<number | null> {
+  try {
+    const candidateImages = representatives.map((p) => ({
+      type: "image_url" as const,
+      image_url: { url: p.thumbnailUrl as string, detail: "low" as const }
+    }));
+
+    const visualResponse = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content: `You are an expert trading card artwork identifier. The user has scanned a physical card (first image). You are given ${representatives.length} candidate card images (images 2 through ${representatives.length + 1}). Compare the artwork, border style, foil pattern, and card layout of the scanned card against each candidate. Respond with ONLY a single integer:
+- The 0-based index of the candidate that CLEARLY AND EXACTLY matches the scanned card.
+- Return -1 if NONE of the candidate images match the scanned card perfectly.
+- Return -1 if you are not confident or if multiple candidates look identical.${
+  learningRule?.ruleType === "HINT" ? `\n\nIMPORTANT HINT from past scans: ${learningRule.content}` : ""
+}`
+        },
+        {
+          role: "user",
+          content: [
+            { type: "image_url", image_url: { url: scannedImageUrl, detail: "low" } },
+            ...candidateImages
+          ]
+        }
+      ],
+      max_tokens: 5,
+      temperature: 0.0,
+    });
+
+    const raw = (visualResponse.choices[0]?.message?.content || "-1").trim();
+    const parsed = parseInt(raw, 10);
+    if (!isNaN(parsed) && parsed >= 0 && parsed < representatives.length) {
+      return parsed;
+    }
+    return null;
+  } catch (visualErr: any) {
+    console.warn("[Scanner] Visual comparison failed, falling back to disambiguation:", visualErr?.message);
+    return null;
+  }
+}
+
+// ─── Disambiguation response ────────────────────────────────────────────────
+function disambiguationResponse(cardName: string, candidates: CandidatePrinting[], ocrData: any) {
+  const withImages = candidates.filter((c) => c.thumbnailUrl);
+  const list = (withImages.length > 0 ? withImages : candidates).map((c) => ({
+    externalId: c.externalId,
+    name: c.name,
+    game: c.game,
+    setName: c.setName,
+    setCode: c.setCode || null,
+    collectorNumber: c.collectorNumber || null,
+    rarity: c.rarity,
+    imageUrl: c.imageUrl,
+    thumbnailUrl: c.thumbnailUrl,
+    price: c.price,
+  }));
+
+  return NextResponse.json({
+    success: true,
+    requiresDisambiguation: true,
+    cardName,
+    candidates: list,
+    ocrData,
+  });
+}
+
 // ─── Fetch all printings for visual comparison ─────────────────────────────
+interface PrintingsResult {
+  printings: CandidatePrinting[];
+  fallbackCard: CandidatePrinting | null;
+  /** HOW fallbackCard was found — decides whether it may be auto-saved. */
+  fallbackMethod?: MatchMethod;
+}
+
 async function fetchAllPrintings(
   cardName: string, game: string, setCode: string, collectorNumber: string,
   manaCost: string, typeLine: string, powerToughness: string
-): Promise<{ printings: any[], fallbackCard: any | null }> {
+): Promise<PrintingsResult> {
   const normalizedGame = game?.toUpperCase?.() || "";
 
   if (normalizedGame.includes("MTG") || normalizedGame.includes("MAGIC")) {
     return await fetchMTGPrintings(cardName, setCode, collectorNumber, manaCost, typeLine, powerToughness);
   }
   if (normalizedGame.includes("POKEMON") || normalizedGame.includes("POKÉMON")) {
-    return await fetchPokemonPrintings(cardName, setCode, collectorNumber);
+    return await fetchPokemonPrintings(cardName);
   }
   if (normalizedGame.includes("YUGIOH") || normalizedGame.includes("YU-GI-OH")) {
     return await fetchYugiohPrintings(cardName);
@@ -271,23 +341,29 @@ async function fetchAllPrintings(
   const mtg = await fetchMTGPrintings(cardName, setCode, collectorNumber, manaCost, typeLine, powerToughness);
   if (mtg.printings.length > 0 || mtg.fallbackCard) return mtg;
 
-  const pkmn = await fetchPokemonPrintings(cardName, setCode, collectorNumber);
+  const pkmn = await fetchPokemonPrintings(cardName);
   if (pkmn.printings.length > 0 || pkmn.fallbackCard) return pkmn;
 
   return await fetchYugiohPrintings(cardName);
 }
 
-async function fetchMTGPrintings(cardName: string, setCode: string, collectorNumber: string, manaCost: string, typeLine: string, powerToughness: string) {
+async function fetchMTGPrintings(cardName: string, setCode: string, collectorNumber: string, manaCost: string, typeLine: string, powerToughness: string): Promise<PrintingsResult> {
   try {
-    // ─── Fallback 1: If OCR hallucinates name but gets Set/CN right ──
+    // ─── Set+collector lookup — bypasses OCR name hallucinations ────
+    // Only trusted ("set-cn-verified") when the card it returns also bears
+    // the OCR'd name; otherwise the set/CN may itself be the misread field.
+    let directMatch: CandidatePrinting | null = null;
     if (setCode && collectorNumber) {
       // e.g. "MH2", "267" or "267/303" -> use just the prefix
       const cleanCn = collectorNumber.split('/')[0].trim();
-      const directMatch = await searchScryfallBySetAndCollector(setCode, cleanCn);
-      if (directMatch) {
-        console.log(`[Scanner] Fallback match succeeded for Set: ${setCode}, CN: ${cleanCn}`);
-        // Return it as a fallback card, bypassing visual comparison
-        return { printings: [], fallbackCard: formatScryfallCard(directMatch) };
+      const direct = await searchScryfallBySetAndCollector(setCode, cleanCn);
+      if (direct) {
+        directMatch = formatScryfallCard(direct);
+        if (nameMatchesOcr(cardName, directMatch.name)) {
+          console.log(`[Scanner] Set/CN match verified by name: "${directMatch.name}" (${setCode} #${cleanCn})`);
+          return { printings: [], fallbackCard: directMatch, fallbackMethod: "set-cn-verified" };
+        }
+        console.log(`[Scanner] Set/CN lookup returned "${directMatch.name}" but OCR read "${cardName}" — holding it as a weak guess.`);
       }
     }
 
@@ -300,16 +376,22 @@ async function fetchMTGPrintings(cardName: string, setCode: string, collectorNum
       return { printings, fallbackCard: null };
     }
 
+    // Name search failed, so the name was probably the hallucinated field
+    // after all — an unverified set/CN hit is the best remaining guess.
+    if (directMatch) {
+      return { printings: [], fallbackCard: directMatch, fallbackMethod: "fallback-guess" };
+    }
+
     // ─── Fallback 2: Deep Semantic Search based on physical attributes ──
     const deepMatch = await searchScryfallDeepFallback(cardName, manaCost, typeLine, powerToughness, setCode);
     if (deepMatch) {
       console.log(`[Scanner] Fallback 2 (Deep Semantic) succeeded for: ${deepMatch.name}`);
-      return { printings: [], fallbackCard: formatScryfallCard(deepMatch) };
+      return { printings: [], fallbackCard: formatScryfallCard(deepMatch), fallbackMethod: "fallback-guess" };
     }
 
     // Fallback 3: single card exact/fuzzy name lookup
     const namedResult = await searchScryfallCardByName(cardName);
-    if (namedResult) return { printings: [], fallbackCard: formatScryfallCard(namedResult) };
+    if (namedResult) return { printings: [], fallbackCard: formatScryfallCard(namedResult), fallbackMethod: "fallback-guess" };
 
     return { printings: [], fallbackCard: null };
   } catch {
@@ -317,7 +399,7 @@ async function fetchMTGPrintings(cardName: string, setCode: string, collectorNum
   }
 }
 
-async function fetchPokemonPrintings(cardName: string, setCode: string, collectorNumber: string) {
+async function fetchPokemonPrintings(cardName: string): Promise<PrintingsResult> {
   try {
     const allPrintings = await fetchAllPokemonPrintings(cardName);
     const printings = allPrintings.map(formatPokemonCard);
@@ -331,7 +413,7 @@ async function fetchPokemonPrintings(cardName: string, setCode: string, collecto
     const results = await searchPokemonCards(cardName);
     const exactMatch = results.find((c: any) => c.name.toLowerCase() === cardName.toLowerCase());
     const card = exactMatch || results[0];
-    if (card) return { printings: [], fallbackCard: formatPokemonCard(card) };
+    if (card) return { printings: [], fallbackCard: formatPokemonCard(card), fallbackMethod: "fallback-guess" };
 
     return { printings: [], fallbackCard: null };
   } catch {
@@ -339,7 +421,7 @@ async function fetchPokemonPrintings(cardName: string, setCode: string, collecto
   }
 }
 
-async function fetchYugiohPrintings(cardName: string) {
+async function fetchYugiohPrintings(cardName: string): Promise<PrintingsResult> {
   try {
     const results = await searchYugiohCards(cardName);
     const exactMatch = results.find((c: any) => c.name.toLowerCase() === cardName.toLowerCase()) || results[0];
@@ -347,7 +429,7 @@ async function fetchYugiohPrintings(cardName: string) {
     if (!exactMatch) return { printings: [], fallbackCard: null };
 
     // Yugioh packs alternate arts into card_images[] — treat each as a separate "printing"
-    const imagePrintings = getYugiohPrintings(exactMatch).map((p: any) => ({
+    const imagePrintings: CandidatePrinting[] = getYugiohPrintings(exactMatch).map((p: any) => ({
       externalId: exactMatch.id.toString(),
       name: exactMatch.name,
       game: "YUGIOH",
@@ -357,6 +439,9 @@ async function fetchYugiohPrintings(cardName: string) {
       imageUrl: p.imageUrl,
       thumbnailUrl: p.thumbnailUrl,
       price: { marketPrice: p.price },
+      // Distinct per art variant — without it, the shared card id would fold
+      // every variant into one illustration group and block vision comparison.
+      illustrationId: p.illustrationId,
     }));
 
     if (imagePrintings.length > 0) {
@@ -364,14 +449,16 @@ async function fetchYugiohPrintings(cardName: string) {
       return { printings: imagePrintings, fallbackCard: null };
     }
 
-    return { printings: [], fallbackCard: formatYugiohCard(exactMatch) };
+    return { printings: [], fallbackCard: formatYugiohCard(exactMatch), fallbackMethod: "fallback-guess" };
   } catch {
     return { printings: [], fallbackCard: null };
   }
 }
 
 // ─── Database Save Helper ──────────────────────────────────────────────────
-async function saveAndRespond(matchedCard: any, userId: string, ocrData?: any) {
+async function saveAndRespond(matchedCard: CandidatePrinting, userId: string, ocrData: any, decision: Decision) {
+  const confidencePct = Math.round(decision.confidence * 100);
+
   // Upsert card into local DB
   let localCard = await prisma.card.findFirst({
     where: { externalId: matchedCard.externalId }
@@ -406,12 +493,13 @@ async function saveAndRespond(matchedCard: any, userId: string, ocrData?: any) {
     data: {
       userId,
       cardId: localCard.id,
-      confidence: 95,
+      confidence: confidencePct,
+      matchMethod: decision.method || null,
       imageUrl: localCard.imageUrl,
     },
   });
 
-  console.log(`[Scanner] ✅ Saved: "${localCard.name}" from "${localCard.setName}"`);
+  console.log(`[Scanner] ✅ Saved: "${localCard.name}" from "${localCard.setName}" (method: ${decision.method}, confidence: ${confidencePct}%)`);
 
   return NextResponse.json({
     success: true,
@@ -427,20 +515,12 @@ async function saveAndRespond(matchedCard: any, userId: string, ocrData?: any) {
         highPrice: matchedCard.price?.highPrice || 0,
       },
       rarity: localCard.rarity,
-      confidence: 95,
+      confidence: confidencePct,
+      method: decision.method,
       imageUrl: localCard.imageUrl,
       thumbnailUrl: localCard.thumbnailUrl,
       historyId: history.id,
     },
     ocrData,
   });
-}
-
-// ─── Helper: Clean common AI misreads from card names ─────────────────────
-function cleanCardName(name: string): string {
-  let cleaned = name;
-  cleaned = cleaned.replace(/[.,;:!?'"]+$/, "").trim();
-  cleaned = cleaned.replace(/^["']|["']$/g, "").trim();
-  cleaned = cleaned.replace(/\s*\([^)]*\)\s*$/, "").trim();
-  return cleaned;
 }

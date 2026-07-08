@@ -204,6 +204,9 @@ export default function ScannerPage() {
         body: JSON.stringify({
           image: base64Image,
           game: selectedGame === "All" ? undefined : selectedGame,
+          // Background (auto/bulk) scans save with no review screen, so the
+          // server holds them to a stricter confidence threshold.
+          isAutoScan: isBackground,
         }),
       });
 

@@ -9,7 +9,8 @@ const openai = new OpenAI({
 // ─── Thresholds ────────────────────────────────────────────────────────────
 // How many manual disambiguations before we create a learning rule
 const FAILURE_THRESHOLD = 3;
-// Confidence score used for auto-scan (95) vs manual disambiguation (90)
+// Legacy confidence convention for scans recorded before matchMethod existed:
+// auto-scan wrote 95, manual disambiguation wrote 90
 const MANUAL_CONFIDENCE = 90;
 // Secret header to prevent unauthorized external triggers
 const CRON_SECRET = process.env.CRON_SECRET || "";
@@ -56,8 +57,10 @@ export async function GET(req: NextRequest) {
     }
 
     // ── 2. Group scans by card name, count failures vs successes ─────────
-    // confidence = 90 → manual disambiguation (AI failed)
-    // confidence = 95 → auto-identified (AI succeeded)
+    // A scan is a pipeline failure when the user had to pick the printing
+    // themselves. Scans record that as matchMethod "user-selection"; rows
+    // written before matchMethod existed fall back to the old confidence
+    // convention (90 manual / 95 auto).
     const statsMap = new Map<string, { name: string; game: string; failures: number; total: number }>();
 
     for (const scan of allScans) {
@@ -65,7 +68,10 @@ export async function GET(req: NextRequest) {
       const key = scan.card.name.toLowerCase();
       const existing = statsMap.get(key) || { name: scan.card.name, game: scan.card.game, failures: 0, total: 0 };
       existing.total++;
-      if ((scan.confidence ?? 95) <= MANUAL_CONFIDENCE) {
+      const isFailure = scan.matchMethod
+        ? scan.matchMethod === "user-selection"
+        : (scan.confidence ?? 95) <= MANUAL_CONFIDENCE;
+      if (isFailure) {
         existing.failures++;
       }
       statsMap.set(key, existing);

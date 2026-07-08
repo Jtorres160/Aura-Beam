@@ -1,3 +1,5 @@
+import type { CandidatePrinting } from "@/lib/scanner/evidence";
+
 const BASE_URL = "https://db.ygoprodeck.com/api/v7/cardinfo.php";
 
 export async function searchYugiohCards(query: string, setCode?: string) {
@@ -55,6 +57,10 @@ export function getYugiohPrintings(externalCard: any): any[] {
   const prices = externalCard.card_prices || [];
 
   return images.map((img: any, idx: number) => ({
+    // Every entry in card_images IS a distinct artwork; without this id all
+    // variants would share one illustration group (they share the card id)
+    // and the decision layer would refuse to vision-compare them.
+    illustrationId: img.id != null ? String(img.id) : `art-${idx}`,
     imageUrl: img.image_url || null,
     thumbnailUrl: img.image_url_small || null,
     // Best-effort set association: map by index (alternate arts often have separate set entries)
@@ -65,7 +71,7 @@ export function getYugiohPrintings(externalCard: any): any[] {
   }));
 }
 
-export function formatYugiohCard(externalCard: any, setCode?: string) {
+export function formatYugiohCard(externalCard: any, setCode?: string): CandidatePrinting {
   let cardSet = null;
   let cardPrice = null;
 
@@ -91,6 +97,7 @@ export function formatYugiohCard(externalCard: any, setCode?: string) {
     name: externalCard.name,
     game: "YUGIOH",
     setName: cardSet?.set_name || "Unknown Set",
+    setCode: cardSet?.set_code || null,
     rarity: cardSet?.set_rarity || "Common",
     imageUrl: cardImage?.image_url || null,
     thumbnailUrl: cardImage?.image_url_small || null,

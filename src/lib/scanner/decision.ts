@@ -45,6 +45,56 @@ export interface Decision {
   candidates?: CandidatePrinting[];
 }
 
+// ─── OCR name verification ──────────────────────────────────────────────────
+
+/** Collapse a card name to a comparable form: no case, accents or punctuation. */
+function normalizeName(name: string): string {
+  return name
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
+
+/** Bounded edit distance for OCR noise tolerance. */
+function editDistance(a: string, b: string): number {
+  if (Math.abs(a.length - b.length) > 2) return 3;
+  const prev = new Array(b.length + 1).fill(0).map((_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    let diag = prev[0];
+    prev[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const next = Math.min(
+        prev[j] + 1,
+        prev[j - 1] + 1,
+        diag + (a[i - 1] === b[j - 1] ? 0 : 1)
+      );
+      diag = prev[j];
+      prev[j] = next;
+    }
+  }
+  return prev[b.length];
+}
+
+/**
+ * Does an OCR'd name refer to this candidate card? Backs the "set-cn-verified"
+ * method: a set+collector lookup only earns its high confidence when the name
+ * on the card agrees with the card the lookup returned. Tolerates OCR noise
+ * (case, accents, punctuation, up to 2 typos on longer names) and double-faced
+ * names, where OCR usually reads only the front face.
+ */
+export function nameMatchesOcr(ocrName: string, candidateName: string): boolean {
+  const ocr = normalizeName(ocrName);
+  if (!ocr) return false;
+  const targets = [candidateName, ...candidateName.split("//")].map(normalizeName);
+  for (const target of targets) {
+    if (!target) continue;
+    if (target === ocr) return true;
+    if (target.length >= 8 && editDistance(ocr, target) <= 2) return true;
+  }
+  return false;
+}
+
 // ─── Illustration guard ─────────────────────────────────────────────────────
 
 /**

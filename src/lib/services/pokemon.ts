@@ -1,3 +1,5 @@
+import type { CandidatePrinting } from "@/lib/scanner/evidence";
+
 const BASE_URL = "https://api.pokemontcg.io/v2/cards";
 
 function getHeaders(): HeadersInit {
@@ -70,15 +72,18 @@ export async function getPokemonCardById(id: string) {
   }
 }
 
-export function formatPokemonCard(externalCard: any) {
+export function formatPokemonCard(externalCard: any): CandidatePrinting {
   return {
     externalId: externalCard.id,
     name: externalCard.name,
     game: "POKEMON",
     setName: externalCard.set?.name || "Unknown Set",
+    // ptcgoCode is what's actually printed on the card (e.g. "SV3")
+    setCode: externalCard.set?.ptcgoCode || externalCard.set?.id || null,
+    collectorNumber: externalCard.number || null,
     rarity: externalCard.rarity || "Common",
-    imageUrl: externalCard.images?.large || externalCard.images?.small,
-    thumbnailUrl: externalCard.images?.small,
+    imageUrl: externalCard.images?.large || externalCard.images?.small || null,
+    thumbnailUrl: externalCard.images?.small || null,
     price: {
       marketPrice: externalCard.tcgplayer?.prices?.holofoil?.market ||
                    externalCard.tcgplayer?.prices?.normal?.market ||
