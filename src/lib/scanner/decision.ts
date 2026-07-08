@@ -36,6 +36,12 @@ export const METHOD_CONFIDENCE: Record<MatchMethod, Confidence> = {
 export const ACCEPT_THRESHOLD = 0.85;
 /** Auto/bulk scanning saves without a review screen, so demand more. */
 export const ACCEPT_THRESHOLD_AUTOSCAN = 0.95;
+/** Minimum top1–top2 separation for an auto-save. The heuristic scorer emits
+ *  1 for accepts (vacuous); the floor becomes live with the probabilistic
+ *  scorer, where near-ties must never auto-accept. */
+export const MARGIN_FLOOR = 0.2;
+/** Minimum count of contributing evidence fields for an auto-save. */
+export const MIN_EVIDENCE_MASS = 1;
 
 export type DecisionAction =
   | "accept"        // save automatically
@@ -156,13 +162,22 @@ export function notFoundDecision(): Decision {
 
 /**
  * Final gate before auto-saving: an accept decision below the threshold for
- * the current scan mode is demoted to user disambiguation.
+ * the current scan mode — or, when the scorer supplied them, below the margin
+ * or evidence-mass floors — is demoted to user disambiguation. The gate
+ * consumes the Scorer output SHAPE (confidence + margin + mass), never a
+ * method table, so a scorer swap doesn't touch it.
  */
-export function gateDecision(decision: Decision, isAutoScan: boolean): Decision {
+export function gateDecision(
+  decision: Decision,
+  isAutoScan: boolean,
+  score?: { margin: number; evidenceMass: number },
+): Decision {
   if (decision.action !== "accept" || !decision.printing) return decision;
   const threshold = isAutoScan ? ACCEPT_THRESHOLD_AUTOSCAN : ACCEPT_THRESHOLD;
-  if (decision.confidence >= threshold) return decision;
-  // Below threshold: fall back to user disambiguation. If the decision already
+  const marginOk = !score || score.margin >= MARGIN_FLOOR;
+  const massOk = !score || score.evidenceMass >= MIN_EVIDENCE_MASS;
+  if (decision.confidence >= threshold && marginOk && massOk) return decision;
+  // Below a floor: fall back to user disambiguation. If the decision already
   // carries a full candidate list (vision's pick plus alternatives), keep it so
   // the user can override; otherwise show just the printing we would have saved.
   return { ...decision, action: "disambiguate", candidates: decision.candidates ?? [decision.printing] };

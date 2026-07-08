@@ -1,23 +1,42 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/auth";
-import { reconcileSetCn, type CandidatePrinting } from "@/lib/scanner/evidence";
 import {
-  type Decision,
-  acceptDecision,
-  disambiguateDecision,
-  notFoundDecision,
-  gateDecision,
-} from "@/lib/scanner/decision";
+  reading,
+  reconcileSetCn,
+  SET_CN_CONFIDENCE,
+  type CandidatePrinting,
+  type ScanEvidence,
+} from "@/lib/scanner/evidence";
+import { type Decision, gateDecision } from "@/lib/scanner/decision";
 import { extractBottomStrip, extractCardFields } from "@/lib/scanner/extract";
 import { fetchAllPrintings } from "@/lib/scanner/candidates";
-import { decideAmongPrintings } from "@/lib/scanner/rank";
+import { scorer } from "@/lib/scanner/score";
+import { checkScanBurst, SCAN_DAILY_LIMIT, startOfUtcDay } from "@/lib/rate-limit";
 
 export async function POST(req: NextRequest) {
   try {
     const session = await auth();
     if (!session?.user?.id) {
       return NextResponse.json({ success: false, message: "Unauthorized" }, { status: 401 });
+    }
+
+    // ─── Rate limits — every scan costs 2–3 vision-model calls ─────────
+    const burst = checkScanBurst(session.user.id);
+    if (!burst.ok) {
+      return NextResponse.json(
+        { success: false, message: `You're scanning too fast — try again in ${burst.retryAfterSeconds}s.` },
+        { status: 429, headers: { "Retry-After": String(burst.retryAfterSeconds) } }
+      );
+    }
+    const scansToday = await prisma.scanHistory.count({
+      where: { userId: session.user.id, createdAt: { gte: startOfUtcDay() } },
+    });
+    if (scansToday >= SCAN_DAILY_LIMIT) {
+      return NextResponse.json(
+        { success: false, message: "You've reached today's scan limit. It resets at midnight UTC." },
+        { status: 429 }
+      );
     }
 
     const body = await req.json();
@@ -61,6 +80,12 @@ export async function POST(req: NextRequest) {
     // (set-cn-verified 0.97, single-art-group 0.85), so sharpening it yields
     // more auto-accepts and fewer disambiguation prompts. Yugioh
     // identification ignores set/CN, so its strip result is discarded.
+    // Everything the sensors saw is collected into ONE evidence bundle —
+    // the only identification input the scorer receives.
+    const evidence: ScanEvidence = {
+      identity: { name: reading(cardName, 0.85, "ocr-full") },
+      printing: {},
+    };
     if (usesSetCnEvidence(effectiveGame)) {
       const strip = await stripPromise;
       const reconciled = reconcileSetCn({ setCode, collectorNumber }, strip);
@@ -69,6 +94,13 @@ export async function POST(req: NextRequest) {
       }
       setCode = reconciled.setCode;
       collectorNumber = reconciled.collectorNumber;
+      evidence.printing.setCode = reconciled.setCodeReading;
+      evidence.printing.collectorNumber = reconciled.collectorNumberReading;
+      evidence.printing.rarity = strip.rarity;
+    } else {
+      // Yugioh: no strip pass, but the full-pass set/CN still feeds ranking.
+      if (setCode) evidence.printing.setCode = reading(setCode, SET_CN_CONFIDENCE.full, "ocr-full");
+      if (collectorNumber) evidence.printing.collectorNumber = reading(collectorNumber, SET_CN_CONFIDENCE.full, "ocr-full");
     }
 
     // ─── Step 1b: Check AI Learning Rules for this card ───────────────
@@ -89,29 +121,23 @@ export async function POST(req: NextRequest) {
     console.log(`[Scanner] Step 2: Fetching all printings for "${cardName}"...`);
     const { printings, fallbackCard, fallbackMethod } = await fetchAllPrintings(cardName, effectiveGame, setCode, collectorNumber, manaCost, typeLine, powerToughness);
 
-    // ─── Step 3: Deterministic decision ───────────────────────────────
-    // Models above only produced evidence; the decision layer owns the verdict.
-    let decision: Decision;
-
-    if (printings.length === 1) {
-      console.log(`[Scanner] Exactly one printing exists — no disambiguation needed.`);
-      decision = acceptDecision(printings[0], "single-printing");
-    } else if (printings.length === 0) {
-      decision = fallbackCard
-        ? acceptDecision(fallbackCard, fallbackMethod ?? "fallback-guess")
-        : notFoundDecision();
-    } else if (learningRule?.ruleType === "FORCE_DISAMBIGUATION") {
-      // We KNOW this card is hard — skip AI comparison entirely
-      console.log(`[Scanner] 🧠 FORCE_DISAMBIGUATION rule active for "${cardName}" — skipping AI comparison.`);
-      decision = disambiguateDecision(printings);
-    } else {
-      console.log(`[Scanner] Step 3: Deciding among ${printings.length} printings...`);
-      decision = await decideAmongPrintings(printings, imageUrl, { setCode, collectorNumber }, learningRule);
-    }
+    // ─── Step 3: Score — the scorer owns the identification verdict ────
+    // Models only produced evidence; the scorer (heuristic today, probabilistic
+    // once a labeled dataset exists) turns evidence + candidates into a
+    // decision. The route never branches on match paths itself.
+    const scored = await scorer.score({
+      cardName,
+      printings,
+      fallbackCard,
+      fallbackMethod,
+      evidence,
+      scannedImageUrl: imageUrl,
+      learningRule,
+    });
 
     // ─── Step 4: Gate and respond ──────────────────────────────────────
     // Auto-scan saves without a review screen, so it demands more confidence.
-    decision = gateDecision(decision, Boolean(isAutoScan));
+    const decision: Decision = gateDecision(scored.decision, Boolean(isAutoScan), scored);
 
     if (decision.action === "accept" && decision.printing) {
       return await saveAndRespond(decision.printing, session.user.id, identifiedCard, decision);

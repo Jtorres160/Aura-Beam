@@ -46,6 +46,7 @@ export interface IdentityEvidence {
 export interface PrintingEvidence {
   setCode?: FieldReading;
   collectorNumber?: FieldReading;
+  rarity?: FieldReading;         // printed rarity letter/word, e.g. "R", "Mythic"
   frame?: FieldReading;          // e.g. "1997" (retro), "2015" (modern), "future"
   borderColor?: FieldReading;    // e.g. "black", "white", "borderless"
   language?: FieldReading;       // e.g. "en", "ja"
