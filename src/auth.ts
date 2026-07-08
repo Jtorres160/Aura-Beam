@@ -6,7 +6,13 @@ import CredentialsProvider from "next-auth/providers/credentials";
 import { SignJWT, jwtVerify } from "jose";
 import { verifyPassword } from "./lib/password";
 
-const JWT_SECRET = process.env.NEXTAUTH_SECRET || "aura-beam-super-secret-key-for-development";
+const JWT_SECRET = process.env.NEXTAUTH_SECRET;
+
+if (process.env.NODE_ENV === "production" && !JWT_SECRET) {
+  throw new Error("CRITICAL: NEXTAUTH_SECRET environment variable is missing in production. This is a severe security risk.");
+}
+
+const fallbackSecret = JWT_SECRET || "aura-beam-super-secret-key-for-development";
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   adapter: PrismaAdapter(prisma),
@@ -14,7 +20,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   session: { strategy: "jwt" },
   jwt: {
     async encode({ token }) {
-      const secretKey = new TextEncoder().encode(JWT_SECRET);
+      const secretKey = new TextEncoder().encode(fallbackSecret);
       return await new SignJWT(token as any)
         .setProtectedHeader({ alg: "HS256" })
         .setIssuedAt()
@@ -24,7 +30,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     async decode({ token }) {
       if (!token) return null;
       try {
-        const secretKey = new TextEncoder().encode(JWT_SECRET);
+        const secretKey = new TextEncoder().encode(fallbackSecret);
         const { payload } = await jwtVerify(token, secretKey, {
           algorithms: ["HS256"],
         });
