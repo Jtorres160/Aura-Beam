@@ -36,7 +36,10 @@ export async function searchYugiohCards(query: string, setCode?: string) {
 
 export async function getYugiohCardById(id: string) {
   try {
-    const response = await fetch(`${BASE_URL}?id=${encodeURIComponent(id)}`);
+    // Scanner ids for alternate-art cards are variant-qualified ("cardId:imageId")
+    // so each artwork gets its own local Card row; the API only knows the base id.
+    const baseId = id.split(":")[0];
+    const response = await fetch(`${BASE_URL}?id=${encodeURIComponent(baseId)}`);
     if (!response.ok) return null;
     const json = await response.json();
     return json.data && json.data.length > 0 ? json.data[0] : null;

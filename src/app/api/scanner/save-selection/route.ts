@@ -42,17 +42,27 @@ export async function POST(req: NextRequest) {
           thumbnailUrl: candidate.thumbnailUrl,
         }
       });
-
-      await prisma.cardPrice.create({
-        data: {
-          cardId: localCard.id,
-          marketPrice: candidate.price?.marketPrice || 0,
-          lowPrice: candidate.price?.lowPrice || null,
-          midPrice: candidate.price?.midPrice || null,
-          highPrice: candidate.price?.highPrice || null,
-        },
-      });
     }
+
+    // Always refresh the stored price with what the candidate carries — a card
+    // first saved months ago must not keep its stale price.
+    await prisma.cardPrice.upsert({
+      where: { cardId: localCard.id },
+      update: {
+        marketPrice: candidate.price?.marketPrice || 0,
+        lowPrice: candidate.price?.lowPrice || null,
+        midPrice: candidate.price?.midPrice || null,
+        highPrice: candidate.price?.highPrice || null,
+        lastUpdated: new Date(),
+      },
+      create: {
+        cardId: localCard.id,
+        marketPrice: candidate.price?.marketPrice || 0,
+        lowPrice: candidate.price?.lowPrice || null,
+        midPrice: candidate.price?.midPrice || null,
+        highPrice: candidate.price?.highPrice || null,
+      },
+    });
 
     // Save to scan history. matchMethod "user-selection" is what the learning
     // analyzer counts as a pipeline failure — the AI couldn't finish the job.

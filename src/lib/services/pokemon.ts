@@ -38,6 +38,32 @@ export async function searchPokemonCards(query: string, setCode?: string, collec
 }
 
 /**
+ * Direct lookup by set code + collector number — the Pokemon equivalent of the
+ * Scryfall set/CN search. Bypasses the OCR'd name entirely, so a hallucinated
+ * name can't poison the result; the caller verifies the returned card's name.
+ * Matches both the printed ptcgo code ("SV3") and the API set id ("sv3"), and
+ * both zero-padded and bare collector numbers ("021" vs "21").
+ */
+export async function searchPokemonBySetAndNumber(setCode: string, collectorNumber: string) {
+  try {
+    const num = collectorNumber.split("/")[0].trim();
+    const bare = num.replace(/^0+(?=\d)/, "");
+    const numberQuery = bare !== num ? `(number:"${num}" OR number:"${bare}")` : `number:"${num}"`;
+    const setQuery = `(set.ptcgoCode:"${setCode}" OR set.id:"${setCode.toLowerCase()}")`;
+    const response = await fetch(
+      `${BASE_URL}?q=${encodeURIComponent(`${numberQuery} ${setQuery}`)}&pageSize=10`,
+      { headers: getHeaders() }
+    );
+    if (!response.ok) return [];
+    const json = await response.json();
+    return json.data || [];
+  } catch (error) {
+    console.error(`[Pokemon] Set/number lookup failed for ${setCode} #${collectorNumber}:`, error);
+    return [];
+  }
+}
+
+/**
  * Fetch ALL printings of a Pokemon card name for visual comparison.
  * Returns up to 20 printings including small thumbnail images.
  */

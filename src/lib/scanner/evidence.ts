@@ -85,9 +85,13 @@ export interface ReconciledSetCn {
   collectorNumberReading?: FieldReading;
 }
 
-/** Compare collector numbers by their leading token: "267/303" ≡ "267". */
-function cnKey(cn: string): string {
-  return cn.split("/")[0].trim().toLowerCase();
+/**
+ * Collapse a collector number to a comparable key: leading token only
+ * ("267/303" ≡ "267"), case-insensitive, zero-padding dropped ("021" ≡ "21" —
+ * Pokemon prints padded numbers but the card database stores them bare).
+ */
+export function collectorNumberKey(cn: string): string {
+  return cn.split("/")[0].trim().toLowerCase().replace(/^0+(?=\d)/, "");
 }
 
 /**
@@ -126,7 +130,7 @@ export function reconcileSetCn(
   const collectorNumberReading = reconcileField(
     full.collectorNumber,
     strip.collectorNumber,
-    (a, b) => cnKey(a) === cnKey(b),
+    (a, b) => collectorNumberKey(a) === collectorNumberKey(b),
   );
   return {
     setCode: setCodeReading?.value ?? "",

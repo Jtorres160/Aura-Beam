@@ -3,7 +3,7 @@
 // card. Order matters: deterministic evidence (printed set/CN) beats vision, and
 // vision is only consulted where it CAN work — between different illustrations.
 
-import type { CandidatePrinting } from "@/lib/scanner/evidence";
+import { collectorNumberKey, type CandidatePrinting } from "@/lib/scanner/evidence";
 import {
   type Decision,
   acceptDecision,
@@ -31,10 +31,10 @@ export async function decideAmongPrintings(
   // Evidence narrowing: an OCR'd set code (plus collector number when read)
   // that pins exactly one printing decides without any artwork comparison.
   if (ocr.setCode) {
-    const cleanCn = ocr.collectorNumber ? ocr.collectorNumber.split("/")[0].trim().toLowerCase() : "";
+    const cleanCn = ocr.collectorNumber ? collectorNumberKey(ocr.collectorNumber) : "";
     const narrowed = printings.filter((p) => {
       if (!p.setCode || p.setCode.toLowerCase() !== ocr.setCode.toLowerCase()) return false;
-      if (cleanCn) return (p.collectorNumber || "").toLowerCase() === cleanCn;
+      if (cleanCn) return collectorNumberKey(p.collectorNumber || "") === cleanCn;
       return true;
     });
     if (narrowed.length === 1) {

@@ -187,16 +187,27 @@ async function saveAndRespond(matchedCard: CandidatePrinting, userId: string, oc
         thumbnailUrl: matchedCard.thumbnailUrl,
       }
     });
-    await prisma.cardPrice.create({
-      data: {
-        cardId: localCard.id,
-        marketPrice: matchedCard.price?.marketPrice || 0,
-        lowPrice: matchedCard.price?.lowPrice || null,
-        midPrice: matchedCard.price?.midPrice || null,
-        highPrice: matchedCard.price?.highPrice || null,
-      },
-    });
   }
+
+  // Always refresh the stored price with what the card database returned just
+  // now — a card first scanned months ago must not keep its stale price.
+  await prisma.cardPrice.upsert({
+    where: { cardId: localCard.id },
+    update: {
+      marketPrice: matchedCard.price?.marketPrice || 0,
+      lowPrice: matchedCard.price?.lowPrice || null,
+      midPrice: matchedCard.price?.midPrice || null,
+      highPrice: matchedCard.price?.highPrice || null,
+      lastUpdated: new Date(),
+    },
+    create: {
+      cardId: localCard.id,
+      marketPrice: matchedCard.price?.marketPrice || 0,
+      lowPrice: matchedCard.price?.lowPrice || null,
+      midPrice: matchedCard.price?.midPrice || null,
+      highPrice: matchedCard.price?.highPrice || null,
+    },
+  });
 
   const history = await prisma.scanHistory.create({
     data: {
