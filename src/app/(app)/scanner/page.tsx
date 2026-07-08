@@ -22,6 +22,33 @@ import {
 
 type ScanState = "idle" | "scanning" | "processing" | "result" | "bulk-review" | "disambiguation" | "error";
 
+// Acquire a camera stream, retrying once with relaxed constraints when the
+// first attempt fails in a way a lighter request usually clears:
+//   - AbortError "Timeout starting video source": the high-res negotiation
+//     stalled (common on Windows webcams) or the device was mid-release.
+//   - NotReadableError: a transient lock that cleared as another consumer let go.
+//   - OverconstrainedError: no camera matched the ideal resolution.
+// The retry drops the resolution hints entirely and lets the browser pick.
+async function acquireCameraStream(): Promise<MediaStream> {
+  const preferred: MediaStreamConstraints = {
+    video: {
+      facingMode: { ideal: "environment" },
+      width: { ideal: PREFERRED_CAMERA_WIDTH },
+      height: { ideal: PREFERRED_CAMERA_HEIGHT },
+    },
+  };
+  try {
+    return await navigator.mediaDevices.getUserMedia(preferred);
+  } catch (err) {
+    const name = (err as DOMException)?.name;
+    if (name === "AbortError" || name === "NotReadableError" || name === "OverconstrainedError") {
+      console.warn(`[Scanner] Camera start failed (${name}); retrying with relaxed constraints...`);
+      return await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } } });
+    }
+    throw err;
+  }
+}
+
 const LOADING_STATUSES = [
   "Detecting card borders...",
   "Analyzing card artwork...",
@@ -60,28 +87,67 @@ export default function ScannerPage() {
 
   // ─── Camera Management ────────────────────────────────────────────────
   const startCamera = useCallback(async () => {
+    // Pre-flight: getUserMedia only exists in a secure context (HTTPS or
+    // localhost). Opening the dev server's Network URL (http://192.168.x.x)
+    // leaves navigator.mediaDevices undefined — which otherwise surfaces as a
+    // misleading "permission denied" message even though nothing was denied.
+    if (!navigator.mediaDevices?.getUserMedia) {
+      const insecure =
+        typeof window !== "undefined" &&
+        !window.isSecureContext &&
+        !["localhost", "127.0.0.1", "[::1]"].includes(window.location.hostname);
+      alert(
+        insecure
+          ? `Camera needs a secure connection. Open the app at http://localhost:${window.location.port || "3000"} (not the network IP ${window.location.hostname}) or use HTTPS.`
+          : "This browser doesn't expose camera access (navigator.mediaDevices is unavailable). Try Chrome, Edge, or Safari."
+      );
+      return;
+    }
+
     try {
-      // Stop any existing stream first
+      // Stop any existing stream first — a lingering handle is itself a common
+      // cause of "Timeout starting video source" on the next request.
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
       }
-      
-      // Request QHD (~2560×1440) as `ideal` so the browser hands us the best
-      // resolution the device supports and falls back gracefully otherwise.
-      const mediaStream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: { ideal: "environment" },
-          width: { ideal: PREFERRED_CAMERA_WIDTH },
-          height: { ideal: PREFERRED_CAMERA_HEIGHT }
-        },
-      });
+
+      // Request QHD (~2560×1440) as `ideal`, retrying with relaxed constraints
+      // if the high-res start times out or the device is briefly locked.
+      const mediaStream = await acquireCameraStream();
       streamRef.current = mediaStream;
       setStream(mediaStream);
       setCameraReady(false);
       setState("scanning");
     } catch (err) {
-      console.error("Camera error:", err);
-      alert("Camera access is required to scan cards. Please allow camera permissions.");
+      // Surface the ACTUAL failure — a single generic message hides whether
+      // permission was denied, the camera is busy, or no camera exists.
+      const e = err as DOMException;
+      console.error("Camera error:", e?.name, e?.message, err);
+      let message: string;
+      switch (e?.name) {
+        case "NotAllowedError":
+        case "SecurityError":
+          message = "Camera permission is blocked for this site. Click the camera icon in the address bar, set it to Allow, then reload.";
+          break;
+        case "NotReadableError":
+        case "TrackStartError":
+          message = "Your camera is already in use by another app (Zoom, Teams, OBS, another tab). Close it and try again.";
+          break;
+        case "AbortError":
+          message = "The camera timed out while starting — usually another app is holding it, or it's still initializing. Close other camera apps and try again.";
+          break;
+        case "NotFoundError":
+        case "DevicesNotFoundError":
+          message = "No camera was found on this device.";
+          break;
+        case "OverconstrainedError":
+          message = "No camera matched the requested settings. Try a different camera.";
+          break;
+        default:
+          message = `Could not start the camera${e?.name ? ` (${e.name})` : ""}. ${e?.message || "Please try again."}`;
+      }
+      alert(message);
     }
   }, []);
 
