@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { searchPokemonCards, fetchAllPokemonPrintings, formatPokemonCard } from "@/lib/services/pokemon";
-import { searchScryfallCardByName, searchScryfallCards, fetchAllMTGPrintings, formatScryfallCard } from "@/lib/services/scryfall";
+import { searchScryfallCardByName, searchScryfallCards, fetchAllMTGPrintings, formatScryfallCard, searchScryfallBySetAndCollector, searchScryfallDeepFallback } from "@/lib/services/scryfall";
 import { searchYugiohCards, getYugiohPrintings, formatYugiohCard } from "@/lib/services/yugioh";
 import { auth } from "@/auth";
 import OpenAI from "openai";
@@ -11,8 +11,8 @@ const openai = new OpenAI({
 });
 
 // ─── Max candidate images sent to AI for visual comparison ────────────────
-// Max images to send to the vision model (detail: low = 85 tokens each, so 25 = ~2100 tokens, very cheap)
-const MAX_VISUAL_CANDIDATES = 25;
+// Max images to send to the vision model (detail: low = 85 tokens each, 150 = ~12,750 tokens, $0.0019)
+const MAX_VISUAL_CANDIDATES = 150;
 
 export async function POST(req: NextRequest) {
   try {
@@ -47,18 +47,22 @@ export async function POST(req: NextRequest) {
         messages: [
           {
             role: "system",
-            content: `You are an expert trading card identifier for Pokemon, Magic: The Gathering (MTG), and Yu-Gi-Oh! cards. Look at the image and identify the card. If there is no trading card visible, respond with: {"name":"","game":"","set":""}. Otherwise return ONLY a valid JSON object with these keys:
+            content: `You are an expert trading card identifier for Pokemon, Magic: The Gathering (MTG), and Yu-Gi-Oh! cards. Look at the image and identify the card. If there is no trading card visible, respond with: {"name":"","game":"","setCode":"","collectorNumber":"","manaCost":"","typeLine":"","powerToughness":""}. Otherwise return ONLY a valid JSON object with these keys:
 - "name": The EXACT official English main name of the card as printed. Do NOT include subtitles or flavor text that aren't part of the official name.
 - "game": One of "Pokemon", "MTG", or "Yugioh".
-- "set": The set or expansion name if visible, otherwise an empty string.
+- "setCode": The 3-4 letter set code (for MTG/Pokemon) if visible (e.g., "MH2", "BS", "SV3"), otherwise "".
+- "collectorNumber": The collector number (for MTG/Pokemon) if visible (e.g., "267", "001/165"), otherwise "".
+- "manaCost": The mana cost or energy cost if visible (e.g., "{3}", "{1}{U}", "3"), otherwise "".
+- "typeLine": The type line if visible (e.g., "Artifact", "Creature - Goblin", "Trainer"), otherwise "".
+- "powerToughness": The power and toughness if visible (e.g., "2/2", "4/5"), otherwise "".
 Return ONLY raw JSON. No markdown. No explanation.`
           },
           {
             role: "user",
-            content: [{ type: "image_url", image_url: { url: imageUrl, detail: "low" } }]
+            content: [{ type: "image_url", image_url: { url: imageUrl, detail: "auto" } }]
           }
         ],
-        max_tokens: 60,
+        max_tokens: 80,
         temperature: 0.1,
       });
 
@@ -84,8 +88,13 @@ Return ONLY raw JSON. No markdown. No explanation.`
 
     const cardName = identifiedCard.name.trim();
     const aiGame = identifiedCard.game || "";
+    const setCode = identifiedCard.setCode?.trim() || "";
+    const collectorNumber = identifiedCard.collectorNumber?.trim() || "";
+    const manaCost = identifiedCard.manaCost?.trim() || "";
+    const typeLine = identifiedCard.typeLine?.trim() || "";
+    const powerToughness = identifiedCard.powerToughness?.trim() || "";
     const effectiveGame = game || aiGame;
-    console.log(`[Scanner] Identified: "${cardName}" (${effectiveGame || "unknown game"})`);
+    console.log(`[Scanner] Identified: "${cardName}" (${effectiveGame || "unknown game"}) [Set: ${setCode}, CN: ${collectorNumber}, Mana: ${manaCost}, Type: ${typeLine}, PT: ${powerToughness}]`);
 
     // ─── Step 1b: Check AI Learning Rules for this card ───────────────
     const learningRule = await prisma.aiLearningRule.findUnique({
@@ -103,7 +112,7 @@ Return ONLY raw JSON. No markdown. No explanation.`
 
     // ─── Step 2: Fetch all printings of this card ─────────────────────
     console.log(`[Scanner] Step 2: Fetching all printings for "${cardName}"...`);
-    const { printings, fallbackCard } = await fetchAllPrintings(cardName, effectiveGame);
+    const { printings, fallbackCard } = await fetchAllPrintings(cardName, effectiveGame, setCode, collectorNumber, manaCost, typeLine, powerToughness);
 
     // If only 1 printing exists (or database found nothing), skip visual comparison
     if (!printings || printings.length <= 1) {
@@ -115,7 +124,7 @@ Return ONLY raw JSON. No markdown. No explanation.`
           message: `AI identified "${cardName}" but no match was found in any card database. Try scanning again with better lighting.`
         }, { status: 404 });
       }
-      return await saveAndRespond(matched, session.user.id);
+      return await saveAndRespond(matched, session.user.id, identifiedCard);
     }
 
     // ─── Step 3: Visual artwork comparison — pick the exact printing ──
@@ -143,6 +152,7 @@ Return ONLY raw JSON. No markdown. No explanation.`
         requiresDisambiguation: true,
         cardName,
         candidates: disambigCandidates,
+        ocrData: identifiedCard,
       });
     }
 
@@ -152,7 +162,7 @@ Return ONLY raw JSON. No markdown. No explanation.`
 
     if (validCandidates.length === 0) {
       // No images available — fall back to first result
-      return await saveAndRespond(candidates[0], session.user.id);
+      return await saveAndRespond(candidates[0], session.user.id, identifiedCard);
     }
 
     let bestMatchIndex: number = 0;
@@ -227,11 +237,12 @@ Return ONLY raw JSON. No markdown. No explanation.`
         requiresDisambiguation: true,
         cardName: cardName,
         candidates: disambigCandidates,
+        ocrData: identifiedCard,
       });
     }
 
     const matchedCard = validCandidates[bestMatchIndex] || candidates[0];
-    return await saveAndRespond(matchedCard, session.user.id);
+    return await saveAndRespond(matchedCard, session.user.id, identifiedCard);
 
   } catch (error: any) {
     console.error("[Scanner] Pipeline Error:", error?.message || error);
@@ -240,31 +251,46 @@ Return ONLY raw JSON. No markdown. No explanation.`
 }
 
 // ─── Fetch all printings for visual comparison ─────────────────────────────
-async function fetchAllPrintings(cardName: string, game: string): Promise<{ printings: any[], fallbackCard: any | null }> {
+async function fetchAllPrintings(
+  cardName: string, game: string, setCode: string, collectorNumber: string,
+  manaCost: string, typeLine: string, powerToughness: string
+): Promise<{ printings: any[], fallbackCard: any | null }> {
   const normalizedGame = game?.toUpperCase?.() || "";
 
   if (normalizedGame.includes("MTG") || normalizedGame.includes("MAGIC")) {
-    return await fetchMTGPrintings(cardName);
+    return await fetchMTGPrintings(cardName, setCode, collectorNumber, manaCost, typeLine, powerToughness);
   }
   if (normalizedGame.includes("POKEMON") || normalizedGame.includes("POKÉMON")) {
-    return await fetchPokemonPrintings(cardName);
+    return await fetchPokemonPrintings(cardName, setCode, collectorNumber);
   }
   if (normalizedGame.includes("YUGIOH") || normalizedGame.includes("YU-GI-OH")) {
     return await fetchYugiohPrintings(cardName);
   }
 
   // Unknown game — try all, return first hit
-  const mtg = await fetchMTGPrintings(cardName);
+  const mtg = await fetchMTGPrintings(cardName, setCode, collectorNumber, manaCost, typeLine, powerToughness);
   if (mtg.printings.length > 0 || mtg.fallbackCard) return mtg;
 
-  const pkmn = await fetchPokemonPrintings(cardName);
+  const pkmn = await fetchPokemonPrintings(cardName, setCode, collectorNumber);
   if (pkmn.printings.length > 0 || pkmn.fallbackCard) return pkmn;
 
   return await fetchYugiohPrintings(cardName);
 }
 
-async function fetchMTGPrintings(cardName: string) {
+async function fetchMTGPrintings(cardName: string, setCode: string, collectorNumber: string, manaCost: string, typeLine: string, powerToughness: string) {
   try {
+    // ─── Fallback 1: If OCR hallucinates name but gets Set/CN right ──
+    if (setCode && collectorNumber) {
+      // e.g. "MH2", "267" or "267/303" -> use just the prefix
+      const cleanCn = collectorNumber.split('/')[0].trim();
+      const directMatch = await searchScryfallBySetAndCollector(setCode, cleanCn);
+      if (directMatch) {
+        console.log(`[Scanner] Fallback match succeeded for Set: ${setCode}, CN: ${cleanCn}`);
+        // Return it as a fallback card, bypassing visual comparison
+        return { printings: [], fallbackCard: formatScryfallCard(directMatch) };
+      }
+    }
+
     // Get all unique printings
     const allPrintings = await fetchAllMTGPrintings(cardName);
     const printings = allPrintings.map(formatScryfallCard);
@@ -274,7 +300,14 @@ async function fetchMTGPrintings(cardName: string) {
       return { printings, fallbackCard: null };
     }
 
-    // Fallback: single card lookup
+    // ─── Fallback 2: Deep Semantic Search based on physical attributes ──
+    const deepMatch = await searchScryfallDeepFallback(cardName, manaCost, typeLine, powerToughness, setCode);
+    if (deepMatch) {
+      console.log(`[Scanner] Fallback 2 (Deep Semantic) succeeded for: ${deepMatch.name}`);
+      return { printings: [], fallbackCard: formatScryfallCard(deepMatch) };
+    }
+
+    // Fallback 3: single card exact/fuzzy name lookup
     const namedResult = await searchScryfallCardByName(cardName);
     if (namedResult) return { printings: [], fallbackCard: formatScryfallCard(namedResult) };
 
@@ -284,7 +317,7 @@ async function fetchMTGPrintings(cardName: string) {
   }
 }
 
-async function fetchPokemonPrintings(cardName: string) {
+async function fetchPokemonPrintings(cardName: string, setCode: string, collectorNumber: string) {
   try {
     const allPrintings = await fetchAllPokemonPrintings(cardName);
     const printings = allPrintings.map(formatPokemonCard);
@@ -337,8 +370,8 @@ async function fetchYugiohPrintings(cardName: string) {
   }
 }
 
-// ─── Save to DB and return response ───────────────────────────────────────
-async function saveAndRespond(matchedCard: any, userId: string) {
+// ─── Database Save Helper ──────────────────────────────────────────────────
+async function saveAndRespond(matchedCard: any, userId: string, ocrData?: any) {
   // Upsert card into local DB
   let localCard = await prisma.card.findFirst({
     where: { externalId: matchedCard.externalId }
@@ -399,6 +432,7 @@ async function saveAndRespond(matchedCard: any, userId: string) {
       thumbnailUrl: localCard.thumbnailUrl,
       historyId: history.id,
     },
+    ocrData,
   });
 }
 

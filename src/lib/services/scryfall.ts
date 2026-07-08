@@ -44,6 +44,99 @@ export async function searchScryfallCardByName(query: string, setCode?: string) 
 }
 
 /**
+ * Super-accurate fallback: Search by Set Code and Collector Number directly.
+ * This ignores the name entirely, bypassing OCR hallucinations.
+ */
+export async function searchScryfallBySetAndCollector(setCode: string, collectorNumber: string) {
+  try {
+    const query = `set:${setCode} cn:${collectorNumber}`;
+    const response = await fetch(`${SEARCH_URL}?q=${encodeURIComponent(query)}`, { headers: SCRYFALL_HEADERS });
+    
+    if (response.ok) {
+      const json = await response.json();
+      if (json.data && json.data.length > 0) {
+        console.log(`[Scryfall] Found EXACT match via set/collector: ${json.data[0].name}`);
+        return json.data[0];
+      }
+    }
+    return null;
+  } catch (error) {
+    console.error(`[Scryfall] Set/Collector search failed:`, error);
+    return null;
+  }
+}
+
+/**
+ * Deep Semantic Fallback: Search by combining partial name and physical attributes.
+ * This is used when the name is misread but the AI extracts the mechanics.
+ */
+export async function searchScryfallDeepFallback(
+  partialName: string,
+  manaCost: string,
+  typeLine: string,
+  powerToughness: string,
+  setCode: string
+) {
+  try {
+    let queryParts = [];
+    
+    // Scryfall's exact text search requires exact words, so if the name is completely 
+    // hallucinated we might still miss. But we try to use the first word if it looks real, 
+    // or just pass the whole partial name in quotes.
+    if (partialName && partialName.length > 2) {
+      // Just use the first longest word to be safe against hallucinations
+      const longestWord = partialName.split(' ').reduce((a, b) => a.length > b.length ? a : b, "");
+      if (longestWord.length >= 3) {
+        queryParts.push(`"${longestWord}"`);
+      } else {
+        queryParts.push(`"${partialName}"`);
+      }
+    }
+
+    if (setCode) queryParts.push(`set:${setCode}`);
+    
+    // Type line (e.g. "Creature - Goblin" -> t:Creature t:Goblin)
+    if (typeLine) {
+      const types = typeLine.split(/[\s\-—]+/).filter(t => t.length > 2);
+      for (const t of types) {
+        queryParts.push(`t:"${t}"`);
+      }
+    }
+
+    // Mana cost (e.g. "{3}" or "3")
+    if (manaCost) {
+      // Clean it up just in case, but scryfall accepts m:3 or m:{3}
+      const cleanMana = manaCost.replace(/[^0-9WUBRGX\{\}]/gi, '');
+      if (cleanMana) queryParts.push(`m:${cleanMana}`);
+    }
+
+    // Power and Toughness (e.g. "2/2")
+    if (powerToughness && powerToughness.includes('/')) {
+      const [pow, tou] = powerToughness.split('/');
+      if (pow && pow.trim() !== "*") queryParts.push(`pow:${pow.trim()}`);
+      if (tou && tou.trim() !== "*") queryParts.push(`tou:${tou.trim()}`);
+    }
+
+    const query = queryParts.join(' ');
+    console.log(`[Scryfall] Deep Semantic Fallback Query: "${query}"`);
+
+    const response = await fetch(`${SEARCH_URL}?q=${encodeURIComponent(query)}&order=released`, { headers: SCRYFALL_HEADERS });
+    
+    if (response.ok) {
+      const json = await response.json();
+      if (json.data && json.data.length > 0) {
+        console.log(`[Scryfall] Deep Semantic Fallback matched ${json.data.length} cards, picking: ${json.data[0].name}`);
+        return json.data[0];
+      }
+    }
+    return null;
+  } catch (error) {
+    console.error(`[Scryfall] Deep Semantic search failed:`, error);
+    return null;
+  }
+}
+
+/**
  * Fallback search: Uses Scryfall's full-text search endpoint.
  */
 export async function searchScryfallCards(query: string, setCode?: string, collectorNumber?: string) {
@@ -85,7 +178,7 @@ export async function searchScryfallCards(query: string, setCode?: string, colle
 
 /**
  * Fetch ALL unique printings of a card by name for visual comparison.
- * Returns up to 20 printings with their image URLs for the AI to compare.
+ * Returns printings with their image URLs for the AI to compare.
  */
 export async function fetchAllMTGPrintings(name: string): Promise<any[]> {
   try {
@@ -93,7 +186,7 @@ export async function fetchAllMTGPrintings(name: string): Promise<any[]> {
     const res = await fetch(`${SEARCH_URL}?q=${encodeURIComponent(query)}&order=released&dir=desc`, { headers: SCRYFALL_HEADERS });
     if (!res.ok) return [];
     const json = await res.json();
-    return (json.data || []).slice(0, 20); // cap at 20
+    return json.data || [];
   } catch {
     return [];
   }

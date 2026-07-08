@@ -219,6 +219,14 @@ export default function ScannerPage() {
       
       const json = await res.json();
 
+      // Log exactly what the AI OCR read for debugging purposes
+      if (json.ocrData) {
+        console.log("=========================================");
+        console.log("[AI OCR DEBUG] Raw Extractions from Card:");
+        console.log(json.ocrData);
+        console.log("=========================================");
+      }
+
       // AI is uncertain — show disambiguation grid for user to pick
       if (json.requiresDisambiguation) {
         setDisambiguationCandidates(json.candidates || []);
