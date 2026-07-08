@@ -11,6 +11,14 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import {
+  captureSharpestFrame,
+  MANUAL_FRAME_COUNT,
+  AUTO_FRAME_COUNT,
+  PREFERRED_CAMERA_WIDTH,
+  PREFERRED_CAMERA_HEIGHT,
+  type CaptureResult,
+} from "@/lib/scanner/capture";
 
 type ScanState = "idle" | "scanning" | "processing" | "result" | "bulk-review" | "disambiguation" | "error";
 
@@ -58,11 +66,13 @@ export default function ScannerPage() {
         streamRef.current.getTracks().forEach((t) => t.stop());
       }
       
+      // Request QHD (~2560×1440) as `ideal` so the browser hands us the best
+      // resolution the device supports and falls back gracefully otherwise.
       const mediaStream = await navigator.mediaDevices.getUserMedia({
-        video: { 
-          facingMode: { ideal: "environment" }, 
-          width: { ideal: 1280 }, 
-          height: { ideal: 720 } 
+        video: {
+          facingMode: { ideal: "environment" },
+          width: { ideal: PREFERRED_CAMERA_WIDTH },
+          height: { ideal: PREFERRED_CAMERA_HEIGHT }
         },
       });
       streamRef.current = mediaStream;
@@ -144,56 +154,15 @@ export default function ScannerPage() {
     }
   }, []);
 
-  // ─── Image Capture ────────────────────────────────────────────────────
-  const getCompressedImageBase64 = useCallback(() => {
-    if (!videoRef.current || !canvasRef.current) return null;
-    const canvas = canvasRef.current;
-    const video = videoRef.current;
-    
-    const width = video.videoWidth;
-    const height = video.videoHeight;
-    
-    // Video not loaded yet or camera not producing frames
-    if (!width || !height || width < 10 || height < 10) {
-      console.warn("[Scanner] Video not ready yet:", width, "x", height);
-      return null;
-    }
-
-    // Scale down to 1024px max to ensure text is highly legible for AI OCR
-    const maxDim = 1024;
-    let w = width;
-    let h = height;
-    if (w > maxDim || h > maxDim) {
-      if (w > h) {
-        h = Math.round((h * maxDim) / w);
-        w = maxDim;
-      } else {
-        w = Math.round((w * maxDim) / h);
-        h = maxDim;
-      }
-    }
-
-    canvas.width = w;
-    canvas.height = h;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return null;
-    
-    ctx.drawImage(video, 0, 0, w, h);
-    
-    // Quick brightness check — skip pure black frames (camera not ready)
-    const sample = ctx.getImageData(Math.floor(w / 2), Math.floor(h / 2), 20, 20);
-    let totalBrightness = 0;
-    for (let i = 0; i < sample.data.length; i += 4) {
-      totalBrightness += sample.data[i] + sample.data[i + 1] + sample.data[i + 2];
-    }
-    const avgBrightness = totalBrightness / (sample.data.length / 4) / 3;
-    if (avgBrightness < 5) {
-      console.warn("[Scanner] Frame too dark (brightness:", avgBrightness.toFixed(1), ") — skipping");
-      return null;
-    }
-
-    return canvas.toDataURL("image/jpeg", 0.85);
-  }, []);
+  // ─── Image Capture (Phase 4) ──────────────────────────────────────────
+  // Multi-frame capture + sharpness selection + quality gate all live in
+  // src/lib/scanner/capture.ts. This is a thin wrapper: `frameCount` is the
+  // only per-caller knob (manual can afford more frames than the auto loop).
+  const captureBestFrame = useCallback(
+    (frameCount: number): Promise<CaptureResult> =>
+      captureSharpestFrame(videoRef.current, canvasRef.current, { frameCount }),
+    []
+  );
 
   // ─── Scan Request ─────────────────────────────────────────────────────
   const processScanRequest = useCallback(async (base64Image: string, isBackground: boolean = false) => {
@@ -281,17 +250,20 @@ export default function ScannerPage() {
   // ─── Manual Scan ──────────────────────────────────────────────────────
   const captureCard = useCallback(async () => {
     if (!session?.user?.id) return;
-    
-    const base64Image = getCompressedImageBase64();
-    if (!base64Image) {
-      setErrorMessage("Camera is not ready. Please wait a moment and try again.");
+
+    // Multi-frame capture + quality gate. A poor frame (blurry / too dark /
+    // overexposed) is rejected HERE with a friendly message, so we never spend
+    // an OCR request on an unreadable image.
+    const capture = await captureBestFrame(MANUAL_FRAME_COUNT);
+    if (!capture.ok) {
+      setErrorMessage(capture.message);
       setState("error");
       return;
     }
-    
+
     setState("processing");
-    await processScanRequest(base64Image, false);
-  }, [session, getCompressedImageBase64, processScanRequest]);
+    await processScanRequest(capture.dataUrl, false);
+  }, [session, captureBestFrame, processScanRequest]);
 
   // ─── Auto Scan Loop ───────────────────────────────────────────────────
   useEffect(() => {
@@ -304,11 +276,13 @@ export default function ScannerPage() {
         isAutoScanningRef.current = true;
         setAutoScanBusy(true);
         
-        const base64Image = getCompressedImageBase64();
-        if (base64Image) {
-          await processScanRequest(base64Image, true);
+        // Background scans silently skip poor frames (existing behavior): the
+        // loop just tries again on the next tick rather than surfacing an error.
+        const capture = await captureBestFrame(AUTO_FRAME_COUNT);
+        if (capture.ok) {
+          await processScanRequest(capture.dataUrl, true);
         }
-        
+
         isAutoScanningRef.current = false;
         setAutoScanBusy(false);
       }, 4000); // Check every 4 seconds
@@ -326,7 +300,7 @@ export default function ScannerPage() {
         autoScanIntervalRef.current = null;
       }
     };
-  }, [state, isAutoScan, cameraReady, getCompressedImageBase64, processScanRequest]);
+  }, [state, isAutoScan, cameraReady, captureBestFrame, processScanRequest]);
 
   // Cycling loading message effect
   useEffect(() => {
