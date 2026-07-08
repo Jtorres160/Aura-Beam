@@ -37,7 +37,13 @@ export async function POST(req: NextRequest) {
       imageUrl = `data:image/jpeg;base64,${imageUrl}`;
     }
 
-    // ─── Step 1: OCR — Extract card name and game from image ────────────
+    // ─── Step 1: OCR — two passes over the same image, in PARALLEL ──────
+    // The strip pass only depends on the image, not on the full pass, so
+    // firing it now hides its entire round-trip behind the full pass instead
+    // of adding one. When the full pass fails or the game turns out to be
+    // Yugioh its result is simply discarded — that costs a fraction of a
+    // cent, versus seconds of added latency on every scan if run serially.
+    const stripPromise = extractBottomStrip(imageUrl);
     const extraction = await extractCardFields(imageUrl);
     if (!extraction.ok) {
       return NextResponse.json({ success: false, message: extraction.message }, { status: extraction.status });
@@ -49,14 +55,14 @@ export async function POST(req: NextRequest) {
     const effectiveGame = game || aiGame;
     console.log(`[Scanner] Identified: "${cardName}" (${effectiveGame || "unknown game"}) [Set: ${setCode}, CN: ${collectorNumber}, Mana: ${manaCost}, Type: ${typeLine}, PT: ${powerToughness}]`);
 
-    // ─── Step 1c: Dedicated bottom-strip OCR pass (Phase 3) ────────────
-    // Re-read the set/collector strip with a targeted high-detail pass and
-    // reconcile it with the full-pass reading. Set/CN drives the strongest
-    // match paths (set-cn-verified 0.97, single-art-group 0.85), so sharpening
-    // it yields more auto-accepts and fewer disambiguation prompts. Yugioh
-    // identification ignores set/CN, so skip the extra call there.
+    // ─── Step 1c: Reconcile the bottom-strip OCR pass (Phase 3) ────────
+    // The strip pass re-read the set/collector strip at high detail; merge it
+    // with the full-pass reading. Set/CN drives the strongest match paths
+    // (set-cn-verified 0.97, single-art-group 0.85), so sharpening it yields
+    // more auto-accepts and fewer disambiguation prompts. Yugioh
+    // identification ignores set/CN, so its strip result is discarded.
     if (usesSetCnEvidence(effectiveGame)) {
-      const strip = await extractBottomStrip(imageUrl);
+      const strip = await stripPromise;
       const reconciled = reconcileSetCn({ setCode, collectorNumber }, strip);
       if (reconciled.setCode !== setCode || reconciled.collectorNumber !== collectorNumber) {
         console.log(`[Scanner] Strip OCR reconciled set/CN: [${setCode || "∅"}, ${collectorNumber || "∅"}] -> [${reconciled.setCode || "∅"}, ${reconciled.collectorNumber || "∅"}]`);

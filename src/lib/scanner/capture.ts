@@ -254,10 +254,10 @@ export async function captureSharpestFrame(
   const quality = opts.quality ?? CAPTURE_JPEG_QUALITY;
 
   // For each sampled frame, measure sharpness and, if it's the best so far,
-  // encode it right away. Encoding the winner as we go keeps the pixels of the
-  // sharpest frame regardless of what the canvas holds afterwards — a following,
-  // blurrier frame overwrites the canvas but not our stored dataUrl.
-  let best: { metrics: QualityMetrics; dataUrl: string } | null = null;
+  // copy its PIXELS to a holding canvas (a cheap blit — the expensive JPEG
+  // encode happens exactly once, after the quality gate). The copy is needed
+  // because the next, possibly blurrier frame overwrites the working canvas.
+  let best: { metrics: QualityMetrics; canvas: HTMLCanvasElement } | null = null;
 
   for (let i = 0; i < frameCount; i++) {
     if (i > 0) await wait(FRAME_INTERVAL_MS);
@@ -265,7 +265,13 @@ export async function captureSharpestFrame(
     const metrics = computeMetrics(canvas);
     if (!metrics) continue;
     if (!best || metrics.sharpness > best.metrics.sharpness) {
-      best = { metrics, dataUrl: canvas.toDataURL("image/jpeg", quality) };
+      const holder: HTMLCanvasElement = best ? best.canvas : document.createElement("canvas");
+      holder.width = canvas.width;
+      holder.height = canvas.height;
+      const ctx = holder.getContext("2d");
+      if (!ctx) continue;
+      ctx.drawImage(canvas, 0, 0);
+      best = { metrics, canvas: holder };
     }
   }
 
@@ -276,5 +282,5 @@ export async function captureSharpestFrame(
   const failure = assessQuality(best.metrics);
   if (failure) return { ok: false, reason: failure.reason, message: failure.message };
 
-  return { ok: true, dataUrl: best.dataUrl, metrics: best.metrics };
+  return { ok: true, dataUrl: best.canvas.toDataURL("image/jpeg", quality), metrics: best.metrics };
 }

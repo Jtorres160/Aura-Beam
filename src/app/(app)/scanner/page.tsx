@@ -22,6 +22,11 @@ import {
 
 type ScanState = "idle" | "scanning" | "processing" | "result" | "bulk-review" | "disambiguation" | "error";
 
+/** Same card re-identified within this window = the card is still sitting in
+ *  front of the camera, not a deliberate duplicate. After the window a repeat
+ *  of the same card IS queued — collectors scan playsets of one card. */
+const BULK_DUPLICATE_WINDOW_MS = 10_000;
+
 // Acquire a camera stream, retrying once with relaxed constraints when the
 // first attempt fails in a way a lighter request usually clears:
 //   - AbortError "Timeout starting video source": the high-res negotiation
@@ -77,9 +82,9 @@ export default function ScannerPage() {
 
   const [autoScanBusy, setAutoScanBusy] = useState(false); // only for UI spinner
   const isAutoScanningRef = useRef(false); // true lock — prevents overlapping scans
+  const lastBulkAddRef = useRef<{ id: string; at: number } | null>(null); // bulk dedup window
   const autoScanIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [cameraReady, setCameraReady] = useState(false);
-  const [stream, setStream] = useState<MediaStream | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -116,7 +121,6 @@ export default function ScannerPage() {
       // if the high-res start times out or the device is briefly locked.
       const mediaStream = await acquireCameraStream();
       streamRef.current = mediaStream;
-      setStream(mediaStream);
       setCameraReady(false);
       setState("scanning");
     } catch (err) {
@@ -197,8 +201,7 @@ export default function ScannerPage() {
       streamRef.current.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
     }
-    setStream(null);
-    
+
     // If in bulk mode and have queue, go to review. Otherwise idle.
     if (bulkQueue.length > 0) {
       setState("bulk-review");
@@ -282,16 +285,19 @@ export default function ScannerPage() {
       const card = json.data;
       
       if (isBulkMode) {
-        // Bulk Mode logic: Add to queue, do not stop camera
-        setBulkQueue((prev) => {
-          // Debounce: don't add the exact same card twice in a row
-          if (prev.length > 0 && prev[prev.length - 1].id === card.id) {
-            console.log("[BulkScan] Ignored duplicate consecutive card:", card.name);
-            return prev;
-          }
+        // Bulk Mode logic: Add to queue, do not stop camera.
+        // Time-based debounce (not consecutive-id): the same card still in
+        // frame across auto-scan ticks is skipped, but a deliberate duplicate
+        // scanned later (playsets!) queues normally.
+        const now = Date.now();
+        const last = lastBulkAddRef.current;
+        if (last && last.id === card.id && now - last.at < BULK_DUPLICATE_WINDOW_MS) {
+          console.log("[BulkScan] Ignored same card still in frame:", card.name);
+        } else {
+          lastBulkAddRef.current = { id: card.id, at: now };
           console.log("[BulkScan] Added to queue:", card.name);
-          return [...prev, card];
-        });
+          setBulkQueue((prev) => [...prev, card]);
+        }
       } else {
         // Normal Mode logic: Stop auto-scan and show result
         if (autoScanIntervalRef.current) {
