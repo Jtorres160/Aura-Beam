@@ -87,6 +87,20 @@ Return ONLY raw JSON. No markdown. No explanation.`
     const effectiveGame = game || aiGame;
     console.log(`[Scanner] Identified: "${cardName}" (${effectiveGame || "unknown game"})`);
 
+    // ─── Step 1b: Check AI Learning Rules for this card ───────────────
+    const learningRule = await prisma.aiLearningRule.findUnique({
+      where: { targetName: cardName },
+    });
+
+    if (learningRule) {
+      console.log(`[Scanner] 🧠 Found learning rule for "${cardName}": ${learningRule.ruleType}`);
+      // Increment timesApplied asynchronously — don't await to avoid slowing the scan
+      prisma.aiLearningRule.update({
+        where: { id: learningRule.id },
+        data: { timesApplied: { increment: 1 } },
+      }).catch(() => {});
+    }
+
     // ─── Step 2: Fetch all printings of this card ─────────────────────
     console.log(`[Scanner] Step 2: Fetching all printings for "${cardName}"...`);
     const { printings, fallbackCard } = await fetchAllPrintings(cardName, effectiveGame);
@@ -106,6 +120,31 @@ Return ONLY raw JSON. No markdown. No explanation.`
 
     // ─── Step 3: Visual artwork comparison — pick the exact printing ──
     console.log(`[Scanner] Step 3: Visual comparison across ${printings.length} printings...`);
+
+    // If FORCE_DISAMBIGUATION rule exists, skip AI comparison — we KNOW this card is hard
+    if (learningRule?.ruleType === "FORCE_DISAMBIGUATION") {
+      console.log(`[Scanner] 🧠 FORCE_DISAMBIGUATION rule active for "${cardName}" — skipping AI comparison.`);
+      const disambigCandidates = printings.slice(0, MAX_VISUAL_CANDIDATES)
+        .filter((p: any) => p.thumbnailUrl)
+        .map((c: any) => ({
+          externalId: c.externalId,
+          name: c.name,
+          game: c.game,
+          setName: c.setName,
+          setCode: c.setCode || null,
+          collectorNumber: c.collectorNumber || null,
+          rarity: c.rarity,
+          imageUrl: c.imageUrl,
+          thumbnailUrl: c.thumbnailUrl,
+          price: c.price,
+        }));
+      return NextResponse.json({
+        success: true,
+        requiresDisambiguation: true,
+        cardName,
+        candidates: disambigCandidates,
+      });
+    }
 
     // Cap candidates & use SMALL thumbnails to minimize token cost
     const candidates = printings.slice(0, MAX_VISUAL_CANDIDATES);
@@ -132,7 +171,9 @@ Return ONLY raw JSON. No markdown. No explanation.`
             role: "system",
             content: `You are an expert trading card artwork identifier. The user has scanned a physical card (first image). You are given ${validCandidates.length} candidate card images (images 2 through ${validCandidates.length + 1}). Compare the artwork, border style, foil pattern, and card layout of the scanned card against each candidate. Respond with ONLY a single integer:
 - The 0-based index of the candidate that CLEARLY matches the scanned card.
-- Return -1 if you are not confident or if multiple candidates look similar.`
+- Return -1 if you are not confident or if multiple candidates look similar.${
+  learningRule?.ruleType === "HINT" ? `\n\nIMPORTANT HINT from past scans: ${learningRule.content}` : ""
+}`
           },
           {
             role: "user",

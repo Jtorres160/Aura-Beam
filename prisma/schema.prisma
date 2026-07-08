@@ -270,3 +270,29 @@ model Deck {
 
   @@map("decks")
 }
+
+// ─── AI Learning Rules ───────────────────────────────────────────────
+// Auto-generated rules based on scan history analysis.
+// When the AI repeatedly struggles with a card, a rule is created and
+// injected into the AI prompt during future scans of that card.
+
+model AiLearningRule {
+  id           String   @id @default(cuid())
+  // The card name or game this rule targets (e.g., "Charizard" or "YUGIOH")
+  targetName   String
+  // "HINT" = inject helpful text into AI prompt
+  // "FORCE_DISAMBIGUATION" = skip visual comparison entirely, go straight to user selection
+  ruleType     String   @default("HINT")
+  // The hint text to inject into the AI system prompt
+  content      String
+  // How many times the AI failed on this card before the rule was created
+  failureCount Int      @default(0)
+  // How many times this rule has been used in a scan
+  timesApplied Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([targetName])
+  @@index([targetName])
+  @@map("ai_learning_rules")
+}
