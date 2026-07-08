@@ -11,8 +11,8 @@ const openai = new OpenAI({
 });
 
 // ─── Max candidate images sent to AI for visual comparison ────────────────
-// Keep low to minimize token cost. Thumbnails are ~1-2KB each vs 20KB+ for large images.
-const MAX_VISUAL_CANDIDATES = 8;
+// Max images to send to the vision model (detail: low = 85 tokens each, so 25 = ~2100 tokens, very cheap)
+const MAX_VISUAL_CANDIDATES = 25;
 
 export async function POST(req: NextRequest) {
   try {
@@ -124,8 +124,8 @@ Return ONLY raw JSON. No markdown. No explanation.`
     // If FORCE_DISAMBIGUATION rule exists, skip AI comparison — we KNOW this card is hard
     if (learningRule?.ruleType === "FORCE_DISAMBIGUATION") {
       console.log(`[Scanner] 🧠 FORCE_DISAMBIGUATION rule active for "${cardName}" — skipping AI comparison.`);
-      const disambigCandidates = printings.slice(0, MAX_VISUAL_CANDIDATES)
-        .filter((p: any) => p.thumbnailUrl)
+      const disambigCandidates = printings
+        .filter((p: any) => p.thumbnailUrl) // Send ALL printings to the UI
         .map((c: any) => ({
           externalId: c.externalId,
           name: c.name,
@@ -170,8 +170,9 @@ Return ONLY raw JSON. No markdown. No explanation.`
           {
             role: "system",
             content: `You are an expert trading card artwork identifier. The user has scanned a physical card (first image). You are given ${validCandidates.length} candidate card images (images 2 through ${validCandidates.length + 1}). Compare the artwork, border style, foil pattern, and card layout of the scanned card against each candidate. Respond with ONLY a single integer:
-- The 0-based index of the candidate that CLEARLY matches the scanned card.
-- Return -1 if you are not confident or if multiple candidates look similar.${
+- The 0-based index of the candidate that CLEARLY AND EXACTLY matches the scanned card.
+- Return -1 if NONE of the candidate images match the scanned card perfectly.
+- Return -1 if you are not confident or if multiple candidates look identical.${
   learningRule?.ruleType === "HINT" ? `\n\nIMPORTANT HINT from past scans: ${learningRule.content}` : ""
 }`
           },
@@ -205,18 +206,21 @@ Return ONLY raw JSON. No markdown. No explanation.`
 
     // ─── Step 4: If AI is uncertain, return candidates for user to pick ──
     if (isUncertain) {
-      const disambigCandidates = validCandidates.map((c: any) => ({
-        externalId: c.externalId,
-        name: c.name,
-        game: c.game,
-        setName: c.setName,
-        setCode: c.setCode || null,
-        collectorNumber: c.collectorNumber || null,
-        rarity: c.rarity,
-        imageUrl: c.imageUrl,
-        thumbnailUrl: c.thumbnailUrl,
-        price: c.price,
-      }));
+      // Send ALL printings to the UI for disambiguation, not just the AI candidate slice
+      const disambigCandidates = printings
+        .filter((c: any) => c.thumbnailUrl)
+        .map((c: any) => ({
+          externalId: c.externalId,
+          name: c.name,
+          game: c.game,
+          setName: c.setName,
+          setCode: c.setCode || null,
+          collectorNumber: c.collectorNumber || null,
+          rarity: c.rarity,
+          imageUrl: c.imageUrl,
+          thumbnailUrl: c.thumbnailUrl,
+          price: c.price,
+        }));
 
       return NextResponse.json({
         success: true,
