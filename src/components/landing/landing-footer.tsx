@@ -7,7 +7,7 @@ const footerLinks = {
     // BETA: Aura subscription pricing hidden for private beta. Restore this link when pricing returns.
     // { label: "Pricing", href: "#pricing" },
     { label: "Scanner", href: "/scanner" },
-    { label: "Dashboard", href: "/dashboard" },
+    { label: "Collection", href: "/collection" },
   ],
   Company: [
     { label: "About", href: "/about" },

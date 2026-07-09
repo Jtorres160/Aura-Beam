@@ -41,7 +41,7 @@ export default function LoginPage() {
       const result = await signIn("credentials", {
         email,
         password,
-        callbackUrl: "/dashboard",
+        callbackUrl: "/scanner",
         redirect: false,
       });
 
@@ -65,7 +65,7 @@ export default function LoginPage() {
   };
 
   const handleGoogleSignIn = () => {
-    signIn("google", { callbackUrl: "/dashboard" });
+    signIn("google", { callbackUrl: "/scanner" });
   };
 
   return (

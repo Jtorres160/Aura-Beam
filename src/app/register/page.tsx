@@ -55,7 +55,7 @@ export default function RegisterPage() {
       const result = await signIn("credentials", {
         email,
         password,
-        callbackUrl: "/dashboard",
+        callbackUrl: "/scanner",
         redirect: false,
       }) as any;
       
@@ -72,7 +72,7 @@ export default function RegisterPage() {
   };
 
   const handleGoogleSignIn = () => {
-    signIn("google", { callbackUrl: "/dashboard" });
+    signIn("google", { callbackUrl: "/scanner" });
   };
 
   return (

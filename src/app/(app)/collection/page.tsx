@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import Link from "next/link";
 import { motion } from "framer-motion";
 import { useSession } from "next-auth/react";
 import { Library, Grid3X3, List, Plus, Search, Filter, Sparkles, Loader2 } from "lucide-react";
@@ -71,10 +72,12 @@ export default function CollectionPage() {
               {collection.length} cards · Total value: <span className="text-foreground font-semibold">${totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
             </p>
           </div>
-          <Button className="gradient-bg text-white border-0 rounded-xl font-medium">
-            <Plus className="h-4 w-4 mr-2" />
-            Add Card
-          </Button>
+          <Link href="/search">
+            <Button className="font-medium">
+              <Plus className="h-4 w-4 mr-2" />
+              Add card
+            </Button>
+          </Link>
         </div>
       </motion.div>
 

@@ -17,17 +17,6 @@ export function HeroSection() {
       <div className="absolute top-1/2 right-1/3 w-64 h-64 rounded-full bg-aura-violet/10 blur-[80px] animate-float" style={{ animationDelay: "4s" }} />
 
       <div className="relative z-10 mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 text-center">
-        {/* Badge */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6 }}
-          className="inline-flex items-center gap-2 rounded-full border border-aura-purple/30 bg-aura-purple/10 px-4 py-1.5 mb-8"
-        >
-          <span className="h-2 w-2 rounded-full bg-aura-purple animate-pulse" />
-          <span className="text-sm font-medium text-aura-violet">Now supporting Pokémon, MTG & Yu-Gi-Oh!</span>
-        </motion.div>
-
         {/* Headline */}
         <motion.h1
           initial={{ opacity: 0, y: 30 }}
