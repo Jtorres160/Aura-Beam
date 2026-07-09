@@ -489,6 +489,9 @@ export default function ScannerPage() {
         const capture = await captureBestFrame(AUTO_FRAME_COUNT, "smart");
         if (capture.ok) await processScanRequest(capture.dataUrl, true);
       } finally {
+        // Release the persistent lock BEFORE settling so a re-subscribed loop
+        // can resume cleanly.
+        isAutoScanningRef.current = false;
         setAutoScanBusy(false);
         machine.settle(performance.now(), decisionHash);
       }
@@ -498,7 +501,11 @@ export default function ScannerPage() {
       raf = requestAnimationFrame(loop);
       if (now - lastTick < SMART_TICK_MS) return;
       lastTick = now;
-      if (cancelled || machine.state === "capturing") return;
+      // isAutoScanningRef is a PERSISTENT lock (survives effect re-subscribes,
+      // unlike machine.state which reset() clears) — it's what prevents a
+      // second, overlapping OCR call if the effect re-runs mid-capture (e.g.
+      // the user taps a game filter while a scan is in flight).
+      if (cancelled || isAutoScanningRef.current || machine.state === "capturing") return;
 
       const m = liveMetricsRef.current?.getLatest() ?? null;
       const ready = !!m && now - m.at <= SMART_STALE_MS && evaluateReadiness(m).ready;
@@ -506,7 +513,10 @@ export default function ScannerPage() {
       const result = machine.step(now, ready, () =>
         videoRef.current ? computeAverageHash(videoRef.current, hashCanvas) : null
       );
-      if (result.action === "capture") void runCapture(result.hash);
+      if (result.action === "capture") {
+        isAutoScanningRef.current = true;
+        void runCapture(result.hash);
+      }
     };
 
     raf = requestAnimationFrame(loop);
