@@ -12,9 +12,11 @@ import { type Decision, gateDecision } from "@/lib/scanner/decision";
 import { extractBottomStrip, extractCardFields } from "@/lib/scanner/extract";
 import { fetchAllPrintings } from "@/lib/scanner/candidates";
 import { scorer } from "@/lib/scanner/score";
+import { buildScanTelemetry } from "@/lib/scanner/telemetry";
 import { checkScanBurst, SCAN_DAILY_LIMIT, startOfUtcDay } from "@/lib/rate-limit";
 
 export async function POST(req: NextRequest) {
+  const startedAt = Date.now();
   try {
     const session = await auth();
     if (!session?.user?.id) {
@@ -29,8 +31,11 @@ export async function POST(req: NextRequest) {
         { status: 429, headers: { "Retry-After": String(burst.retryAfterSeconds) } }
       );
     }
+    // cardId != null: only SAVED scans count against the daily cap. Telemetry
+    // rows for disambiguation/not-found attempts have cardId null and must not
+    // tighten the limit (same semantics as before those rows existed).
     const scansToday = await prisma.scanHistory.count({
-      where: { userId: session.user.id, createdAt: { gte: startOfUtcDay() } },
+      where: { userId: session.user.id, cardId: { not: null }, createdAt: { gte: startOfUtcDay() } },
     });
     if (scansToday >= SCAN_DAILY_LIMIT) {
       return NextResponse.json(
@@ -139,15 +144,49 @@ export async function POST(req: NextRequest) {
     // Auto-scan saves without a review screen, so it demands more confidence.
     const decision: Decision = gateDecision(scored.decision, Boolean(isAutoScan), scored);
 
+    // ─── Telemetry (pre-Phase 5): every attempt leaves an evidence record ─
+    // Evidence + verdict + candidate counts, persisted with the attempt so
+    // real scans accumulate into the Phase 6 evaluation dataset. Stored in
+    // ScanHistory.ocrText (versioned JSON, previously unused column).
+    const telemetryJson = JSON.stringify(buildScanTelemetry({
+      evidence,
+      scored,
+      decision,
+      printingsCount: printings.length,
+      ocr: identifiedCard,
+      game: effectiveGame,
+      isAutoScan: Boolean(isAutoScan),
+    }));
+
     if (decision.action === "accept" && decision.printing) {
-      return await saveAndRespond(decision.printing, session.user.id, identifiedCard, decision);
+      return await saveAndRespond(decision.printing, session.user.id, identifiedCard, decision, telemetryJson, startedAt);
     }
 
     if (decision.action === "disambiguate" && decision.candidates && decision.candidates.length > 0) {
       console.log(`[Scanner] Requesting user disambiguation among ${decision.candidates.length} candidate(s).`);
-      return disambiguationResponse(cardName, decision.candidates, identifiedCard, decision.bestMatchExternalId);
+      // cardId stays null until (unless) the user picks — save-selection then
+      // updates THIS row, linking the pick (ground truth) to this evidence.
+      const pending = await prisma.scanHistory.create({
+        data: {
+          userId: session.user.id,
+          confidence: Math.round(decision.confidence * 100),
+          matchMethod: "disambiguation-pending",
+          ocrText: telemetryJson,
+          processingTime: Date.now() - startedAt,
+        },
+      });
+      return disambiguationResponse(cardName, decision.candidates, identifiedCard, pending.id, decision.bestMatchExternalId);
     }
 
+    await prisma.scanHistory.create({
+      data: {
+        userId: session.user.id,
+        confidence: 0,
+        matchMethod: "not-found",
+        ocrText: telemetryJson,
+        processingTime: Date.now() - startedAt,
+      },
+    });
     return NextResponse.json({
       success: false,
       message: `AI identified "${cardName}" but no match was found in any card database. Try scanning again with better lighting.`
@@ -170,7 +209,9 @@ function usesSetCnEvidence(game: string): boolean {
 }
 
 // ─── Disambiguation response ────────────────────────────────────────────────
-function disambiguationResponse(cardName: string, candidates: CandidatePrinting[], ocrData: any, bestMatchExternalId?: string) {
+// scanId identifies the pending ScanHistory row for this attempt; the client
+// echoes it to save-selection so the user's pick lands on the same record.
+function disambiguationResponse(cardName: string, candidates: CandidatePrinting[], ocrData: any, scanId: string, bestMatchExternalId?: string) {
   const withImages = candidates.filter((c) => c.thumbnailUrl);
   const list = (withImages.length > 0 ? withImages : candidates).map((c) => ({
     externalId: c.externalId,
@@ -191,35 +232,38 @@ function disambiguationResponse(cardName: string, candidates: CandidatePrinting[
     success: true,
     requiresDisambiguation: true,
     cardName,
+    scanId,
     candidates: list,
     ocrData,
   });
 }
 
 // ─── Database Save Helper ──────────────────────────────────────────────────
-async function saveAndRespond(matchedCard: CandidatePrinting, userId: string, ocrData: any, decision: Decision) {
+async function saveAndRespond(matchedCard: CandidatePrinting, userId: string, ocrData: any, decision: Decision, telemetryJson: string, startedAt: number) {
   const confidencePct = Math.round(decision.confidence * 100);
 
-  // Upsert card into local DB
-  let localCard = await prisma.card.findFirst({
-    where: { externalId: matchedCard.externalId }
+  // Upsert keyed on the unique externalId. Atomic — two concurrent scans of
+  // the same NEW card (bulk/smart mode) previously raced findFirst→create and
+  // the loser 500'd on the unique constraint. The update branch also refreshes
+  // card metadata from the card database, so stale names/images self-heal.
+  const cardData = {
+    name: matchedCard.name,
+    setName: matchedCard.setName,
+    setCode: matchedCard.setCode || null,
+    collectorNumber: matchedCard.collectorNumber || null,
+    rarity: matchedCard.rarity,
+    imageUrl: matchedCard.imageUrl,
+    thumbnailUrl: matchedCard.thumbnailUrl,
+  };
+  const localCard = await prisma.card.upsert({
+    where: { externalId: matchedCard.externalId },
+    update: cardData,
+    create: {
+      externalId: matchedCard.externalId,
+      game: matchedCard.game,
+      ...cardData,
+    },
   });
-
-  if (!localCard) {
-    localCard = await prisma.card.create({
-      data: {
-        externalId: matchedCard.externalId,
-        name: matchedCard.name,
-        game: matchedCard.game,
-        setName: matchedCard.setName,
-        setCode: matchedCard.setCode || null,
-        collectorNumber: matchedCard.collectorNumber || null,
-        rarity: matchedCard.rarity,
-        imageUrl: matchedCard.imageUrl,
-        thumbnailUrl: matchedCard.thumbnailUrl,
-      }
-    });
-  }
 
   // Always refresh the stored price with what the card database returned just
   // now — a card first scanned months ago must not keep its stale price.
@@ -248,6 +292,8 @@ async function saveAndRespond(matchedCard: CandidatePrinting, userId: string, oc
       confidence: confidencePct,
       matchMethod: decision.method || null,
       imageUrl: localCard.imageUrl,
+      ocrText: telemetryJson,
+      processingTime: Date.now() - startedAt,
     },
   });
 

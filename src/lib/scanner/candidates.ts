@@ -3,9 +3,9 @@
 // the identified card from the game's card database. Produces evidence only —
 // the decision layer decides which printing (if any) to accept.
 
-import { searchPokemonCards, searchPokemonBySetAndNumber, fetchAllPokemonPrintings, formatPokemonCard } from "@/lib/services/pokemon";
-import { searchScryfallCardByName, fetchAllMTGPrintings, formatScryfallCard, searchScryfallBySetAndCollector, searchScryfallDeepFallback } from "@/lib/services/scryfall";
-import { searchYugiohCards, getYugiohPrintings, formatYugiohCard } from "@/lib/services/yugioh";
+import { searchPokemonCards, searchPokemonBySetAndNumber, fetchAllPokemonPrintings, formatPokemonCard, getPokemonCardById } from "@/lib/services/pokemon";
+import { searchScryfallCardByName, fetchAllMTGPrintings, formatScryfallCard, searchScryfallBySetAndCollector, searchScryfallDeepFallback, getScryfallCardById } from "@/lib/services/scryfall";
+import { searchYugiohCards, getYugiohPrintings, formatYugiohCard, getYugiohCardById } from "@/lib/services/yugioh";
 import type { CandidatePrinting } from "@/lib/scanner/evidence";
 import { type MatchMethod, nameMatchesOcr } from "@/lib/scanner/decision";
 
@@ -41,6 +41,53 @@ export async function fetchAllPrintings(
   if (pkmn.printings.length > 0 || pkmn.fallbackCard) return pkmn;
 
   return await fetchYugiohPrintings(cardName);
+}
+
+// ─── Authoritative lookup by identifier ─────────────────────────────────────
+// Fetch ONE printing straight from its source database by external id. This is
+// the server-side trust anchor for user selections: the client names a card by
+// (game, externalId) only, and everything persisted about it comes from here —
+// never from the request body.
+export async function fetchPrintingById(game: string, externalId: string): Promise<CandidatePrinting | null> {
+  const g = game?.toUpperCase?.() || "";
+  try {
+    if (g.includes("MTG") || g.includes("MAGIC")) {
+      const card = await getScryfallCardById(externalId);
+      return card ? formatScryfallCard(card) : null;
+    }
+    if (g.includes("POKEMON") || g.includes("POKÉMON")) {
+      const card = await getPokemonCardById(externalId);
+      return card ? formatPokemonCard(card) : null;
+    }
+    if (g.includes("YUGIOH") || g.includes("YU-GI-OH")) {
+      const card = await getYugiohCardById(externalId);
+      if (!card) return null;
+      // Variant-qualified ids ("cardId:imageId") name one artwork of a
+      // multi-art card. Rebuild that exact variant — same shape as
+      // fetchYugiohPrintings — so the saved row keeps the variant id/images.
+      const imageId = externalId.split(":")[1];
+      if (imageId) {
+        const variant = getYugiohPrintings(card).find((p: any) => p.illustrationId === imageId);
+        if (!variant) return null;
+        return {
+          externalId,
+          name: card.name,
+          game: "YUGIOH",
+          setName: variant.setName,
+          setCode: variant.setCode,
+          rarity: variant.rarity,
+          imageUrl: variant.imageUrl,
+          thumbnailUrl: variant.thumbnailUrl,
+          price: { marketPrice: variant.price },
+          illustrationId: variant.illustrationId,
+        };
+      }
+      return formatYugiohCard(card);
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 async function fetchMTGPrintings(cardName: string, setCode: string, collectorNumber: string, manaCost: string, typeLine: string, powerToughness: string): Promise<PrintingsResult> {

@@ -90,6 +90,9 @@ export default function ScannerPage() {
   const [loadingStatusIndex, setLoadingStatusIndex] = useState(0);
   const [disambiguationCandidates, setDisambiguationCandidates] = useState<any[]>([]);
   const [disambiguationCardName, setDisambiguationCardName] = useState("");
+  // ScanHistory row of the attempt that triggered disambiguation — echoed to
+  // save-selection so the user's pick lands on that row as ground truth.
+  const [disambiguationScanId, setDisambiguationScanId] = useState<string | null>(null);
   
   // Auto-scan feature — use REF not state for the scanning lock to avoid re-render loops
   const [isAutoScan, setIsAutoScan] = useState(false);
@@ -341,6 +344,7 @@ export default function ScannerPage() {
       if (json.requiresDisambiguation) {
         setDisambiguationCandidates(json.candidates || []);
         setDisambiguationCardName(json.cardName || "");
+        setDisambiguationScanId(json.scanId || null);
         // Stop auto-scan loop while user picks
         if (autoScanIntervalRef.current) {
           clearInterval(autoScanIntervalRef.current);
@@ -585,6 +589,7 @@ export default function ScannerPage() {
     setBulkQueue([]);
     setDisambiguationCandidates([]);
     setDisambiguationCardName("");
+    setDisambiguationScanId(null);
     startCamera();
   }, [startCamera]);
 
@@ -592,10 +597,16 @@ export default function ScannerPage() {
   const handleSelectCandidate = async (candidate: any) => {
     setIsAdding(true);
     try {
+      // Identifiers only — the server re-fetches the card from its source
+      // database; nothing else in the candidate object is trusted or needed.
       const res = await fetch("/api/scanner/save-selection", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ candidate }),
+        body: JSON.stringify({
+          externalId: candidate.externalId,
+          game: candidate.game,
+          scanId: disambiguationScanId ?? undefined,
+        }),
       });
       if (!res.ok) throw new Error("Failed to save selection");
       const json = await res.json();
@@ -607,6 +618,7 @@ export default function ScannerPage() {
           return [...prev, card];
         });
         setDisambiguationCandidates([]);
+        setDisambiguationScanId(null);
         startCamera();
       } else {
         setScanResult(card);

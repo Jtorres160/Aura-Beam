@@ -36,8 +36,10 @@ export async function GET() {
     }
 
     // 2. Fetch Recent Scans
+    // cardId != null: telemetry rows for disambiguation/not-found attempts
+    // have no card and would render as "Unknown Card" here.
     const recentScans = await prisma.scanHistory.findMany({
-      where: { userId },
+      where: { userId, cardId: { not: null } },
       orderBy: { createdAt: "desc" },
       take: 5,
       include: {
