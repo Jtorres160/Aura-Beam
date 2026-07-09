@@ -9,7 +9,8 @@ import { Button } from "@/components/ui/button";
 const navLinks = [
   { label: "Features", href: "/#features" },
   { label: "Games", href: "/#games" },
-  { label: "Pricing", href: "/#pricing" },
+  // BETA: Aura subscription pricing hidden for private beta. Restore this link when pricing returns.
+  // { label: "Pricing", href: "/#pricing" },
   { label: "FAQ", href: "/#faq" },
 ];
 

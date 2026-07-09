@@ -48,8 +48,8 @@ export default function SettingsPage() {
         </CardContent>
       </Card>
 
-      {/* Subscription */}
-      <Card className="glass border-border/50">
+      {/* BETA: Aura subscription/upgrade UI hidden for private beta. Restore this card (and the CreditCard import) when pricing returns. */}
+      {/* <Card className="glass border-border/50">
         <CardHeader><CardTitle className="text-base flex items-center gap-2"><CreditCard className="h-4 w-4 text-aura-purple" />Subscription</CardTitle></CardHeader>
         <CardContent>
           <div className="flex items-center justify-between">
@@ -60,7 +60,7 @@ export default function SettingsPage() {
             <Button className="gradient-bg text-white border-0 rounded-xl">Upgrade to Pro</Button>
           </div>
         </CardContent>
-      </Card>
+      </Card> */}
     </div>
   );
 }

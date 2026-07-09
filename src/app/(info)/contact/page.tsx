@@ -145,7 +145,8 @@ export default function ContactPage() {
                   >
                     <option value="general" className="bg-card">General Inquiry</option>
                     <option value="support" className="bg-card">Technical Support</option>
-                    <option value="billing" className="bg-card">Billing & Payments</option>
+                    {/* BETA: Billing & Payments option hidden for private beta. Restore this option when pricing returns. Support handling logic is unchanged. */}
+                    {/* <option value="billing" className="bg-card">Billing & Payments</option> */}
                     <option value="feedback" className="bg-card">Feature Suggestion</option>
                   </select>
                 </div>

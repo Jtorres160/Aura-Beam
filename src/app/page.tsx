@@ -1,7 +1,8 @@
 import { HeroSection } from "@/components/landing/hero-section";
 import { FeaturesSection } from "@/components/landing/features-section";
 import { GamesSection } from "@/components/landing/games-section";
-import { PricingSection } from "@/components/landing/pricing-section";
+// BETA: Aura subscription pricing hidden for private beta. Restore this import to bring back the pricing section.
+// import { PricingSection } from "@/components/landing/pricing-section";
 import { FaqSection } from "@/components/landing/faq-section";
 import { LandingNav } from "@/components/landing/landing-nav";
 import { LandingFooter } from "@/components/landing/landing-footer";
@@ -13,7 +14,8 @@ export default function HomePage() {
       <HeroSection />
       <FeaturesSection />
       <GamesSection />
-      <PricingSection />
+      {/* BETA: Aura subscription pricing hidden for private beta. Restore <PricingSection /> to bring it back. */}
+      {/* <PricingSection /> */}
       <FaqSection />
       <LandingFooter />
     </main>

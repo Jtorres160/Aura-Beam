@@ -20,10 +20,11 @@ const faqs = [
     q: "Can I track my collection's value over time?",
     a: "Yes! Aura tracks daily, weekly, and monthly portfolio performance. You can see your total collection value, biggest movers, and performance charts right from your dashboard.",
   },
-  {
-    q: "Is there a limit on free scans?",
-    a: "Free accounts get 50 scans per day, which is plenty for casual use. Pro subscribers get unlimited scans plus additional features like price alerts, advanced analytics, and bulk scanning.",
-  },
+  // BETA: Aura subscription messaging hidden for private beta. Restore this FAQ entry when pricing returns.
+  // {
+  //   q: "Is there a limit on free scans?",
+  //   a: "Free accounts get 50 scans per day, which is plenty for casual use. Pro subscribers get unlimited scans plus additional features like price alerts, advanced analytics, and bulk scanning.",
+  // },
   {
     q: "Does Aura work offline?",
     a: "Aura requires an internet connection for card identification and pricing. However, your collection data is cached locally so you can browse your cards offline. PWA support means you can install Aura on your home screen for quick access.",

@@ -4,7 +4,8 @@ import { Sparkles } from "lucide-react";
 const footerLinks = {
   Product: [
     { label: "Features", href: "#features" },
-    { label: "Pricing", href: "#pricing" },
+    // BETA: Aura subscription pricing hidden for private beta. Restore this link when pricing returns.
+    // { label: "Pricing", href: "#pricing" },
     { label: "Scanner", href: "/scanner" },
     { label: "Dashboard", href: "/dashboard" },
   ],
