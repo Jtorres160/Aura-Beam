@@ -24,12 +24,15 @@ import {
   type CaptureResult,
 } from "@/lib/scanner/capture";
 import { LiveMetricsController } from "@/lib/scanner/live-metrics";
-import { evaluateReadiness } from "@/lib/scanner/readiness";
+import { evaluateReadiness, LIVE_THRESHOLDS } from "@/lib/scanner/readiness";
+// TEMPORARY dev-only diagnostics collector (Phase 4.5 auto/bulk stall debug).
+import { smartDiag } from "@/lib/scanner/smart-diagnostics";
 import {
   SmartCaptureMachine,
   computeAverageHash,
   SMART_TICK_MS,
   SMART_STALE_MS,
+  STABILITY_DWELL_MS,
   type AHash,
 } from "@/lib/scanner/smart-capture";
 import { CaptureGuidance } from "./capture-guidance";
@@ -487,11 +490,62 @@ export default function ScannerPage() {
     let lastTick = 0;
     let cancelled = false;
 
+    // ─── TEMP DIAG (Phase 4.5 auto/bulk stall debug) ──────────────────────
+    // Dev-only, behavior-preserving. Traces exactly where the auto/bulk
+    // pipeline stops: readiness state + reason, raw metric values, the
+    // stability timer (start/reset/complete), every SmartCapture state
+    // transition, duplicate-detection skips, the captureBestFrame() call, and
+    // whether processScanRequest() is reached. Remove once root-caused.
+    const SMART_DIAG = process.env.NODE_ENV === "development";
+    let lastDiagAt = 0;      // throttle for the idle ~1Hz state line
+    let lastDwellLogAt = 0;  // throttle for candidate-state dwell progress
+    let dwellStartAt = 0;    // wall-clock when the stability dwell began
+    let prevReadyCode = "";  // last readiness code, to log only on change
+
+    // TEMP DIAG — structured event collector for phone export. Dev-only: every
+    // rec() call sits behind SMART_DIAG, so nothing is buffered in production.
+    const diagMode = isBulkMode ? "bulk" : "auto";
+    const diagThresholds = { motion: LIVE_THRESHOLDS.maxMotion, dwellMs: STABILITY_DWELL_MS };
+    const metricsOf = (
+      mm: { sharpness: number; brightness: number; glare: number; motion: number } | null
+    ) =>
+      mm
+        ? { sharpness: mm.sharpness, brightness: mm.brightness, glare: mm.glare, motion: mm.motion }
+        : { sharpness: null, brightness: null, glare: null, motion: null };
+    const rec = (event: string, extra: Record<string, unknown> = {}) =>
+      smartDiag.record({ event, mode: diagMode, thresholds: diagThresholds, ...extra });
+
+    if (SMART_DIAG) {
+      smartDiag.startSession();
+      rec("session_start", { detail: `mode=${diagMode}` });
+      console.log(
+        `[SmartCapture] loop initialized (mode=${diagMode}) — waiting for readiness`
+      );
+    }
+
     const runCapture = async (decisionHash: AHash | null) => {
       setAutoScanBusy(true);
       try {
+        if (SMART_DIAG) {
+          console.log("[SmartCapture] → captureBestFrame() called");
+          rec("capture_best_frame_called");
+        }
         const capture = await captureBestFrame(AUTO_FRAME_COUNT, "smart");
-        if (capture.ok) await processScanRequest(capture.dataUrl, true);
+        if (SMART_DIAG) {
+          console.log(
+            capture.ok
+              ? "[SmartCapture] capture OK → processScanRequest() (OCR dispatch)"
+              : `[SmartCapture] capture REJECTED by quality gate: ${capture.reason} — retrying`
+          );
+          rec("capture_result", {
+            detail: capture.ok ? "ok" : `rejected:${capture.reason}`,
+            reason: capture.ok ? undefined : capture.reason,
+          });
+        }
+        if (capture.ok) {
+          if (SMART_DIAG) rec("ocr_dispatch", { detail: "processScanRequest reached" });
+          await processScanRequest(capture.dataUrl, true);
+        }
       } finally {
         // Release the persistent lock BEFORE settling so a re-subscribed loop
         // can resume cleanly.
@@ -512,12 +566,106 @@ export default function ScannerPage() {
       if (cancelled || isAutoScanningRef.current || machine.state === "capturing") return;
 
       const m = liveMetricsRef.current?.getLatest() ?? null;
-      const ready = !!m && now - m.at <= SMART_STALE_MS && evaluateReadiness(m).ready;
+      const fresh = !!m && now - m.at <= SMART_STALE_MS;
+      const rd = fresh ? evaluateReadiness(m!) : null;
+      const ready = !!rd && rd.ready;
 
+      // Widened to string so the diag transition compare below isn't narrowed
+      // away by the "capturing" guard above (machine.step may advance state).
+      const before: string = machine.state;
       const result = machine.step(now, ready, () =>
         videoRef.current ? computeAverageHash(videoRef.current, hashCanvas) : null
       );
+
+      // TEMP DIAG — narrate readiness, the stability dwell, and transitions.
+      if (SMART_DIAG) {
+        const after: string = machine.state;
+        const readyCode = !m ? "no-metrics" : !fresh ? "stale-metrics" : rd!.code;
+        const metrics = m
+          ? `sharp=${m.sharpness.toFixed(1)} bright=${m.brightness.toFixed(1)} glare=${(m.glare * 100).toFixed(1)}% motion=${m.motion.toFixed(2)}`
+          : "sharp=— bright=— glare=— motion=—";
+
+        const metricsObj = metricsOf(m);
+
+        // (1) Full readiness evaluation — logged only when the state CHANGES.
+        if (readyCode !== prevReadyCode) {
+          prevReadyCode = readyCode;
+          const detail =
+            rd && !rd.ready ? `${rd.debug.metric}=${rd.debug.value.toFixed(2)} (thr ${rd.debug.threshold})`
+            : !m ? "no sample yet"
+            : !fresh ? `sample age=${Math.round(now - m.at)}ms > ${SMART_STALE_MS}ms`
+            : "all checks passed";
+          console.log(
+            `[Readiness] ready=${ready} reason=${readyCode} · ${detail} · ${metrics}`
+          );
+          rec("readiness_change", {
+            ready,
+            reason: readyCode,
+            detail,
+            metrics: metricsObj,
+          });
+        }
+
+        // (2) State transitions — interpreted in stability-timer terms.
+        if (after !== before) {
+          if (before === "scanning" && after === "candidate") dwellStartAt = now;
+          const elapsed = Math.round(now - dwellStartAt);
+          const note =
+            before === "scanning" && after === "candidate" ? "stability timer STARTED"
+            : before === "candidate" && after === "scanning" ? `stability timer RESET after ${elapsed}ms/${STABILITY_DWELL_MS}ms (lost readiness)`
+            : before === "candidate" && after === "capturing" ? `stability timer COMPLETE ${elapsed}ms/${STABILITY_DWELL_MS}ms → capture`
+            : before === "candidate" && after === "cooldown" ? "DUPLICATE detected (aHash) → capture BLOCKED, cooldown"
+            : before === "cooldown" && after === "scanning" ? "cooldown ended → re-armed"
+            : "";
+          console.log(`[SmartCapture] ${before} → ${after}${note ? ` · ${note}` : ""}`);
+
+          // Map each transition to a named diagnostic event.
+          const transitionEvent =
+            before === "scanning" && after === "candidate" ? "candidate_started"
+            : before === "candidate" && after === "scanning" ? "candidate_reset"
+            : before === "candidate" && after === "capturing" ? "dwell_complete"
+            : before === "candidate" && after === "cooldown" ? "duplicate_blocked"
+            : before === "cooldown" && after === "scanning" ? "cooldown_end"
+            : "state_change";
+          rec(transitionEvent, {
+            reason: after === "scanning" && before === "candidate" ? rd?.debug.metric ?? readyCode : readyCode,
+            ready,
+            metrics: metricsObj,
+            dwellMs: before === "candidate" ? elapsed : undefined,
+            requiredDwellMs: STABILITY_DWELL_MS,
+            detail: `${before} -> ${after}`,
+          });
+        }
+        // (3) Dwell progress while waiting out the stability timer (~8Hz).
+        else if (machine.state === "candidate" && now - lastDwellLogAt >= 120) {
+          lastDwellLogAt = now;
+          const elapsed = Math.round(now - dwellStartAt);
+          console.log(
+            `[SmartCapture] candidate · elapsed=${elapsed}ms / ${STABILITY_DWELL_MS}ms · ${metrics}`
+          );
+          rec("dwell_progress", {
+            ready,
+            reason: readyCode,
+            metrics: metricsObj,
+            dwellMs: elapsed,
+            requiredDwellMs: STABILITY_DWELL_MS,
+          });
+        }
+        // (4) Idle heartbeat (~1Hz) while not yet armed — shows why not ready.
+        else if (machine.state !== "candidate" && now - lastDiagAt >= 1000) {
+          lastDiagAt = now;
+          console.log(`[SmartCapture] state=${machine.state} · reason=${readyCode} · ${metrics}`);
+          rec("heartbeat", {
+            ready,
+            reason: readyCode,
+            metrics: metricsObj,
+            detail: `state=${machine.state}`,
+          });
+        }
+      }
+
       if (result.action === "capture") {
+        if (SMART_DIAG) rec("capture_triggered", { detail: "machine action=capture" });
         isAutoScanningRef.current = true;
         void runCapture(result.hash);
       }
@@ -689,6 +837,20 @@ export default function ScannerPage() {
   return (
     <div className="flex flex-col h-full">
       <canvas ref={canvasRef} className="hidden" />
+
+      {/* TEMPORARY dev-only diagnostics export (Phase 4.5 auto/bulk debug).
+          Fixed so it's tappable from the phone in any scan state. Remove with
+          the SmartCapture diagnostics cleanup. */}
+      {process.env.NODE_ENV === "development" && (
+        <button
+          type="button"
+          onClick={() => smartDiag.export()}
+          className="fixed bottom-3 right-3 z-50 rounded-full border border-emerald-400/40 bg-black/80 px-3 py-1.5 font-mono text-[11px] font-semibold text-emerald-300 shadow-lg backdrop-blur active:scale-95"
+          title="Download aura-smartcapture-debug.json"
+        >
+          ⤓ Export SmartCapture Diag
+        </button>
+      )}
 
       {/* Header — hidden while the camera is live so the scan view is immersive
           and the capture controls always fit within the visible viewport. */}
