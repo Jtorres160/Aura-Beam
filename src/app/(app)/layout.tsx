@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Separator } from "@/components/ui/separator";
+import { ScannerProvider, useScannerState } from "@/components/providers/scanning-context";
 
 const navItems = [
   { icon: LayoutDashboard, label: "Dashboard", href: "/dashboard" },
@@ -28,10 +29,11 @@ const bottomItems = [
   { icon: Shield, label: "Admin", href: "/admin" },
 ];
 
-export default function AppLayout({ children }: { children: React.ReactNode }) {
+function AppLayoutInner({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { data: session } = useSession();
   const [collapsed, setCollapsed] = useState(false);
+  const { isActivelyScanningOrProcessing } = useScannerState();
 
   return (
     <div className="flex h-dvh-screen overflow-hidden bg-background">
@@ -158,33 +160,43 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           {children}
         </main>
 
-        {/* Mobile bottom navigation */}
-        <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 glass-elevated border-t border-border safe-area-bottom">
-          <div className="flex items-center justify-around h-16">
-            {navItems.map((item) => {
-              const isActive = pathname === item.href || pathname.startsWith(item.href + "/");
-              return (
-                <Link key={item.href} href={item.href} className="flex flex-col items-center gap-1 px-3 py-2">
-                  <item.icon
-                    className={cn(
-                      "h-5 w-5 transition-colors",
-                      isActive ? "text-aura-purple" : "text-muted-foreground"
-                    )}
-                  />
-                  <span
-                    className={cn(
-                      "text-[10px] font-medium transition-colors",
-                      isActive ? "text-aura-purple" : "text-muted-foreground"
-                    )}
-                  >
-                    {item.label}
-                  </span>
-                </Link>
-              );
-            })}
-          </div>
-        </nav>
+        {/* Mobile bottom navigation — hidden while actively scanning to maximize screen space */}
+        {!isActivelyScanningOrProcessing && (
+          <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 glass-elevated border-t border-border safe-area-bottom">
+            <div className="flex items-center justify-around h-16">
+              {navItems.map((item) => {
+                const isActive = pathname === item.href || pathname.startsWith(item.href + "/");
+                return (
+                  <Link key={item.href} href={item.href} className="flex flex-col items-center gap-1 px-3 py-2">
+                    <item.icon
+                      className={cn(
+                        "h-5 w-5 transition-colors",
+                        isActive ? "text-aura-purple" : "text-muted-foreground"
+                      )}
+                    />
+                    <span
+                      className={cn(
+                        "text-[10px] font-medium transition-colors",
+                        isActive ? "text-aura-purple" : "text-muted-foreground"
+                      )}
+                    >
+                      {item.label}
+                    </span>
+                  </Link>
+                );
+              })}
+            </div>
+          </nav>
+        )}
       </div>
     </div>
+  );
+}
+
+export default function AppLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <ScannerProvider>
+      <AppLayoutInner>{children}</AppLayoutInner>
+    </ScannerProvider>
   );
 }

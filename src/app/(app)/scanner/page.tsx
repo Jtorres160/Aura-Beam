@@ -3,6 +3,7 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useSession } from "next-auth/react";
+import { useScannerState } from "@/components/providers/scanning-context";
 import {
   Camera, X, RotateCcw, Zap, Check, AlertCircle,
   Sparkles, Loader2, Scan, RefreshCw, Layers, Trash2, CheckCircle2
@@ -84,6 +85,7 @@ const LOADING_STATUSES = [
 
 export default function ScannerPage() {
   const { data: session } = useSession();
+  const { setIsActivelyScanningOrProcessing } = useScannerState();
   const [state, setState] = useState<ScanState>("idle");
   const [scanResult, setScanResult] = useState<any>(null);
   const [errorMessage, setErrorMessage] = useState("");
@@ -134,6 +136,12 @@ export default function ScannerPage() {
   // instead of smart capture. Defaults to smart. Never shown in production.
   const [legacyTimedAuto, setLegacyTimedAuto] = useState(false);
   const legacyTimedAutoRef = useRef(false);
+
+  // Sync active scanning state to context so mobile nav can hide during active scans
+  useEffect(() => {
+    const isActive = ["scanning", "processing", "bulk-review"].includes(state);
+    setIsActivelyScanningOrProcessing(isActive);
+  }, [state, setIsActivelyScanningOrProcessing]);
 
   // ─── Camera Management ────────────────────────────────────────────────
   const startCamera = useCallback(async () => {
