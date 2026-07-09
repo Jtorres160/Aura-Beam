@@ -13,12 +13,28 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import {
   captureSharpestFrame,
+  computeCaptureRoi,
   MANUAL_FRAME_COUNT,
   AUTO_FRAME_COUNT,
   PREFERRED_CAMERA_WIDTH,
   PREFERRED_CAMERA_HEIGHT,
+  ROI_CAPTURE_DEFAULT,
+  ROI_CAPTURE_PAD,
+  type CaptureRegion,
   type CaptureResult,
 } from "@/lib/scanner/capture";
+import { LiveMetricsController } from "@/lib/scanner/live-metrics";
+import { evaluateReadiness } from "@/lib/scanner/readiness";
+import {
+  SmartCaptureMachine,
+  computeAverageHash,
+  SMART_TICK_MS,
+  SMART_STALE_MS,
+  type AHash,
+} from "@/lib/scanner/smart-capture";
+import { CaptureGuidance } from "./capture-guidance";
+// TEMPORARY dev-only calibration overlay — remove with Phase 4.5 cleanup.
+import { LiveMetricsDebugOverlay } from "./live-metrics-debug-overlay";
 
 type ScanState = "idle" | "scanning" | "processing" | "result" | "bulk-review" | "disambiguation" | "error";
 
@@ -89,6 +105,29 @@ export default function ScannerPage() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  // Guide overlay box — source of truth for ROI capture (Phase 4.5 · Commit 2).
+  const guideRef = useRef<HTMLDivElement>(null);
+
+  // ROI capture toggle. Defaults to ROI_CAPTURE_DEFAULT; a dev-only button (in
+  // the debug overlay) flips it so ROI can be A/B'd against full-frame capture.
+  // Read from a ref at capture time so toggling never re-subscribes the loops.
+  const [roiCaptureEnabled, setRoiCaptureEnabled] = useState(ROI_CAPTURE_DEFAULT);
+  const roiCaptureEnabledRef = useRef(ROI_CAPTURE_DEFAULT);
+
+  // ─── Live Capture Metrics (Phase 4.5 · Commit 1) ──────────────────────
+  // Allocation-conscious ~10Hz analysis loop over the live preview. Consumed by
+  // the live guidance chip (Commit 3) and smart auto-capture (Commit 4) via
+  // getLatest(). Does not alter manual scan behavior.
+  const liveMetricsRef = useRef<LiveMetricsController | null>(null);
+
+  // ─── Smart Auto-Capture (Phase 4.5 · Commit 4) ────────────────────────
+  // Machine + a reused 8×8 canvas for duplicate-frame aHashing.
+  const smartMachineRef = useRef<SmartCaptureMachine | null>(null);
+  const aHashCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  // Dev-only A/B flag: when true, the OLD fixed-4s timer drives auto-scan
+  // instead of smart capture. Defaults to smart. Never shown in production.
+  const [legacyTimedAuto, setLegacyTimedAuto] = useState(false);
+  const legacyTimedAutoRef = useRef(false);
 
   // ─── Camera Management ────────────────────────────────────────────────
   const startCamera = useCallback(async () => {
@@ -227,10 +266,40 @@ export default function ScannerPage() {
   // Multi-frame capture + sharpness selection + quality gate all live in
   // src/lib/scanner/capture.ts. This is a thin wrapper: `frameCount` is the
   // only per-caller knob (manual can afford more frames than the auto loop).
+  // Map the on-screen guide box to a source-pixel crop. Returns null (→ full
+  // frame) when ROI is disabled or any measurement is invalid, so ROI can never
+  // make capture worse than before.
+  const computeRoiForCapture = useCallback((): CaptureRegion | null => {
+    if (!roiCaptureEnabledRef.current) return null;
+    const video = videoRef.current;
+    const guide = guideRef.current;
+    if (!video || !guide || !video.videoWidth || !video.videoHeight) return null;
+
+    const vRect = video.getBoundingClientRect();
+    const gRect = guide.getBoundingClientRect();
+    if (!vRect.width || !vRect.height || !gRect.width || !gRect.height) return null;
+
+    return computeCaptureRoi({
+      sourceW: video.videoWidth,
+      sourceH: video.videoHeight,
+      elemW: vRect.width,
+      elemH: vRect.height,
+      guideX: gRect.left - vRect.left,
+      guideY: gRect.top - vRect.top,
+      guideW: gRect.width,
+      guideH: gRect.height,
+      pad: ROI_CAPTURE_PAD,
+    });
+  }, []);
+
   const captureBestFrame = useCallback(
-    (frameCount: number): Promise<CaptureResult> =>
-      captureSharpestFrame(videoRef.current, canvasRef.current, { frameCount }),
-    []
+    (frameCount: number, debugLabel?: string): Promise<CaptureResult> =>
+      captureSharpestFrame(videoRef.current, canvasRef.current, {
+        frameCount,
+        roi: computeRoiForCapture() ?? undefined,
+        debugLabel,
+      }),
+    [computeRoiForCapture]
   );
 
   // ─── Scan Request ─────────────────────────────────────────────────────
@@ -326,7 +395,7 @@ export default function ScannerPage() {
     // Multi-frame capture + quality gate. A poor frame (blurry / too dark /
     // overexposed) is rejected HERE with a friendly message, so we never spend
     // an OCR request on an unreadable image.
-    const capture = await captureBestFrame(MANUAL_FRAME_COUNT);
+    const capture = await captureBestFrame(MANUAL_FRAME_COUNT, "manual");
     if (!capture.ok) {
       setErrorMessage(capture.message);
       setState("error");
@@ -337,20 +406,132 @@ export default function ScannerPage() {
     await processScanRequest(capture.dataUrl, false);
   }, [session, captureBestFrame, processScanRequest]);
 
-  // ─── Auto Scan Loop ───────────────────────────────────────────────────
+  // ─── Live Metrics Loop (Phase 4.5 · Commit 1) ─────────────────────────
+  // Runs the analysis engine while the camera is live; tears it down when
+  // scanning stops, the camera isn't ready, or the component unmounts. The
+  // engine itself also self-pauses when the tab is hidden. Inert for now.
   useEffect(() => {
-    if (state === "scanning" && isAutoScan && cameraReady) {
-      console.log("[AutoScan] Starting auto-scan loop...");
-      
+    if (state !== "scanning" || !cameraReady) return;
+    const video = videoRef.current;
+    if (!video) return;
+    const engine = (liveMetricsRef.current ??= new LiveMetricsController());
+    engine.start(video);
+    return () => engine.stop();
+  }, [state, cameraReady]);
+
+  // ─── ROI Capture Toggle (Phase 4.5 · Commit 2, dev calibration) ───────
+  // Load any persisted preference once, then mirror state → ref so capture
+  // reads the current value without re-subscribing the scan loops.
+  useEffect(() => {
+    if (process.env.NODE_ENV !== "development") return;
+    const saved = window.localStorage.getItem("aura.roiCapture");
+    if (saved === "on" || saved === "off") setRoiCaptureEnabled(saved === "on");
+  }, []);
+
+  useEffect(() => {
+    roiCaptureEnabledRef.current = roiCaptureEnabled;
+  }, [roiCaptureEnabled]);
+
+  const toggleRoiCapture = useCallback(() => {
+    setRoiCaptureEnabled((prev) => {
+      const next = !prev;
+      try {
+        window.localStorage.setItem("aura.roiCapture", next ? "on" : "off");
+      } catch {
+        /* ignore storage failures — calibration convenience only */
+      }
+      return next;
+    });
+  }, []);
+
+  // ─── Legacy Timed Auto-Scan Toggle (Phase 4.5 · Commit 4, dev A/B) ─────
+  useEffect(() => {
+    if (process.env.NODE_ENV !== "development") return;
+    const saved = window.localStorage.getItem("aura.legacyTimedAuto");
+    if (saved === "on" || saved === "off") setLegacyTimedAuto(saved === "on");
+  }, []);
+
+  useEffect(() => {
+    legacyTimedAutoRef.current = legacyTimedAuto;
+  }, [legacyTimedAuto]);
+
+  const toggleLegacyTimedAuto = useCallback(() => {
+    setLegacyTimedAuto((prev) => {
+      const next = !prev;
+      try {
+        window.localStorage.setItem("aura.legacyTimedAuto", next ? "on" : "off");
+      } catch {
+        /* ignore storage failures — calibration convenience only */
+      }
+      return next;
+    });
+  }, []);
+
+  // ─── Smart Auto-Capture Loop (Phase 4.5 · Commit 4) ───────────────────
+  // Replaces the fixed 4s timer for auto-scan (both Auto and Bulk). Fires only
+  // when a frame has been "ready" (evaluateReadiness — the SAME policy the
+  // guidance chip uses) for a short dwell, and skips a card still in frame via
+  // 8×8 aHash dedup. The old timer lives on below, gated behind a dev flag.
+  useEffect(() => {
+    if (state !== "scanning" || !isAutoScan || !cameraReady || legacyTimedAuto) return;
+
+    const machine = (smartMachineRef.current ??= new SmartCaptureMachine());
+    machine.reset();
+    const hashCanvas = (aHashCanvasRef.current ??= document.createElement("canvas"));
+
+    let raf = 0;
+    let lastTick = 0;
+    let cancelled = false;
+
+    const runCapture = async (decisionHash: AHash | null) => {
+      setAutoScanBusy(true);
+      try {
+        const capture = await captureBestFrame(AUTO_FRAME_COUNT, "smart");
+        if (capture.ok) await processScanRequest(capture.dataUrl, true);
+      } finally {
+        setAutoScanBusy(false);
+        machine.settle(performance.now(), decisionHash);
+      }
+    };
+
+    const loop = (now: number) => {
+      raf = requestAnimationFrame(loop);
+      if (now - lastTick < SMART_TICK_MS) return;
+      lastTick = now;
+      if (cancelled || machine.state === "capturing") return;
+
+      const m = liveMetricsRef.current?.getLatest() ?? null;
+      const ready = !!m && now - m.at <= SMART_STALE_MS && evaluateReadiness(m).ready;
+
+      const result = machine.step(now, ready, () =>
+        videoRef.current ? computeAverageHash(videoRef.current, hashCanvas) : null
+      );
+      if (result.action === "capture") void runCapture(result.hash);
+    };
+
+    raf = requestAnimationFrame(loop);
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(raf);
+    };
+  }, [state, isAutoScan, cameraReady, legacyTimedAuto, captureBestFrame, processScanRequest]);
+
+  // ─── Legacy Timed Auto Scan Loop (dev A/B only) ───────────────────────
+  // The original fixed-4s auto-scan. Kept behind the dev `legacyTimedAuto` flag
+  // so smart capture can be compared against it. Not reachable in production.
+  useEffect(() => {
+    if (state === "scanning" && isAutoScan && cameraReady && legacyTimedAuto) {
+      console.log("[AutoScan] Starting LEGACY timed auto-scan loop...");
+
       autoScanIntervalRef.current = setInterval(async () => {
         // Use ref-based lock (not state) to prevent overlapping scans
         if (isAutoScanningRef.current) return;
         isAutoScanningRef.current = true;
         setAutoScanBusy(true);
-        
+
         // Background scans silently skip poor frames (existing behavior): the
         // loop just tries again on the next tick rather than surfacing an error.
-        const capture = await captureBestFrame(AUTO_FRAME_COUNT);
+        const capture = await captureBestFrame(AUTO_FRAME_COUNT, "auto");
         if (capture.ok) {
           await processScanRequest(capture.dataUrl, true);
         }
@@ -358,7 +539,7 @@ export default function ScannerPage() {
         isAutoScanningRef.current = false;
         setAutoScanBusy(false);
       }, 4000); // Check every 4 seconds
-      
+
     } else {
       if (autoScanIntervalRef.current) {
         clearInterval(autoScanIntervalRef.current);
@@ -372,7 +553,7 @@ export default function ScannerPage() {
         autoScanIntervalRef.current = null;
       }
     };
-  }, [state, isAutoScan, cameraReady, captureBestFrame, processScanRequest]);
+  }, [state, isAutoScan, cameraReady, legacyTimedAuto, captureBestFrame, processScanRequest]);
 
   // Cycling loading message effect
   useEffect(() => {
@@ -559,6 +740,21 @@ export default function ScannerPage() {
                     )}
                   </div>
 
+                  {/* Live capture guidance (Phase 4.5 · Commit 3) — one chip,
+                      isolated so live updates don't re-render this page. */}
+                  <CaptureGuidance controllerRef={liveMetricsRef} />
+
+                  {/* TEMPORARY dev-only live-metrics HUD (Phase 4.5 calibration). */}
+                  {process.env.NODE_ENV === "development" && (
+                    <LiveMetricsDebugOverlay
+                      controllerRef={liveMetricsRef}
+                      roiEnabled={roiCaptureEnabled}
+                      onToggleRoi={toggleRoiCapture}
+                      legacyTimedAuto={legacyTimedAuto}
+                      onToggleLegacyTimedAuto={toggleLegacyTimedAuto}
+                    />
+                  )}
+
                   {/* Camera Quick Restart */}
                   <div className="absolute top-4 right-4 z-10">
                     <Button 
@@ -610,7 +806,7 @@ export default function ScannerPage() {
                     />
 
                     <div className="absolute inset-0 flex items-center justify-center">
-                      <div className={cn(
+                      <div ref={guideRef} className={cn(
                         "relative w-[70%] max-w-[280px] aspect-[2.5/3.5] border-2 rounded-xl transition-all duration-1000",
                         isAutoScan ? "border-aura-purple/60 shadow-[0_0_30px_rgba(139,92,246,0.2)]" : "border-aura-purple/60"
                       )}>
