@@ -8,8 +8,9 @@
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --font-sans: var(--font-sans);
-  --font-mono: var(--font-geist-mono);
-  --font-heading: var(--font-sans);
+  --font-serif: var(--font-serif);
+  --font-mono: var(--font-mono);
+  --font-heading: var(--font-serif);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -39,13 +40,17 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
-  --radius-sm: calc(var(--radius) * 0.6);
-  --radius-md: calc(var(--radius) * 0.8);
+  /* Radius scale is deliberately flat: controls sit at 6–8px and large
+     containers cap at 12px so nothing reads as a rounded "blob". */
+  --radius-sm: calc(var(--radius) * 0.75);
+  --radius-md: var(--radius);
   --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) * 1.4);
-  --radius-2xl: calc(var(--radius) * 1.8);
-  --radius-3xl: calc(var(--radius) * 2.2);
-  --radius-4xl: calc(var(--radius) * 2.6);
+  --radius-xl: calc(var(--radius) * 1.25);
+  --radius-2xl: calc(var(--radius) * 1.5);
+  --radius-3xl: calc(var(--radius) * 1.5);
+  --radius-4xl: calc(var(--radius) * 1.5);
+  /* Legacy names kept so existing markup compiles; values now point at the
+     Collector's Instrument palette. Rename at the JSX level in Phase 2. */
   --color-aura-purple: var(--aura-purple);
   --color-aura-indigo: var(--aura-indigo);
   --color-aura-violet: var(--aura-violet);
@@ -56,93 +61,101 @@
   --color-warning: var(--warning);
 }
 
-/* ============================================
-   AURA — Premium Dark Theme
-   ============================================ */
+/* ============================================================
+   AURA — "The Collector's Instrument"
+   Two materials: Catalog (paper, light) and Viewfinder (ink, dark).
+   One accent (brass). One gradient (foil), budgeted one per screen.
+   Warm-biased neutrals throughout — chosen to flatter card stock.
+   ============================================================ */
 
 :root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.488 0.243 264.376);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.488 0.243 264.376);
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.6 0.2 280);
-  --chart-3: oklch(0.55 0.15 300);
-  --chart-4: oklch(0.65 0.18 250);
-  --chart-5: oklch(0.45 0.2 270);
-  --radius: 0.75rem;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.488 0.243 264.376);
-  --aura-purple: #7C3AED;
-  --aura-indigo: #4F46E5;
-  --aura-violet: #A78BFA;
-  --aura-glow: rgba(124, 58, 237, 0.15);
-  --aura-surface: rgba(255, 255, 255, 0.8);
-  --aura-surface-elevated: rgba(255, 255, 255, 0.95);
-  --success: oklch(0.65 0.2 145);
-  --warning: oklch(0.75 0.18 80);
+  /* Catalog: paper ground */
+  --background: #fafaf7;
+  --foreground: #1c1a17;
+  --card: #ffffff;
+  --card-foreground: #1c1a17;
+  --popover: #ffffff;
+  --popover-foreground: #1c1a17;
+  --primary: #1c1a17;
+  --primary-foreground: #fafaf7;
+  --secondary: #f1efea;
+  --secondary-foreground: #1c1a17;
+  --muted: #f1efea;
+  --muted-foreground: #6e6a62;
+  --accent: #f1efea;
+  --accent-foreground: #1c1a17;
+  --destructive: #a64b3f;
+  --border: rgba(28, 26, 23, 0.12);
+  --input: rgba(28, 26, 23, 0.16);
+  --ring: #9c7c4d;
+  --chart-1: #9c7c4d;
+  --chart-2: #6e6a62;
+  --chart-3: #2c5e44;
+  --chart-4: #c8a468;
+  --chart-5: #a64b3f;
+  --radius: 0.5rem;
+  --sidebar: #f5f4f0;
+  --sidebar-foreground: #1c1a17;
+  --sidebar-primary: #1c1a17;
+  --sidebar-primary-foreground: #fafaf7;
+  --sidebar-accent: #edebe5;
+  --sidebar-accent-foreground: #1c1a17;
+  --sidebar-border: rgba(28, 26, 23, 0.1);
+  --sidebar-ring: #9c7c4d;
+  /* Brass accent occupies the legacy purple slots (see @theme note) */
+  --aura-purple: #9c7c4d;
+  --aura-indigo: #7e6238;
+  --aura-violet: #c8a468;
+  --aura-glow: rgba(156, 124, 77, 0.12);
+  --aura-surface: #ffffff;
+  --aura-surface-elevated: #f6f4ef;
+  --success: #2c5e44;
+  --warning: #9a7b2d;
+  /* Foil: the one gradient in the system. Budget: once per screen. */
+  --foil: linear-gradient(115deg, transparent 8%, #c9c2e8 30%, #bfe3cf 48%, #e8d5a8 66%, transparent 92%);
 }
 
 .dark {
-  --background: oklch(0.1 0.01 280);
-  --foreground: oklch(0.95 0.01 280);
-  --card: oklch(0.15 0.015 280);
-  --card-foreground: oklch(0.95 0.01 280);
-  --popover: oklch(0.15 0.015 280);
-  --popover-foreground: oklch(0.95 0.01 280);
-  --primary: oklch(0.588 0.243 264.376);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.2 0.02 280);
-  --secondary-foreground: oklch(0.95 0.01 280);
-  --muted: oklch(0.2 0.02 280);
-  --muted-foreground: oklch(0.65 0.02 280);
-  --accent: oklch(0.25 0.04 270);
-  --accent-foreground: oklch(0.95 0.01 280);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 8%);
-  --input: oklch(1 0 0 / 10%);
-  --ring: oklch(0.588 0.243 264.376);
-  --chart-1: oklch(0.65 0.25 265);
-  --chart-2: oklch(0.6 0.2 280);
-  --chart-3: oklch(0.55 0.15 300);
-  --chart-4: oklch(0.7 0.18 250);
-  --chart-5: oklch(0.5 0.2 270);
-  --sidebar: oklch(0.12 0.015 280);
-  --sidebar-foreground: oklch(0.95 0.01 280);
-  --sidebar-primary: oklch(0.588 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.2 0.03 275);
-  --sidebar-accent-foreground: oklch(0.95 0.01 280);
-  --sidebar-border: oklch(1 0 0 / 8%);
-  --sidebar-ring: oklch(0.588 0.243 264.376);
-  --aura-purple: #8B5CF6;
-  --aura-indigo: #6366F1;
-  --aura-violet: #C4B5FD;
-  --aura-glow: rgba(139, 92, 246, 0.2);
-  --aura-surface: rgba(255, 255, 255, 0.04);
-  --aura-surface-elevated: rgba(255, 255, 255, 0.08);
-  --success: oklch(0.72 0.2 145);
-  --warning: oklch(0.8 0.18 80);
+  /* Viewfinder: warm ink ground */
+  --background: #141311;
+  --foreground: #edeae4;
+  --card: #1c1b18;
+  --card-foreground: #edeae4;
+  --popover: #1c1b18;
+  --popover-foreground: #edeae4;
+  --primary: #edeae4;
+  --primary-foreground: #16140f;
+  --secondary: #23211d;
+  --secondary-foreground: #edeae4;
+  --muted: #23211d;
+  --muted-foreground: #a29d93;
+  --accent: #2a2721;
+  --accent-foreground: #edeae4;
+  --destructive: #d08a7b;
+  --border: rgba(237, 234, 228, 0.12);
+  --input: rgba(237, 234, 228, 0.16);
+  --ring: #c8a468;
+  --chart-1: #c8a468;
+  --chart-2: #a29d93;
+  --chart-3: #7fbf9a;
+  --chart-4: #9c7c4d;
+  --chart-5: #d08a7b;
+  --sidebar: #181713;
+  --sidebar-foreground: #edeae4;
+  --sidebar-primary: #edeae4;
+  --sidebar-primary-foreground: #16140f;
+  --sidebar-accent: #26231e;
+  --sidebar-accent-foreground: #edeae4;
+  --sidebar-border: rgba(237, 234, 228, 0.1);
+  --sidebar-ring: #c8a468;
+  --aura-purple: #c8a468;
+  --aura-indigo: #9c7c4d;
+  --aura-violet: #ddbe85;
+  --aura-glow: rgba(200, 164, 104, 0.14);
+  --aura-surface: #1c1b18;
+  --aura-surface-elevated: #23211d;
+  --success: #7fbf9a;
+  --warning: #d4b25e;
 }
 
 @layer base {
@@ -157,91 +170,90 @@
   }
 }
 
-/* ============================================
-   Glassmorphism Utilities
-   ============================================ */
+/* ============================================================
+   Card geometry — real trading card proportions (63mm × 88mm,
+   die-cut corner radius ≈ 4.75% of width). Use for every card
+   container from Phase 3 on.
+   ============================================================ */
 
+.card-frame {
+  aspect-ratio: 63 / 88;
+  border-radius: 4.75% / 3.4%;
+  overflow: hidden;
+}
+
+/* Foil edge — the single permitted iridescent moment per screen. */
+.foil-edge {
+  background: var(--foil);
+  background-size: 100% 300%;
+  animation: foil-sweep 4s linear infinite;
+}
+
+@keyframes foil-sweep {
+  0% { background-position: 0 0; }
+  100% { background-position: 0 300%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .foil-edge {
+    animation: none;
+  }
+}
+
+/* ============================================================
+   DEPRECATED COMPATIBILITY SHIMS
+   These class names are still referenced across the app. Their
+   glassmorphism / gradient / glow styling has been replaced with
+   flat Collector's Instrument equivalents so existing markup
+   restyles without layout changes. Remove the class names from
+   JSX in Phase 2, then delete this block.
+   ============================================================ */
+
+/* was: translucent backdrop-blur glass panels → now flat surfaces */
 .glass {
   background: var(--aura-surface);
-  backdrop-filter: blur(20px) saturate(1.8);
-  -webkit-backdrop-filter: blur(20px) saturate(1.8);
   border: 1px solid var(--border);
 }
 
 .glass-elevated {
   background: var(--aura-surface-elevated);
-  backdrop-filter: blur(40px) saturate(2);
-  -webkit-backdrop-filter: blur(40px) saturate(2);
   border: 1px solid var(--border);
+  box-shadow: 0 2px 8px -4px rgba(19, 18, 16, 0.18);
 }
 
+/* was: purple neon glows → now soft directional object shadows */
 .aura-glow {
-  box-shadow: 0 0 60px -12px var(--aura-purple),
-              0 0 30px -8px var(--aura-indigo);
+  box-shadow: 0 16px 40px -20px rgba(19, 18, 16, 0.4);
 }
 
 .aura-glow-sm {
-  box-shadow: 0 0 30px -8px var(--aura-purple),
-              0 0 15px -5px var(--aura-indigo);
+  box-shadow: 0 8px 20px -12px rgba(19, 18, 16, 0.35);
 }
 
-/* Gradient text */
+/* was: purple gradient-clipped text → now solid foreground ink */
 .gradient-text {
-  background: linear-gradient(135deg, var(--aura-purple), var(--aura-indigo), var(--aura-violet));
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+  color: var(--foreground);
 }
 
-/* Animated gradient background */
+/* was: animated purple gradient fill → now solid ink.
+   Fixed dark values (not tokens) because markup pairs this class
+   with hard-coded `text-white`. */
 .gradient-bg {
-  background: linear-gradient(135deg, var(--aura-purple), var(--aura-indigo), var(--aura-violet));
-  background-size: 200% 200%;
-  animation: gradient-shift 8s ease infinite;
+  background: #1c1a17;
 }
 
-@keyframes gradient-shift {
-  0%, 100% { background-position: 0% 50%; }
-  50% { background-position: 100% 50%; }
+.dark .gradient-bg {
+  background: #2a2721;
+  border: 1px solid rgba(237, 234, 228, 0.14);
 }
 
-/* Mesh gradient background for hero */
+/* was: six-stop radial purple mesh → now nothing; ground is the ground */
 .mesh-gradient {
-  background:
-    radial-gradient(at 40% 20%, rgba(124, 58, 237, 0.25) 0px, transparent 50%),
-    radial-gradient(at 80% 0%, rgba(79, 70, 229, 0.2) 0px, transparent 50%),
-    radial-gradient(at 0% 50%, rgba(167, 139, 250, 0.15) 0px, transparent 50%),
-    radial-gradient(at 80% 50%, rgba(124, 58, 237, 0.1) 0px, transparent 50%),
-    radial-gradient(at 0% 100%, rgba(79, 70, 229, 0.15) 0px, transparent 50%),
-    radial-gradient(at 80% 100%, rgba(167, 139, 250, 0.1) 0px, transparent 50%);
+  background: none;
 }
 
-/* Floating animation */
-@keyframes float {
-  0%, 100% { transform: translateY(0px) rotate(0deg); }
-  33% { transform: translateY(-8px) rotate(1deg); }
-  66% { transform: translateY(-4px) rotate(-1deg); }
-}
-
-.animate-float {
-  animation: float 6s ease-in-out infinite;
-}
-
-/* Pulse glow */
-@keyframes pulse-glow {
-  0%, 100% {
-    box-shadow: 0 0 20px -5px var(--aura-purple);
-  }
-  50% {
-    box-shadow: 0 0 40px -5px var(--aura-purple), 0 0 60px -10px var(--aura-indigo);
-  }
-}
-
-.animate-pulse-glow {
-  animation: pulse-glow 3s ease-in-out infinite;
-}
-
-/* Scanner line animation */
+/* Scanner feedback line — kept: it communicates active capture.
+   Color comes from the markup's via-aura-purple, now brass. */
 @keyframes scan-line {
   0% { top: 0%; }
   100% { top: 100%; }
@@ -251,7 +263,7 @@
   animation: scan-line 2s ease-in-out infinite alternate;
 }
 
-/* Shimmer loading */
+/* Shimmer loading state — kept (functional), now flat warm surfaces */
 @keyframes shimmer {
   0% { background-position: -200% 0; }
   100% { background-position: 200% 0; }
@@ -268,16 +280,25 @@
   animation: shimmer 2s ease-in-out infinite;
 }
 
-/* Card hover effect */
+/* Card hover — kept, glow removed: lift like an object, not a UFO */
 .card-hover {
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: transform 0.2s ease-out, box-shadow 0.2s ease-out;
 }
 
 .card-hover:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 12px 40px -8px rgba(0, 0, 0, 0.15),
-              0 0 30px -8px var(--aura-glow);
+  transform: translateY(-1px);
+  box-shadow: 0 10px 28px -14px rgba(19, 18, 16, 0.3);
 }
+
+/* Removed entirely (no markup depends on their keyframes to function):
+   .animate-float / @keyframes float — ambient orb motion
+   .animate-pulse-glow / @keyframes pulse-glow — neon pulsing
+   @keyframes gradient-shift — animated gradient backgrounds
+   Elements still carrying these classes simply stop animating. */
+
+/* ============================================================
+   Layout utilities (unchanged)
+   ============================================================ */
 
 /* Hide scrollbar */
 .no-scrollbar::-webkit-scrollbar {
