@@ -1,15 +1,40 @@
-// ─── TEMPORARY · DEV-ONLY · SmartCapture Diagnostics Collector ───────────────
+// ─── TEMPORARY · FLAG-GATED · SmartCapture Diagnostics Collector ─────────────
 // Phase 4.5 real-device debugging aid for the Auto/Bulk scanner stall. It
 // buffers structured diagnostic events IN MEMORY during a scan session and can
 // serialize them to a JSON file the tester downloads from their phone.
 //
 // Hard boundaries (by design):
-//   • NOTHING here runs unless the scanner's dev-only SMART_DIAG path calls it
-//     (all record() calls in page.tsx are behind NODE_ENV === "development").
+//   • NOTHING here runs unless the scanner's SMART_DIAG path calls it (all
+//     record() calls in page.tsx are behind isSmartDiagEnabled(), which is
+//     false in production unless explicitly opted in — see below).
 //   • NO Prisma, NO network, NO ScanHistory — purely local, purely temporary.
 //   • It makes NO decisions and changes NO scanner behavior.
 //
 // TO REMOVE: delete this file and its imports/usages in scanner/page.tsx.
+
+/**
+ * TEMPORARY runtime opt-in for the diagnostics, so they can run on a real
+ * phone against an HTTPS deployment (Vercel Preview) where NODE_ENV is
+ * "production". True when any of:
+ *   • local dev (`next dev`) — unchanged behavior;
+ *   • the deployment was built with NEXT_PUBLIC_SMART_DIAG=true (set it on
+ *     Vercel's Preview environment only — it is inlined at build time);
+ *   • the page URL carries ?diag=1 (evaluated per page load, no rebuild).
+ * Window-dependent, so call it only on the client after mount; page.tsx keeps
+ * the result in state to stay hydration-safe.
+ */
+export function isSmartDiagEnabled(): boolean {
+  if (process.env.NODE_ENV === "development") return true;
+  if (process.env.NEXT_PUBLIC_SMART_DIAG === "true") return true;
+  if (typeof window !== "undefined") {
+    try {
+      return new URLSearchParams(window.location.search).get("diag") === "1";
+    } catch {
+      /* malformed URL — treat as opted out */
+    }
+  }
+  return false;
+}
 
 export interface DiagMetrics {
   sharpness: number | null;

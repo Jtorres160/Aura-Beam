@@ -5,12 +5,10 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useSession } from "next-auth/react";
 import { useScannerState } from "@/components/providers/scanning-context";
 import {
-  Camera, X, RotateCcw, Zap, Check, AlertCircle,
+  Camera, X, RotateCcw, Check, AlertCircle,
   Sparkles, Loader2, Scan, RefreshCw, Layers, Trash2, CheckCircle2
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import {
   captureSharpestFrame,
@@ -26,8 +24,8 @@ import {
 } from "@/lib/scanner/capture";
 import { LiveMetricsController } from "@/lib/scanner/live-metrics";
 import { evaluateReadiness, LIVE_THRESHOLDS } from "@/lib/scanner/readiness";
-// TEMPORARY dev-only diagnostics collector (Phase 4.5 auto/bulk stall debug).
-import { smartDiag } from "@/lib/scanner/smart-diagnostics";
+// TEMPORARY flag-gated diagnostics collector (Phase 4.5 auto/bulk stall debug).
+import { smartDiag, isSmartDiagEnabled } from "@/lib/scanner/smart-diagnostics";
 import {
   SmartCaptureMachine,
   computeAverageHash,
@@ -136,6 +134,16 @@ export default function ScannerPage() {
   // instead of smart capture. Defaults to smart. Never shown in production.
   const [legacyTimedAuto, setLegacyTimedAuto] = useState(false);
   const legacyTimedAutoRef = useRef(false);
+
+  // TEMPORARY runtime opt-in for the SmartCapture diagnostics (Phase 4.5
+  // auto/bulk stall debug), so they can run on a phone against an HTTPS
+  // Preview deployment. False on the server and on the client's first paint
+  // (the flag reads window.location), then resolved once after mount — keeping
+  // server and client HTML identical. Off in production unless opted in.
+  const [smartDiagEnabled, setSmartDiagEnabled] = useState(false);
+  useEffect(() => {
+    setSmartDiagEnabled(isSmartDiagEnabled());
+  }, []);
 
   // Sync active scanning state to context so mobile nav can hide during active scans
   useEffect(() => {
@@ -499,12 +507,13 @@ export default function ScannerPage() {
     let cancelled = false;
 
     // ─── TEMP DIAG (Phase 4.5 auto/bulk stall debug) ──────────────────────
-    // Dev-only, behavior-preserving. Traces exactly where the auto/bulk
-    // pipeline stops: readiness state + reason, raw metric values, the
-    // stability timer (start/reset/complete), every SmartCapture state
+    // Flag-gated (dev, NEXT_PUBLIC_SMART_DIAG, or ?diag=1 — see
+    // isSmartDiagEnabled), behavior-preserving. Traces exactly where the
+    // auto/bulk pipeline stops: readiness state + reason, raw metric values,
+    // the stability timer (start/reset/complete), every SmartCapture state
     // transition, duplicate-detection skips, the captureBestFrame() call, and
     // whether processScanRequest() is reached. Remove once root-caused.
-    const SMART_DIAG = process.env.NODE_ENV === "development";
+    const SMART_DIAG = smartDiagEnabled;
     let lastDiagAt = 0;      // throttle for the idle ~1Hz state line
     let lastDwellLogAt = 0;  // throttle for candidate-state dwell progress
     let dwellStartAt = 0;    // wall-clock when the stability dwell began
@@ -684,7 +693,9 @@ export default function ScannerPage() {
       cancelled = true;
       cancelAnimationFrame(raf);
     };
-  }, [state, isAutoScan, cameraReady, legacyTimedAuto, captureBestFrame, processScanRequest]);
+    // smartDiagEnabled resolves once right after mount (while the scanner is
+    // still idle), so including it never re-subscribes a live scanning loop.
+  }, [state, isAutoScan, cameraReady, legacyTimedAuto, smartDiagEnabled, captureBestFrame, processScanRequest]);
 
   // ─── Legacy Timed Auto Scan Loop (dev A/B only) ───────────────────────
   // The original fixed-4s auto-scan. Kept behind the dev `legacyTimedAuto` flag
@@ -846,10 +857,11 @@ export default function ScannerPage() {
     <div className="flex flex-col h-full">
       <canvas ref={canvasRef} className="hidden" />
 
-      {/* TEMPORARY dev-only diagnostics export (Phase 4.5 auto/bulk debug).
-          Fixed so it's tappable from the phone in any scan state. Remove with
-          the SmartCapture diagnostics cleanup. */}
-      {process.env.NODE_ENV === "development" && (
+      {/* TEMPORARY flag-gated diagnostics export (Phase 4.5 auto/bulk debug):
+          dev, NEXT_PUBLIC_SMART_DIAG=true, or ?diag=1. Fixed so it's tappable
+          from the phone in any scan state. Remove with the SmartCapture
+          diagnostics cleanup. */}
+      {smartDiagEnabled && (
         <button
           type="button"
           onClick={() => smartDiag.export()}
@@ -865,11 +877,8 @@ export default function ScannerPage() {
       {state !== "scanning" && (
         <div className="p-4 sm:p-6 border-b border-border flex justify-between items-center">
           <div>
-            <h1 className="text-xl sm:text-2xl font-bold flex items-center gap-2">
-              <Zap className="h-5 w-5 text-aura-purple" />
-              Card Scanner
-            </h1>
-            <p className="text-sm text-muted-foreground mt-1">AI-powered instant card identification.</p>
+            <h1 className="font-serif text-2xl sm:text-3xl tracking-tight">Scanner</h1>
+            <p className="text-sm text-muted-foreground mt-1">Identify a card and enter it into your archive.</p>
           </div>
         </div>
       )}
@@ -880,12 +889,17 @@ export default function ScannerPage() {
             
             {/* ── IDLE STATE ── */}
             {state === "idle" && (
-              <motion.div key="idle" initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="flex flex-col items-center justify-center py-16">
-                <div className="w-32 h-32 rounded-3xl glass flex items-center justify-center mb-6 aura-glow-sm">
-                  <Camera className="h-12 w-12 text-aura-purple" />
+              <motion.div key="idle" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }} className="flex flex-col items-center justify-center py-12">
+                {/* Empty archive slot — the card is the object being captured */}
+                <div className="card-frame w-36 sm:w-40 border border-border bg-card shadow-[0_16px_32px_-24px_rgba(19,18,16,0.5)] mb-6 relative">
+                  <div className="absolute inset-2 rounded-[inherit] border border-dashed border-border flex flex-col items-center justify-center gap-3">
+                    <Camera className="h-7 w-7 text-muted-foreground" />
+                    <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Empty slot</span>
+                  </div>
                 </div>
-                <h2 className="text-xl font-semibold mb-2">Ready to Scan</h2>
-                <div className="flex flex-wrap items-center justify-center gap-2 mb-8 mt-4">
+                <h2 className="font-serif text-2xl mb-1">Ready to scan</h2>
+                <p className="text-sm text-muted-foreground">Place a card in the viewfinder to identify it.</p>
+                <div className="flex flex-wrap items-center justify-center gap-2 mb-8 mt-5">
                   {["All", "Pokemon", "MTG", "Yugioh"].map((g) => {
                     const label = g === "Pokemon" ? "Pokémon" : g === "MTG" ? "Magic (MTG)" : g === "Yugioh" ? "Yu-Gi-Oh!" : g;
                     const isActive = selectedGame === g;
@@ -898,7 +912,7 @@ export default function ScannerPage() {
                         className={cn(
                           "rounded-full px-4 font-medium transition-all border",
                           isActive
-                            ? "bg-aura-purple/20 text-aura-purple border-aura-purple/30 font-semibold"
+                            ? "bg-secondary text-foreground border-brass/50 font-semibold"
                             : "text-muted-foreground border-border hover:bg-muted"
                         )}
                       >
@@ -907,7 +921,7 @@ export default function ScannerPage() {
                     );
                   })}
                 </div>
-                <Button onClick={startCamera} className="gradient-bg text-white border-0 h-12 px-8 rounded-xl font-medium text-base w-full max-w-xs shadow-lg shadow-aura-purple/20">
+                <Button onClick={startCamera} className="h-12 px-8 font-medium text-base w-full max-w-xs">
                   <Camera className="h-5 w-5 mr-2" /> Open Camera
                 </Button>
               </motion.div>
@@ -916,18 +930,18 @@ export default function ScannerPage() {
             {/* ── SCANNING STATE ── */}
             {state === "scanning" && (
               <motion.div key="scanning" initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="flex-1 flex flex-col h-full min-h-0">
-                <div className="relative rounded-2xl overflow-hidden glass border-border/50 flex-1 flex flex-col h-full min-h-0">
-                  
+                <div className="relative rounded-xl overflow-hidden border border-border bg-card flex-1 flex flex-col h-full min-h-0">
+
                   {/* Status Indicators */}
                   <div className="absolute top-4 left-4 z-10 flex flex-col gap-2">
                     {isAutoScan && !isBulkMode && (
-                      <div className="flex items-center gap-2 bg-black/60 backdrop-blur-sm text-white px-3 py-1.5 rounded-full text-xs font-medium border border-white/10">
-                        <div className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" /> Auto-Scan Active
+                      <div className="flex items-center gap-2 bg-black/70 text-white px-3 py-1.5 rounded-full font-mono text-[11px] uppercase tracking-wide border border-white/15">
+                        <div className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" /> Auto
                       </div>
                     )}
                     {isBulkMode && (
-                      <div className="flex items-center gap-2 bg-aura-purple/80 backdrop-blur-sm text-white px-3 py-1.5 rounded-full text-xs font-medium shadow-[0_0_15px_rgba(139,92,246,0.5)] border border-white/20">
-                        <Layers className="h-3 w-3" /> Bulk Mode ({bulkQueue.length})
+                      <div className="flex items-center gap-2 bg-black/70 text-white px-3 py-1.5 rounded-full font-mono text-[11px] uppercase tracking-wide border border-white/15">
+                        <Layers className="h-3 w-3 text-brass" /> Bulk · {bulkQueue.length}
                       </div>
                     )}
                   </div>
@@ -970,7 +984,7 @@ export default function ScannerPage() {
                             initial={{ opacity: 0, x: 20, scale: 0.8 }}
                             animate={{ opacity: 1, x: 0, scale: 1 }}
                             exit={{ opacity: 0, x: 20 }}
-                            className="w-12 h-16 rounded-md overflow-hidden border-2 border-aura-purple shadow-lg bg-black/50"
+                            className="w-12 h-16 rounded-md overflow-hidden border border-brass shadow-md bg-black/50"
                           >
                             {/* eslint-disable-next-line @next/next/no-img-element */}
                             <img src={card.thumbnailUrl || card.imageUrl} alt="Card" className="w-full h-full object-cover" />
@@ -998,23 +1012,22 @@ export default function ScannerPage() {
                     />
 
                     <div className="absolute inset-0 flex items-center justify-center">
-                      <div ref={guideRef} className={cn(
-                        "relative w-[70%] max-w-[280px] aspect-[2.5/3.5] border-2 rounded-xl transition-all duration-1000",
-                        isAutoScan ? "border-aura-purple/60 shadow-[0_0_30px_rgba(139,92,246,0.2)]" : "border-aura-purple/60"
-                      )}>
-                        <div className="absolute -top-0.5 -left-0.5 w-8 h-8 border-t-3 border-l-3 rounded-tl-xl border-aura-purple" />
-                        <div className="absolute -top-0.5 -right-0.5 w-8 h-8 border-t-3 border-r-3 rounded-tr-xl border-aura-purple" />
-                        <div className="absolute -bottom-0.5 -left-0.5 w-8 h-8 border-b-3 border-l-3 rounded-bl-xl border-aura-purple" />
-                        <div className="absolute -bottom-0.5 -right-0.5 w-8 h-8 border-b-3 border-r-3 rounded-br-xl border-aura-purple" />
+                      {/* Guide frame at true trading-card proportions. Aspect kept
+                          identical to before — this box drives ROI capture. */}
+                      <div ref={guideRef} className="relative w-[70%] max-w-[280px] aspect-[2.5/3.5] border border-white/25 rounded-lg transition-all duration-1000">
+                        <div className="absolute -top-px -left-px w-8 h-8 border-t-2 border-l-2 rounded-tl-lg border-brass" />
+                        <div className="absolute -top-px -right-px w-8 h-8 border-t-2 border-r-2 rounded-tr-lg border-brass" />
+                        <div className="absolute -bottom-px -left-px w-8 h-8 border-b-2 border-l-2 rounded-bl-lg border-brass" />
+                        <div className="absolute -bottom-px -right-px w-8 h-8 border-b-2 border-r-2 rounded-br-lg border-brass" />
 
                         {isAutoScan && (
-                          <div className="absolute left-0 right-0 h-1 bg-gradient-to-r from-transparent via-aura-purple to-transparent animate-scan-line opacity-80" />
+                          <div className="absolute left-0 right-0 h-px bg-gradient-to-r from-transparent via-brass to-transparent animate-scan-line opacity-90" />
                         )}
                       </div>
                     </div>
                   </div>
 
-                  <div className="px-4 pt-3 pb-1 bg-background/50 backdrop-blur-md flex items-center justify-center gap-2">
+                  <div className="px-4 pt-3 pb-1 bg-card border-t border-border flex items-center justify-center gap-2">
                     {["All", "Pokemon", "MTG", "Yugioh"].map((g) => {
                       const label = g === "Pokemon" ? "Pokémon" : g === "MTG" ? "Magic" : g === "Yugioh" ? "Yu-Gi-Oh!" : g;
                       return (
@@ -1026,11 +1039,8 @@ export default function ScannerPage() {
                           className={cn(
                             "rounded-full h-8 px-4 text-xs font-semibold transition-all border",
                             selectedGame === g
-                              ? g === "Pokemon" ? "bg-yellow-500/20 text-yellow-400 border-yellow-500/30"
-                              : g === "MTG" ? "bg-purple-500/20 text-purple-400 border-purple-500/30"
-                              : g === "Yugioh" ? "bg-blue-500/20 text-blue-400 border-blue-500/30"
-                              : "bg-white/10 text-white border-white/20"
-                              : "text-muted-foreground border-transparent hover:bg-white/5"
+                              ? "bg-secondary text-foreground border-brass/50"
+                              : "text-muted-foreground border-transparent hover:bg-muted"
                           )}
                         >
                           {label}
@@ -1040,52 +1050,52 @@ export default function ScannerPage() {
                   </div>
 
                   {/* Camera Controls */}
-                  <div className="p-4 pt-2 flex items-center justify-between gap-4 bg-background/50 backdrop-blur-md">
-                    <Button variant="outline" size="icon" onClick={stopCamera} className="rounded-full h-12 w-12 shrink-0 bg-background/80 hover:bg-destructive hover:text-white hover:border-destructive transition-colors">
+                  <div className="p-4 pt-2 flex items-center justify-between gap-4 bg-card">
+                    <Button variant="outline" size="icon" onClick={stopCamera} className="rounded-full h-12 w-12 shrink-0 hover:bg-destructive hover:text-white hover:border-destructive transition-colors">
                       {isBulkMode && bulkQueue.length > 0 ? <Check className="h-5 w-5" /> : <X className="h-5 w-5" />}
                     </Button>
-                    
-                    <div className="flex bg-background/60 backdrop-blur-md rounded-full p-1 border border-border/50 shadow-inner overflow-hidden">
+
+                    <div className="flex bg-secondary rounded-full p-1 border border-border overflow-hidden">
                       <Button
                         onClick={() => toggleScanMode("manual")}
                         variant="ghost"
-                        className={cn("rounded-full h-10 px-4 text-xs font-semibold transition-all", !isAutoScan && !isBulkMode ? "bg-white text-black shadow-sm" : "text-muted-foreground hover:text-foreground")}
+                        className={cn("rounded-full h-10 px-4 text-xs font-semibold transition-all", !isAutoScan && !isBulkMode ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}
                       >
                         Single
                       </Button>
                       <Button
                         onClick={() => toggleScanMode("auto")}
                         variant="ghost"
-                        className={cn("rounded-full h-10 px-4 text-xs font-semibold transition-all", isAutoScan && !isBulkMode ? "bg-emerald-500 text-white shadow-sm" : "text-muted-foreground hover:text-foreground")}
+                        className={cn("rounded-full h-10 px-4 text-xs font-semibold transition-all", isAutoScan && !isBulkMode ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}
                       >
                         Auto
                       </Button>
                       <Button
                         onClick={() => toggleScanMode("bulk")}
                         variant="ghost"
-                        className={cn("rounded-full h-10 px-4 text-xs font-semibold transition-all", isBulkMode ? "bg-aura-purple text-white shadow-sm" : "text-muted-foreground hover:text-foreground")}
+                        className={cn("rounded-full h-10 px-4 text-xs font-semibold transition-all", isBulkMode ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}
                       >
                         Bulk
                       </Button>
                     </div>
 
                     {!isAutoScan ? (
-                      <Button onClick={captureCard} disabled={!cameraReady} className="h-12 w-12 rounded-full gradient-bg text-white border-0 shadow-lg shrink-0 disabled:opacity-40">
+                      <Button onClick={captureCard} disabled={!cameraReady} className="h-12 w-12 rounded-full shrink-0 ring-1 ring-border ring-offset-2 ring-offset-card disabled:opacity-40">
                         <Camera className="h-5 w-5" />
                       </Button>
                     ) : (
                       <div className="h-12 w-12 flex items-center justify-center shrink-0">
-                        {autoScanBusy && <RefreshCw className="h-5 w-5 text-emerald-400 animate-spin" />}
+                        {autoScanBusy && <RefreshCw className="h-5 w-5 text-brass animate-spin" />}
                       </div>
                     )}
                   </div>
                 </div>
-                
+
                 {isBulkMode && (
                   <div className="mt-4 text-center">
-                    <Button 
-                      onClick={stopCamera} 
-                      className="w-full sm:w-auto min-w-[200px] h-12 rounded-xl gradient-bg border-0 text-white shadow-lg shadow-aura-purple/20"
+                    <Button
+                      onClick={stopCamera}
+                      className="w-full sm:w-auto min-w-[200px] h-12"
                       disabled={bulkQueue.length === 0}
                     >
                       Finish Bulk Scan ({bulkQueue.length} cards)
@@ -1104,28 +1114,16 @@ export default function ScannerPage() {
                 exit={{ opacity: 0, y: -15 }} 
                 className="flex flex-col items-center justify-center py-12"
               >
-                {/* Holographic Card Scanner Mockup */}
-                <div className="relative w-36 h-52 rounded-2xl border border-white/20 bg-gradient-to-br from-aura-purple/20 via-pink-500/10 to-blue-500/20 backdrop-blur-md shadow-[0_0_40px_rgba(139,92,246,0.25)] flex flex-col items-center justify-center overflow-hidden mb-8 group">
-                  {/* Glowing background meshes */}
-                  <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_120%,rgba(139,92,246,0.4),transparent)] animate-pulse" />
-                  <div className="absolute top-4 w-28 h-32 rounded-lg border border-white/10 bg-black/40 flex items-center justify-center overflow-hidden">
-                    <Sparkles className="h-10 w-10 text-aura-purple animate-pulse" />
-                    {/* Tiny floating particle elements */}
-                    <div className="absolute inset-0 bg-gradient-to-t from-aura-purple/10 to-transparent" />
-                  </div>
-                  
-                  {/* Futuristic Scanning Laser Bar */}
-                  <div className="absolute left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-aura-purple to-transparent animate-scan-line shadow-[0_0_12px_#8b5cf6]" />
-                  
-                  {/* Decorative card elements */}
-                  <div className="w-20 h-1.5 bg-white/10 rounded-full mt-3" />
-                  <div className="w-12 h-1 bg-white/5 rounded-full mt-1.5" />
+                {/* Card under examination — flat card-frame with a brass read line */}
+                <div className="relative card-frame w-36 sm:w-40 border border-border bg-card shadow-[0_16px_32px_-24px_rgba(19,18,16,0.5)] mb-8">
+                  <div className="absolute inset-2 rounded-[inherit] border border-dashed border-border" />
+                  <div className="absolute left-0 right-0 h-px bg-gradient-to-r from-transparent via-brass to-transparent animate-scan-line" />
                 </div>
 
                 <div className="space-y-2 text-center">
-                  <h2 className="text-xl font-bold tracking-tight text-foreground flex items-center justify-center gap-2">
-                    <Loader2 className="h-5 w-5 animate-spin text-aura-purple" />
-                    Analyzing Card
+                  <h2 className="font-serif text-2xl tracking-tight text-foreground flex items-center justify-center gap-2">
+                    <Loader2 className="h-4 w-4 animate-spin text-brass" />
+                    Examining card
                   </h2>
                   <AnimatePresence mode="wait">
                     <motion.p
@@ -1134,13 +1132,13 @@ export default function ScannerPage() {
                       animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0, y: -5 }}
                       transition={{ duration: 0.2 }}
-                      className="text-sm font-medium text-aura-purple/90 min-h-[20px]"
+                      className="font-mono text-xs uppercase tracking-[0.14em] text-muted-foreground min-h-[20px]"
                     >
                       {LOADING_STATUSES[loadingStatusIndex]}
                     </motion.p>
                   </AnimatePresence>
                   <p className="text-xs text-muted-foreground pt-1">
-                    Identifying details and pulling live market pricing.
+                    Identifying the printing and pulling live market pricing.
                   </p>
                 </div>
               </motion.div>
@@ -1149,12 +1147,12 @@ export default function ScannerPage() {
             {/* ── ERROR STATE ── */}
             {state === "error" && (
               <motion.div key="error" initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="flex flex-col items-center justify-center py-16">
-                <div className="w-24 h-24 rounded-2xl bg-red-500/10 flex items-center justify-center mb-8 border border-red-500/20">
-                  <AlertCircle className="h-10 w-10 text-red-500" />
+                <div className="w-20 h-20 rounded-xl bg-destructive/10 flex items-center justify-center mb-8 border border-destructive/20">
+                  <AlertCircle className="h-8 w-8 text-destructive" />
                 </div>
-                <h2 className="text-lg font-semibold mb-2">Scan Failed</h2>
+                <h2 className="font-serif text-2xl mb-2">Scan failed</h2>
                 <p className="text-sm text-muted-foreground mb-6 max-w-xs text-center">{errorMessage}</p>
-                <Button variant="outline" className="h-11 px-8 rounded-xl font-medium" onClick={resetScan}>
+                <Button variant="outline" className="h-11 px-8 font-medium" onClick={resetScan}>
                   <RotateCcw className="h-4 w-4 mr-2" /> Try Again
                 </Button>
               </motion.div>
@@ -1170,14 +1168,14 @@ export default function ScannerPage() {
                 className="space-y-4"
               >
                 {/* Header */}
-                <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-start gap-3">
+                <div className="p-4 rounded-lg bg-card border border-border flex items-start gap-3">
                   <div className="shrink-0 mt-0.5">
-                    <Scan className="h-4 w-4 text-amber-400" />
+                    <Scan className="h-4 w-4 text-brass" />
                   </div>
                   <div>
-                    <p className="text-sm font-semibold text-amber-400">Which printing is this?</p>
+                    <p className="font-serif text-lg leading-snug">Which printing is this?</p>
                     <p className="text-xs text-muted-foreground mt-0.5">
-                      The AI identified &ldquo;<span className="font-medium text-foreground">{disambiguationCardName}</span>&rdquo; but couldn&apos;t determine the exact set. Tap the correct version below.
+                      We identified &ldquo;<span className="font-medium text-foreground">{disambiguationCardName}</span>&rdquo; but not the exact set. Tap the correct version below.
                     </p>
                   </div>
                 </div>
@@ -1193,39 +1191,38 @@ export default function ScannerPage() {
                       onClick={() => !isAdding && handleSelectCandidate(candidate)}
                       disabled={isAdding}
                       className={cn(
-                        "group relative rounded-xl overflow-hidden border bg-background/50 text-left transition-all duration-200",
-                        "hover:border-aura-purple/60 hover:shadow-lg hover:shadow-aura-purple/10 hover:scale-[1.02]",
-                        "focus:outline-none focus:ring-2 focus:ring-aura-purple/50",
+                        "group relative rounded-lg overflow-hidden border bg-card text-left transition-all duration-200",
+                        "hover:border-brass/60 hover:shadow-md hover:-translate-y-0.5",
+                        "focus:outline-none focus:ring-2 focus:ring-ring/50",
                         candidate.isBestMatch
-                          ? "border-aura-purple ring-2 ring-aura-purple/50 shadow-lg shadow-aura-purple/20"
-                          : "border-border/50",
+                          ? "border-brass ring-1 ring-brass/40"
+                          : "border-border",
                         isAdding && "opacity-50 cursor-not-allowed"
                       )}
                     >
                       {/* Best-match badge — vision's top pick */}
                       {candidate.isBestMatch && (
-                        <div className="absolute top-1.5 left-1.5 z-10 flex items-center gap-1 rounded-full bg-aura-purple px-2 py-0.5 shadow-lg">
-                          <Sparkles className="h-3 w-3 text-white" />
-                          <span className="text-[10px] font-semibold text-white">Best match</span>
+                        <div className="absolute top-1.5 left-1.5 z-10 flex items-center gap-1 rounded-full bg-brass px-2 py-0.5 shadow-sm">
+                          <span className="font-mono text-[9px] font-semibold uppercase tracking-wide text-white">Best match</span>
                         </div>
                       )}
                       {/* Card Image */}
-                      <div className="aspect-[2.5/3.5] w-full bg-black/30 overflow-hidden">
+                      <div className="aspect-[2.5/3.5] w-full bg-muted overflow-hidden">
                         {candidate.thumbnailUrl || candidate.imageUrl ? (
                           // eslint-disable-next-line @next/next/no-img-element
                           <img
                             src={candidate.thumbnailUrl || candidate.imageUrl}
                             alt={candidate.setName}
-                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                            className="w-full h-full object-cover group-hover:scale-[1.03] transition-transform duration-300"
                           />
                         ) : (
                           <div className="w-full h-full flex items-center justify-center">
-                            <Sparkles className="h-8 w-8 text-aura-purple/30" />
+                            <Sparkles className="h-8 w-8 text-muted-foreground/40" />
                           </div>
                         )}
                         {/* Hover overlay */}
-                        <div className="absolute inset-0 bg-aura-purple/0 group-hover:bg-aura-purple/10 transition-colors duration-200 flex items-center justify-center">
-                          <div className="opacity-0 group-hover:opacity-100 transition-opacity bg-aura-purple rounded-full p-2 shadow-lg">
+                        <div className="absolute inset-0 bg-transparent group-hover:bg-black/10 transition-colors duration-200 flex items-center justify-center">
+                          <div className="opacity-0 group-hover:opacity-100 transition-opacity bg-brass rounded-full p-2 shadow-md">
                             <Check className="h-4 w-4 text-white" />
                           </div>
                         </div>
@@ -1235,7 +1232,7 @@ export default function ScannerPage() {
                       <div className="p-2">
                         <p className="text-[11px] font-semibold leading-tight line-clamp-2 text-foreground">{candidate.setName}</p>
                         {(candidate.setCode || candidate.collectorNumber) && (
-                          <p className="text-[10px] font-medium text-muted-foreground mt-0.5 truncate">
+                          <p className="font-mono text-[10px] text-muted-foreground mt-0.5 truncate">
                             {[
                               candidate.setCode ? candidate.setCode.toUpperCase() : null,
                               candidate.collectorNumber ? `#${candidate.collectorNumber}` : null,
@@ -1246,7 +1243,7 @@ export default function ScannerPage() {
                           {candidate.rarity && (
                             <span className="text-[10px] text-muted-foreground truncate">{candidate.rarity}</span>
                           )}
-                          <span className="text-[11px] font-bold text-aura-purple shrink-0">
+                          <span className="font-mono text-[11px] font-semibold text-foreground shrink-0">
                             ${candidate.price?.marketPrice?.toFixed(2) || "0.00"}
                           </span>
                         </div>
@@ -1258,7 +1255,7 @@ export default function ScannerPage() {
                 {/* Actions */}
                 <Button
                   variant="outline"
-                  className="w-full h-11 rounded-xl"
+                  className="w-full h-11"
                   onClick={resetScan}
                   disabled={isAdding}
                 >
@@ -1269,61 +1266,59 @@ export default function ScannerPage() {
 
             {/* ── RESULT STATE (Single Card) ── */}
             {state === "result" && scanResult && !isBulkMode && (
-              <motion.div key="result" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }} className="space-y-4">
-                <div className="flex items-center gap-2 p-3 rounded-xl bg-emerald-400/10 border border-emerald-400/20">
-                  <Check className="h-4 w-4 text-emerald-400" />
-                  <span className="text-sm font-medium text-emerald-400">Card identified successfully by AI</span>
+              <motion.div key="result" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, y: -12 }} className="py-4 space-y-5">
+                {/* Catalog entry caption */}
+                <p className="text-center font-mono text-[11px] uppercase tracking-[0.2em] text-muted-foreground">
+                  Identified · New entry
+                </p>
+
+                {/* The card itself, entering the archive */}
+                <motion.div
+                  initial={{ opacity: 0, y: 18, scale: 0.97 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
+                  className="mx-auto w-44 sm:w-52"
+                >
+                  <div className="card-frame border border-border bg-muted shadow-[0_24px_48px_-24px_rgba(19,18,16,0.5)]">
+                    {scanResult.imageUrl ? (
+                      /* eslint-disable-next-line @next/next/no-img-element */
+                      <img src={scanResult.imageUrl} alt={scanResult.name} className="w-full h-full object-cover" />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center">
+                        <Sparkles className="h-8 w-8 text-muted-foreground/40" />
+                      </div>
+                    )}
+                  </div>
+                </motion.div>
+
+                {/* Foil rule — the screen's single foil moment */}
+                <div className="foil-edge h-px w-24 mx-auto" />
+
+                {/* Catalog details */}
+                <div className="text-center space-y-1">
+                  <h3 className="font-serif text-2xl sm:text-3xl leading-tight">{scanResult.name}</h3>
+                  <p className="text-sm text-muted-foreground">{scanResult.set}</p>
+                  <p className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
+                    {[scanResult.game, scanResult.rarity?.replace(/_/g, " ")].filter(Boolean).join(" · ")}
+                  </p>
                 </div>
 
-                <Card className="glass border-border/50 overflow-hidden relative">
-                  {(scanResult.rarity === "SECRET_RARE" || scanResult.rarity === "MYTHIC") && (
-                    <div className="absolute top-0 right-0 w-32 h-32 bg-yellow-400/20 rounded-full blur-[50px] -z-10" />
-                  )}
-                  <div className="h-1 gradient-bg" />
-                  <CardContent className="p-6">
-                    <div className="flex items-start gap-4">
-                      {scanResult.imageUrl && (
-                        <div className="w-24 sm:w-32 shrink-0 rounded-lg overflow-hidden border border-border/50 shadow-md">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img src={scanResult.imageUrl} alt={scanResult.name} className="w-full h-auto object-cover" />
-                        </div>
-                      )}
-                      
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-start justify-between mb-2">
-                          <div>
-                            <h3 className="text-lg sm:text-xl font-bold truncate">{scanResult.name}</h3>
-                            <p className="text-sm text-muted-foreground truncate">{scanResult.set}</p>
-                          </div>
-                        </div>
-                        
-                        <div className="flex flex-wrap gap-2 mb-4">
-                          <Badge variant="secondary" className="bg-background/50">{scanResult.game}</Badge>
-                          {scanResult.rarity && <Badge variant="outline" className="border-aura-purple/30 text-aura-purple">{scanResult.rarity}</Badge>}
-                        </div>
+                <div className="flex items-baseline justify-center gap-2">
+                  <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Market</span>
+                  <span className="font-mono text-xl text-foreground">${scanResult.prices?.marketPrice?.toFixed(2) || "0.00"}</span>
+                </div>
 
-                        <div className="grid grid-cols-2 gap-3 mt-4">
-                          <div className="p-3 rounded-xl bg-background/50 border border-border/50">
-                            <p className="text-xs text-muted-foreground mb-1">Market Price</p>
-                            <p className="text-lg font-bold text-aura-purple">${scanResult.prices?.marketPrice?.toFixed(2) || "0.00"}</p>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                <div className="flex gap-3">
-                  <Button variant="outline" className="flex-1 h-12 rounded-xl" onClick={resetScan}>
+                <div className="flex gap-3 pt-2">
+                  <Button variant="outline" className="flex-1 h-12" onClick={resetScan}>
                     <RotateCcw className="h-4 w-4 mr-2" /> Scan Next
                   </Button>
-                  <Button className="flex-1 h-12 rounded-xl gradient-bg text-white border-0" onClick={handleAddToCollection} disabled={isAdding || addSuccess}>
+                  <Button className="flex-1 h-12" onClick={handleAddToCollection} disabled={isAdding || addSuccess}>
                     {addSuccess ? (
                       <><Check className="h-4 w-4 mr-2" /> Added</>
                     ) : isAdding ? (
                       <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Adding...</>
                     ) : (
-                      <><Sparkles className="h-4 w-4 mr-2" /> Add to Collection</>
+                      <>Add to Collection</>
                     )}
                   </Button>
                 </div>
@@ -1333,51 +1328,50 @@ export default function ScannerPage() {
             {/* ── BULK REVIEW STATE ── */}
             {state === "bulk-review" && (
               <motion.div key="bulk-review" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }} className="space-y-4">
-                <div className="flex items-center justify-between p-4 rounded-xl glass border border-border/50">
+                <div className="flex items-center justify-between p-4 rounded-lg bg-card border border-border">
                   <div>
-                    <h3 className="font-bold text-lg flex items-center gap-2">
-                      <Layers className="h-5 w-5 text-aura-purple" /> Bulk Scan Complete
-                    </h3>
-                    <p className="text-sm text-muted-foreground">{bulkQueue.length} cards identified</p>
+                    <h3 className="font-serif text-xl">Bulk scan complete</h3>
+                    <p className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted-foreground mt-0.5">{bulkQueue.length} cards identified</p>
                   </div>
                   <Button variant="outline" size="sm" onClick={resetScan}>
                     <RotateCcw className="h-4 w-4 mr-2" /> Discard All
                   </Button>
                 </div>
 
-                <div className="space-y-3 max-h-[50vh] overflow-y-auto pr-2 custom-scrollbar">
+                {/* Intake ledger */}
+                <div className="rounded-lg border border-border bg-card divide-y divide-border max-h-[50vh] overflow-y-auto custom-scrollbar">
                   {bulkQueue.map((card, i) => (
-                    <Card key={`${card.id}-${i}`} className="glass border-border/50 overflow-hidden">
-                      <CardContent className="p-3 flex items-center gap-4">
-                        {(card.thumbnailUrl || card.imageUrl) ? (
-                          <div className="w-12 h-16 shrink-0 rounded border border-border/50 overflow-hidden">
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img src={card.thumbnailUrl || card.imageUrl} alt={card.name} className="w-full h-full object-cover" />
-                          </div>
-                        ) : (
-                          <div className="w-12 h-16 shrink-0 rounded border border-border/50 bg-black/20 flex items-center justify-center">
-                            <Sparkles className="h-4 w-4 text-aura-purple/50" />
-                          </div>
-                        )}
-                        
-                        <div className="flex-1 min-w-0">
-                          <h4 className="font-bold text-sm truncate">{card.name}</h4>
-                          <p className="text-xs text-muted-foreground truncate">{card.set} • {card.game}</p>
-                          <p className="text-xs font-semibold text-aura-purple mt-1">${card.prices?.marketPrice?.toFixed(2) || "0.00"}</p>
+                    <div key={`${card.id}-${i}`} className="p-3 flex items-center gap-4">
+                      <span className="font-mono text-[10px] text-muted-foreground w-6 text-right shrink-0">{String(i + 1).padStart(2, "0")}</span>
+                      {(card.thumbnailUrl || card.imageUrl) ? (
+                        <div className="w-11 shrink-0 card-frame border border-border">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={card.thumbnailUrl || card.imageUrl} alt={card.name} className="w-full h-full object-cover" />
                         </div>
+                      ) : (
+                        <div className="w-11 shrink-0 card-frame border border-border bg-muted flex items-center justify-center">
+                          <Sparkles className="h-4 w-4 text-muted-foreground/40" />
+                        </div>
+                      )}
 
-                        <Button variant="ghost" size="icon" onClick={() => removeFromBulkQueue(i)} className="shrink-0 text-muted-foreground hover:text-red-400 hover:bg-red-400/10">
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </CardContent>
-                    </Card>
+                      <div className="flex-1 min-w-0">
+                        <h4 className="font-medium text-sm truncate">{card.name}</h4>
+                        <p className="text-xs text-muted-foreground truncate">{card.set} · {card.game}</p>
+                      </div>
+
+                      <span className="font-mono text-sm shrink-0">${card.prices?.marketPrice?.toFixed(2) || "0.00"}</span>
+
+                      <Button variant="ghost" size="icon" onClick={() => removeFromBulkQueue(i)} className="shrink-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10">
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
                   ))}
                 </div>
 
-                <div className="pt-4 border-t border-border/50">
-                  <Button 
-                    className="w-full h-12 rounded-xl gradient-bg text-white border-0 shadow-lg shadow-aura-purple/20" 
-                    onClick={handleAddBulkToCollection} 
+                <div className="pt-4 border-t border-border">
+                  <Button
+                    className="w-full h-12"
+                    onClick={handleAddBulkToCollection}
                     disabled={isAdding || addSuccess || bulkQueue.length === 0}
                   >
                     {addSuccess ? (
@@ -1385,12 +1379,12 @@ export default function ScannerPage() {
                     ) : isAdding ? (
                       <><Loader2 className="h-5 w-5 mr-2 animate-spin" /> Adding {bulkQueue.length} Cards...</>
                     ) : (
-                      <><Sparkles className="h-5 w-5 mr-2" /> Add All {bulkQueue.length} to Collection</>
+                      <>Add All {bulkQueue.length} to Collection</>
                     )}
                   </Button>
-                  
+
                   {addSuccess && (
-                    <Button variant="outline" className="w-full h-12 rounded-xl mt-3" onClick={resetScan}>
+                    <Button variant="outline" className="w-full h-12 mt-3" onClick={resetScan}>
                       <RotateCcw className="h-4 w-4 mr-2" /> Start New Scan
                     </Button>
                   )}
