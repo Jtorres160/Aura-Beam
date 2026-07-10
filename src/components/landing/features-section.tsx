@@ -7,32 +7,28 @@ const features = [
   {
     icon: ScanLine,
     title: "Instant Scan",
-    description: "Point your camera at any trading card. Our AI identifies it in under 2 seconds with 95%+ accuracy.",
-    gradient: "from-purple-500 to-indigo-500",
+    description: "Point your camera at any trading card. Aura reads the printing and identifies the exact card in seconds.",
   },
   {
     icon: TrendingUp,
     title: "Live Pricing",
     description: "Real-time market data from TCGPlayer, Scryfall, and more. See market, low, mid, and high prices instantly.",
-    gradient: "from-indigo-500 to-blue-500",
   },
   {
     icon: BarChart3,
     title: "Portfolio Tracking",
-    description: "Track your collection's total value with daily, weekly, and monthly performance analytics.",
-    gradient: "from-violet-500 to-purple-500",
+    description: "Track your collection's total value with daily, weekly, and monthly performance insights.",
   },
   {
     icon: Bell,
     title: "Price Alerts",
     description: "Set thresholds on any card. Get notified when prices move so you never miss a trade.",
-    gradient: "from-blue-500 to-violet-500",
   },
 ];
 
 export function FeaturesSection() {
   return (
-    <section id="features" className="relative py-32 overflow-hidden">
+    <section id="features" className="relative py-32">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
         {/* Section header */}
         <motion.div
@@ -42,11 +38,11 @@ export function FeaturesSection() {
           transition={{ duration: 0.6 }}
           className="text-center mb-20"
         >
-          <p className="text-sm font-semibold text-aura-purple uppercase tracking-widest mb-3">Features</p>
-          <h2 className="text-3xl sm:text-4xl lg:text-5xl font-bold tracking-tight">
+          <p className="font-mono text-xs uppercase tracking-[0.24em] text-muted-foreground mb-4">Features</p>
+          <h2 className="font-serif text-3xl sm:text-4xl lg:text-5xl tracking-tight">
             Everything you need to
             <br />
-            <span className="gradient-text">master your collection</span>
+            master your collection
           </h2>
         </motion.div>
 
@@ -59,16 +55,13 @@ export function FeaturesSection() {
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true, margin: "-80px" }}
               transition={{ duration: 0.5, delay: i * 0.1 }}
-              className="group relative rounded-2xl glass p-8 card-hover"
+              className="rounded-xl border border-border bg-card p-8 card-hover"
             >
-              <div className={`inline-flex items-center justify-center w-12 h-12 rounded-xl bg-gradient-to-br ${feature.gradient} mb-5`}>
-                <feature.icon className="h-6 w-6 text-white" />
+              <div className="inline-flex items-center justify-center w-11 h-11 rounded-lg bg-secondary border border-border mb-5">
+                <feature.icon className="h-5 w-5 text-brass" />
               </div>
-              <h3 className="text-xl font-semibold mb-2">{feature.title}</h3>
+              <h3 className="font-serif text-2xl mb-2">{feature.title}</h3>
               <p className="text-muted-foreground leading-relaxed">{feature.description}</p>
-
-              {/* Hover glow */}
-              <div className="absolute inset-0 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none aura-glow-sm" />
             </motion.div>
           ))}
         </div>

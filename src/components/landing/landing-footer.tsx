@@ -28,13 +28,13 @@ export function LandingFooter() {
           {/* Brand */}
           <div className="col-span-2 md:col-span-1">
             <Link href="/" className="flex items-center gap-2 mb-4">
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg gradient-bg">
-                <Sparkles className="h-4 w-4 text-white" />
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary">
+                <Sparkles className="h-4 w-4 text-primary-foreground" />
               </div>
-              <span className="text-lg font-bold gradient-text">Aura</span>
+              <span className="font-serif text-xl">Aura</span>
             </Link>
             <p className="text-sm text-muted-foreground leading-relaxed max-w-xs">
-              The fastest way to identify and value your trading cards with AI.
+              A precise instrument for identifying, valuing, and archiving trading cards.
             </p>
           </div>
 

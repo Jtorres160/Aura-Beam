@@ -49,8 +49,12 @@
   --radius-2xl: calc(var(--radius) * 1.5);
   --radius-3xl: calc(var(--radius) * 1.5);
   --radius-4xl: calc(var(--radius) * 1.5);
+  /* Canonical accent name — same value the legacy aura-* slots carry.
+     New/redesigned markup uses `brass`; legacy markup migrates as touched. */
+  --color-brass: var(--aura-purple);
   /* Legacy names kept so existing markup compiles; values now point at the
-     Collector's Instrument palette. Rename at the JSX level in Phase 2. */
+     Collector's Instrument palette. Rename at the JSX level as screens are
+     redesigned. */
   --color-aura-purple: var(--aura-purple);
   --color-aura-indigo: var(--aura-indigo);
   --color-aura-violet: var(--aura-violet);
@@ -221,15 +225,6 @@
   box-shadow: 0 2px 8px -4px rgba(19, 18, 16, 0.18);
 }
 
-/* was: purple neon glows → now soft directional object shadows */
-.aura-glow {
-  box-shadow: 0 16px 40px -20px rgba(19, 18, 16, 0.4);
-}
-
-.aura-glow-sm {
-  box-shadow: 0 8px 20px -12px rgba(19, 18, 16, 0.35);
-}
-
 /* was: purple gradient-clipped text → now solid foreground ink */
 .gradient-text {
   color: var(--foreground);
@@ -290,11 +285,15 @@
   box-shadow: 0 10px 28px -14px rgba(19, 18, 16, 0.3);
 }
 
-/* Removed entirely (no markup depends on their keyframes to function):
+/* Removed entirely (usage-checked, zero references remain):
    .animate-float / @keyframes float — ambient orb motion
    .animate-pulse-glow / @keyframes pulse-glow — neon pulsing
    @keyframes gradient-shift — animated gradient backgrounds
-   Elements still carrying these classes simply stop animating. */
+   .aura-glow / .aura-glow-sm — glow shims (Phase 3: last consumers redesigned)
+   Still shimmed above because out-of-scope pages (auth, verify, settings,
+   search, watchlist, admin, info) reference them: .glass, .glass-elevated,
+   .gradient-text, .gradient-bg, .mesh-gradient. Delete each shim as its
+   remaining consumers are redesigned. */
 
 /* ============================================================
    Layout utilities (unchanged)

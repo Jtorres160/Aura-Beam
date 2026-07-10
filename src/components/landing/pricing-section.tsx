@@ -52,9 +52,9 @@ export function PricingSection() {
           transition={{ duration: 0.6 }}
           className="text-center mb-20"
         >
-          <p className="text-sm font-semibold text-aura-purple uppercase tracking-widest mb-3">Pricing</p>
-          <h2 className="text-3xl sm:text-4xl lg:text-5xl font-bold tracking-tight">
-            Simple, <span className="gradient-text">transparent</span> pricing
+          <p className="font-mono text-xs uppercase tracking-[0.24em] text-muted-foreground mb-4">Pricing</p>
+          <h2 className="font-serif text-3xl sm:text-4xl lg:text-5xl tracking-tight">
+            Simple, transparent pricing
           </h2>
           <p className="mt-4 text-lg text-muted-foreground max-w-xl mx-auto">
             Start scanning for free. Upgrade when you need more power.
@@ -69,32 +69,30 @@ export function PricingSection() {
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true, margin: "-80px" }}
               transition={{ duration: 0.5, delay: i * 0.15 }}
-              className={`relative rounded-2xl p-8 card-hover ${
-                plan.highlighted
-                  ? "glass-elevated border-aura-purple/30 aura-glow-sm"
-                  : "glass"
+              className={`relative rounded-xl border bg-card p-8 card-hover ${
+                plan.highlighted ? "border-brass/50" : "border-border"
               }`}
             >
               {plan.highlighted && (
-                <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-4 py-1 rounded-full text-xs font-semibold gradient-bg text-white">
+                <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-4 py-1 rounded-full font-mono text-[10px] uppercase tracking-wide bg-primary text-primary-foreground">
                   Most Popular
                 </div>
               )}
 
               <div className="mb-6">
-                <h3 className="text-xl font-bold">{plan.name}</h3>
+                <h3 className="font-serif text-2xl">{plan.name}</h3>
                 <p className="text-sm text-muted-foreground mt-1">{plan.description}</p>
               </div>
 
               <div className="mb-8">
-                <span className="text-4xl font-bold">{plan.price}</span>
+                <span className="font-mono text-4xl">{plan.price}</span>
                 <span className="text-muted-foreground ml-2">/{plan.period}</span>
               </div>
 
               <ul className="space-y-3 mb-8">
                 {plan.features.map((f) => (
                   <li key={f} className="flex items-center gap-3 text-sm">
-                    <Check className="h-4 w-4 text-aura-purple shrink-0" />
+                    <Check className="h-4 w-4 text-brass shrink-0" />
                     <span className="text-muted-foreground">{f}</span>
                   </li>
                 ))}
@@ -102,11 +100,7 @@ export function PricingSection() {
 
               <Link href="/register">
                 <Button
-                  className={`w-full h-11 rounded-xl font-medium ${
-                    plan.highlighted
-                      ? "gradient-bg text-white border-0"
-                      : ""
-                  }`}
+                  className="w-full h-11 font-medium"
                   variant={plan.highlighted ? "default" : "outline"}
                 >
                   {plan.cta}

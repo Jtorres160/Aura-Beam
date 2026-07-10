@@ -6,11 +6,11 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/
 const faqs = [
   {
     q: "How does the card scanner work?",
-    a: "Simply point your phone camera at any trading card. Our AI uses a combination of OCR text extraction and image recognition to identify the card in under 2 seconds. We match against a database of 50,000+ cards across Pokémon, Magic: The Gathering, and Yu-Gi-Oh!",
+    a: "Simply point your phone camera at any trading card. Aura combines OCR text extraction and image recognition to identify the card in seconds, matching against a comprehensive database covering Pokémon, Magic: The Gathering, and Yu-Gi-Oh!",
   },
   {
     q: "How accurate is the card identification?",
-    a: "Aura achieves 95%+ accuracy on card identification. We use a hybrid system combining OCR and vision embeddings for best results. If the AI isn't 100% confident, it will show you alternative matches ranked by confidence score.",
+    a: "Aura uses a hybrid system combining OCR and vision embeddings for best results. If it isn't fully confident about the exact printing, it shows you the closest candidate versions so you can confirm the right one.",
   },
   {
     q: "Where do the prices come from?",
@@ -42,9 +42,9 @@ export function FaqSection() {
           transition={{ duration: 0.6 }}
           className="text-center mb-16"
         >
-          <p className="text-sm font-semibold text-aura-purple uppercase tracking-widest mb-3">FAQ</p>
-          <h2 className="text-3xl sm:text-4xl font-bold tracking-tight">
-            Frequently asked <span className="gradient-text">questions</span>
+          <p className="font-mono text-xs uppercase tracking-[0.24em] text-muted-foreground mb-4">FAQ</p>
+          <h2 className="font-serif text-3xl sm:text-4xl tracking-tight">
+            Frequently asked questions
           </h2>
         </motion.div>
 
@@ -58,7 +58,7 @@ export function FaqSection() {
             {faqs.map((faq, i) => (
               <AccordionItem
                 key={i}
-                className="rounded-xl glass px-6 border-0 transition-shadow duration-300"
+                className="rounded-lg bg-card border border-border px-6 transition-shadow duration-300"
               >
                 <AccordionTrigger className="text-left font-medium hover:no-underline py-5 text-sm sm:text-base">
                   {faq.q}

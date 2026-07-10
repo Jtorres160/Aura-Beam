@@ -18,14 +18,14 @@ export function LandingNav() {
   const [mobileOpen, setMobileOpen] = useState(false);
 
   return (
-    <header className="fixed top-0 left-0 right-0 z-50 glass-elevated">
+    <header className="fixed top-0 left-0 right-0 z-50 bg-background border-b border-border">
       <nav className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
         {/* Logo */}
         <Link href="/" className="flex items-center gap-2 group">
-          <div className="relative flex h-8 w-8 items-center justify-center rounded-lg gradient-bg">
-            <Sparkles className="h-4 w-4 text-white" />
+          <div className="relative flex h-8 w-8 items-center justify-center rounded-lg bg-primary">
+            <Sparkles className="h-4 w-4 text-primary-foreground" />
           </div>
-          <span className="text-xl font-bold tracking-tight gradient-text">Aura</span>
+          <span className="font-serif text-2xl tracking-tight">Aura</span>
         </Link>
 
         {/* Desktop links */}
@@ -49,7 +49,7 @@ export function LandingNav() {
             </Button>
           </Link>
           <Link href="/register">
-            <Button size="sm" className="gradient-bg text-white border-0 text-sm font-medium">
+            <Button size="sm" className="text-sm font-medium">
               Get Started
             </Button>
           </Link>
@@ -71,7 +71,7 @@ export function LandingNav() {
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: "auto" }}
             exit={{ opacity: 0, height: 0 }}
-            className="md:hidden glass-elevated border-t border-border"
+            className="md:hidden bg-background border-t border-border"
           >
             <div className="px-4 py-4 space-y-3">
               {navLinks.map((link) => (
@@ -89,7 +89,7 @@ export function LandingNav() {
                   <Button variant="ghost" className="w-full justify-start">Log in</Button>
                 </Link>
                 <Link href="/register" className="block">
-                  <Button className="w-full gradient-bg text-white border-0">Get Started</Button>
+                  <Button className="w-full">Get Started</Button>
                 </Link>
               </div>
             </div>

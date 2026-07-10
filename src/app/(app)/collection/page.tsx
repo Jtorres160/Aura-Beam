@@ -4,18 +4,11 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { useSession } from "next-auth/react";
-import { Library, Grid3X3, List, Plus, Search, Filter, Sparkles, Loader2 } from "lucide-react";
+import { Library, Grid3X3, List, Plus, Search, Filter, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-
-const gameColors: Record<string, string> = {
-  "Pokémon": "bg-yellow-500/10 text-yellow-500",
-  "MTG": "bg-purple-500/10 text-purple-500",
-  "Yu-Gi-Oh!": "bg-blue-500/10 text-blue-500",
-};
 
 export default function CollectionPage() {
   const { data: session } = useSession();
@@ -64,12 +57,10 @@ export default function CollectionPage() {
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
         <div className="flex items-center justify-between flex-wrap gap-4">
           <div>
-            <h1 className="text-2xl sm:text-3xl font-bold flex items-center gap-2">
-              <Library className="h-6 w-6 text-aura-purple" />
-              Collection
-            </h1>
-            <p className="text-muted-foreground mt-1">
-              {collection.length} cards · Total value: <span className="text-foreground font-semibold">${totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+            <h1 className="font-serif text-3xl sm:text-4xl tracking-tight">Collection</h1>
+            <p className="text-muted-foreground mt-1 text-sm">
+              <span className="font-mono">{collection.length}</span> cards · Total value{" "}
+              <span className="font-mono text-foreground">${totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
             </p>
           </div>
           <Link href="/search">
@@ -129,82 +120,93 @@ export default function CollectionPage() {
 
         <TabsContent value="all" className="mt-6">
           {isLoading ? (
-            <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
-              <Loader2 className="h-8 w-8 animate-spin mb-4 text-aura-purple" />
-              <p>Loading your collection...</p>
+            /* Binder-page shimmer — empty card slots while the archive loads */
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-x-4 gap-y-6">
+              {Array.from({ length: 10 }).map((_, i) => (
+                <div key={i}>
+                  <div className="card-frame shimmer border border-border" />
+                  <div className="h-3 w-3/4 mt-2 rounded shimmer" />
+                  <div className="h-3 w-1/2 mt-1.5 rounded shimmer" />
+                </div>
+              ))}
             </div>
           ) : filtered.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
-              <Library className="h-12 w-12 mb-4 opacity-30" />
-              <p>No cards found.</p>
+              <div className="card-frame w-28 border border-dashed border-border mb-5 flex items-center justify-center">
+                <Library className="h-8 w-8 opacity-30" />
+              </div>
+              <p className="font-serif text-lg text-foreground">No cards found</p>
+              <p className="text-sm mt-1">Scan a card to start your archive.</p>
               {search && <Button variant="link" onClick={() => setSearch("")}>Clear filters</Button>}
             </div>
           ) : view === "grid" ? (
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+            /* Binder page — the card artwork is the object; metadata is a caption */
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-x-4 gap-y-6">
               {filtered.map((card, i) => (
                 <motion.div
                   key={card.id}
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.3, delay: i * 0.03 }}
+                  transition={{ duration: 0.3, delay: Math.min(i, 12) * 0.03 }}
                 >
-                  <Card className="glass border-border/50 card-hover cursor-pointer group overflow-hidden">
-                    <div className="aspect-[2.5/3.5] bg-gradient-to-br from-aura-purple/10 to-aura-indigo/5 flex items-center justify-center relative overflow-hidden">
+                  <div className="group cursor-pointer">
+                    <div className="card-frame relative border border-border bg-muted card-hover">
                       {(card.imageUrl || card.thumbnailUrl) ? (
                         /* eslint-disable-next-line @next/next/no-img-element */
-                        <img src={card.imageUrl || card.thumbnailUrl} alt={card.name} className="w-full h-full object-cover opacity-90 group-hover:opacity-100 transition-opacity" />
+                        <img src={card.imageUrl || card.thumbnailUrl} alt={card.name} className="w-full h-full object-cover" />
                       ) : (
-                        <Sparkles className="h-8 w-8 text-aura-purple/30" />
+                        <div className="w-full h-full flex items-center justify-center">
+                          <Sparkles className="h-8 w-8 text-muted-foreground/30" />
+                        </div>
                       )}
-                      
+
                       {card.qty > 1 && (
-                        <Badge className="absolute top-2 right-2 bg-background/90 text-foreground text-xs shadow-md">
+                        <Badge className="absolute top-2 right-2 bg-background/90 text-foreground font-mono text-[10px] shadow-sm">
                           ×{card.qty}
                         </Badge>
                       )}
                     </div>
-                    <CardContent className="p-3">
-                      <p className="text-sm font-semibold truncate">{card.name}</p>
+                    <div className="mt-2 px-0.5">
+                      <p className="text-sm font-medium truncate">{card.name}</p>
                       <p className="text-xs text-muted-foreground truncate">{card.set}</p>
-                      <div className="flex items-center justify-between mt-2">
-                        <span className="text-sm font-bold">${(card.price || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                        <Badge variant="secondary" className={`text-[10px] ${gameColors[card.game] || 'bg-accent text-muted-foreground'}`}>
-                          {card.game}
-                        </Badge>
+                      <div className="flex items-baseline justify-between mt-1">
+                        <span className="font-mono text-sm">${(card.price || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                        <span className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground">{card.game}</span>
                       </div>
-                    </CardContent>
-                  </Card>
+                    </div>
+                  </div>
                 </motion.div>
               ))}
             </div>
           ) : (
-            <div className="space-y-2">
+            /* Catalog ledger */
+            <div className="rounded-lg border border-border bg-card divide-y divide-border overflow-hidden">
               {filtered.map((card, i) => (
                 <motion.div
                   key={card.id}
                   initial={{ opacity: 0, x: -10 }}
                   animate={{ opacity: 1, x: 0 }}
-                  transition={{ duration: 0.3, delay: i * 0.03 }}
+                  transition={{ duration: 0.3, delay: Math.min(i, 12) * 0.03 }}
                 >
-                  <div className="flex items-center gap-4 p-3 rounded-xl glass border-border/50 card-hover cursor-pointer overflow-hidden">
-                    <div className="h-12 w-9 rounded-lg bg-aura-purple/10 flex items-center justify-center shrink-0 overflow-hidden relative">
+                  <div className="flex items-center gap-4 p-3 cursor-pointer hover:bg-muted/60 transition-colors">
+                    <div className="w-9 shrink-0 card-frame bg-muted border border-border flex items-center justify-center">
                       {(card.imageUrl || card.thumbnailUrl) ? (
                         /* eslint-disable-next-line @next/next/no-img-element */
                         <img src={card.imageUrl || card.thumbnailUrl} alt={card.name} className="w-full h-full object-cover" />
                       ) : (
-                        <Sparkles className="h-4 w-4 text-aura-purple/50" />
+                        <Sparkles className="h-4 w-4 text-muted-foreground/40" />
                       )}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-semibold truncate">{card.name}</p>
-                      <p className="text-xs text-muted-foreground">{card.set} · {card.rarity?.replace('_', ' ')}</p>
+                      <p className="text-sm font-medium truncate">{card.name}</p>
+                      <p className="text-xs text-muted-foreground truncate">{card.set} · {card.rarity?.replace('_', ' ')}</p>
                     </div>
-                    <Badge variant="secondary" className={`text-[10px] shrink-0 hidden sm:inline-flex ${gameColors[card.game] || 'bg-accent'}`}>
+                    <span className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground shrink-0 hidden sm:inline">
                       {card.game}
-                    </Badge>
+                    </span>
                     <div className="text-right shrink-0">
-                      <p className="font-semibold whitespace-nowrap text-right pr-2">${(card.price || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
-                      <p className="text-xs text-muted-foreground">×{card.qty}</p>
+                      <p className="font-mono text-sm whitespace-nowrap">${(card.price || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                      <p className="font-mono text-[10px] text-muted-foreground">×{card.qty}</p>
                     </div>
                   </div>
                 </motion.div>
@@ -217,7 +219,7 @@ export default function CollectionPage() {
           <div className="py-16 text-center text-muted-foreground">
             <Library className="h-10 w-10 mx-auto mb-3 opacity-30" />
             <p className="text-sm">Create your first binder to organize cards.</p>
-            <Button className="mt-4 gradient-bg text-white border-0 rounded-xl" size="sm">
+            <Button className="mt-4" size="sm">
               <Plus className="h-4 w-4 mr-1" />Create Binder
             </Button>
           </div>
@@ -226,7 +228,7 @@ export default function CollectionPage() {
           <div className="py-16 text-center text-muted-foreground">
             <Library className="h-10 w-10 mx-auto mb-3 opacity-30" />
             <p className="text-sm">Create your first deck.</p>
-            <Button className="mt-4 gradient-bg text-white border-0 rounded-xl" size="sm">
+            <Button className="mt-4" size="sm">
               <Plus className="h-4 w-4 mr-1" />Create Deck
             </Button>
           </div>
@@ -235,7 +237,7 @@ export default function CollectionPage() {
           <div className="py-16 text-center text-muted-foreground">
             <Library className="h-10 w-10 mx-auto mb-3 opacity-30" />
             <p className="text-sm">Create a folder to categorize your collection.</p>
-            <Button className="mt-4 gradient-bg text-white border-0 rounded-xl" size="sm">
+            <Button className="mt-4" size="sm">
               <Plus className="h-4 w-4 mr-1" />Create Folder
             </Button>
           </div>
