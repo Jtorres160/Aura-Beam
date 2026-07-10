@@ -55,7 +55,7 @@ export function FeaturesSection() {
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true, margin: "-80px" }}
               transition={{ duration: 0.5, delay: i * 0.1 }}
-              className="rounded-xl border border-border bg-card p-8 card-hover"
+              className="rounded-xl border border-border bg-card p-8 card-hover hover:border-brass/40"
             >
               <div className="inline-flex items-center justify-center w-11 h-11 rounded-lg bg-secondary border border-border mb-5">
                 <feature.icon className="h-5 w-5 text-brass" />

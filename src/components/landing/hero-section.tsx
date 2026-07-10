@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 
 export function HeroSection() {
   return (
-    <section className="relative min-h-screen flex items-center justify-center pt-16">
+    <section className="relative min-h-[100svh] flex items-center justify-center pt-16">
       <div className="relative z-10 mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 text-center">
         {/* Eyebrow */}
         <motion.p
@@ -68,7 +68,11 @@ export function HeroSection() {
           transition={{ duration: 0.9, delay: 0.5 }}
           className="mt-20"
         >
-          <div className="mx-auto max-w-3xl">
+          {/* .foil-frame draws the screen's single foil moment as a 1px
+              iridescent rail around the viewfinder; the box's own background
+              masks the center. Purely decorative — internal layout and the
+              scan-line animation are untouched. */}
+          <div className="mx-auto max-w-3xl foil-frame rounded-xl">
             <div className="relative rounded-xl overflow-hidden border border-border bg-[#141311] shadow-[0_32px_64px_-40px_rgba(19,18,16,0.6)]">
               <div className="aspect-[16/9] relative flex items-center justify-center">
                 {/* Card guide at true trading-card proportions */}

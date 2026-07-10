@@ -58,7 +58,12 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
+  // Extend the layout into the display's safe areas so env(safe-area-inset-*)
+  // resolves to real values on notched / home-indicator devices (iOS + Android).
+  // Without this, those insets report 0 and the bottom nav sits under the
+  // gesture bar. maximumScale intentionally omitted — pinch-to-zoom restored
+  // for WCAG 1.4.4.
+  viewportFit: "cover",
   themeColor: [
     { media: "(prefers-color-scheme: light)", color: "#fafaf7" },
     { media: "(prefers-color-scheme: dark)", color: "#141311" },
@@ -74,6 +79,7 @@ export default function RootLayout({
     <html
       lang="en"
       className={`${instrumentSans.variable} ${instrumentSerif.variable} ${splineSansMono.variable} h-full antialiased`}
+      data-scroll-behavior="smooth"
       suppressHydrationWarning
     >
       <body className="min-h-full flex flex-col font-sans">

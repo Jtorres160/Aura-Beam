@@ -172,6 +172,17 @@
   html {
     @apply font-sans scroll-smooth;
   }
+  /* Structural horizontal boundary. Clips runaway sub-pixel / entrance-animation
+     excursions (e.g. framer-motion x-transforms) so mobile Safari and Android
+     Chrome/WebView never expose a horizontal scrollbar or side-shake. `clip` is
+     preferred — it doesn't create a scroll container and won't trap position:
+     sticky descendants — with `hidden` as the fallback for engines that predate
+     overflow: clip. Vertical scrolling is unaffected. */
+  html,
+  body {
+    overflow-x: hidden;
+    overflow-x: clip;
+  }
 }
 
 /* ============================================================
@@ -202,6 +213,17 @@
   .foil-edge {
     animation: none;
   }
+}
+
+/* Foil frame — a hairline iridescent border cut from the SAME single --foil
+   gradient as .foil-edge. A 1px pad reveals the gradient as a thin rail; the
+   framed element's own solid background masks the center, leaving only the
+   edge. No new colors, gradients, or tokens. Pair with a radius utility
+   (e.g. `rounded-xl`) on the same element. Budget one per screen, like every
+   --foil moment. */
+.foil-frame {
+  padding: 1px;
+  background: var(--foil);
 }
 
 /* ============================================================
@@ -277,7 +299,7 @@
 
 /* Card hover — kept, glow removed: lift like an object, not a UFO */
 .card-hover {
-  transition: transform 0.2s ease-out, box-shadow 0.2s ease-out;
+  transition: transform 0.2s ease-out, box-shadow 0.2s ease-out, border-color 0.2s ease-out;
 }
 
 .card-hover:hover {
@@ -316,6 +338,15 @@
 .h-dvh-screen {
   height: 100vh;
   height: 100dvh;
+}
+
+/* Bottom safe-area padding for fixed elements that sit against the display
+   edge (the mobile bottom nav). max() keeps a 16px floor on non-notched
+   devices while honoring the home-indicator inset on notched iOS/Android.
+   Requires viewport-fit=cover (set in the root Viewport) for the inset to
+   resolve to a non-zero value. */
+.safe-area-bottom {
+  padding-bottom: max(16px, env(safe-area-inset-bottom));
 }
 
 /* Custom scrollbar */
