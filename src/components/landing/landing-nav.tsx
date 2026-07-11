@@ -3,8 +3,9 @@
 import Link from "next/link";
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Menu, X, Sparkles } from "lucide-react";
+import { Menu, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { AuraMark } from "@/components/landing/aura-mark";
 
 const navLinks = [
   { label: "Features", href: "/#features" },
@@ -23,7 +24,7 @@ export function LandingNav() {
         {/* Logo */}
         <Link href="/" className="flex items-center gap-2 group">
           <div className="relative flex h-8 w-8 items-center justify-center rounded-lg bg-primary">
-            <Sparkles className="h-4 w-4 text-primary-foreground" />
+            <AuraMark className="h-[18px] w-[18px] text-primary-foreground" />
           </div>
           <span className="font-serif text-2xl tracking-tight">Aura</span>
         </Link>

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Sparkles } from "lucide-react";
+import { AuraMark } from "@/components/landing/aura-mark";
 
 const footerLinks = {
   Product: [
@@ -29,7 +29,7 @@ export function LandingFooter() {
           <div className="col-span-2 md:col-span-1">
             <Link href="/" className="flex items-center gap-2 mb-4">
               <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary">
-                <Sparkles className="h-4 w-4 text-primary-foreground" />
+                <AuraMark className="h-[18px] w-[18px] text-primary-foreground" />
               </div>
               <span className="font-serif text-xl">Aura</span>
             </Link>
@@ -63,7 +63,7 @@ export function LandingFooter() {
             © {new Date().getFullYear()} Aura. All rights reserved.
           </p>
           <p className="text-xs text-muted-foreground">
-            Made with ✦ for trading card collectors
+            Made for trading card collectors
           </p>
         </div>
       </div>
