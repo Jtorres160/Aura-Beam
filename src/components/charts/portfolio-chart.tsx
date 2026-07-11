@@ -4,13 +4,21 @@ import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "rec
 
 interface PortfolioChartProps {
   data: { date: string; value: number }[];
+  /** "building" until at least two real daily snapshots exist. */
+  status?: "building" | "ready";
 }
 
-export function PortfolioChart({ data }: PortfolioChartProps) {
-  if (!data || data.length === 0) {
+export function PortfolioChart({ data, status = "ready" }: PortfolioChartProps) {
+  // A trend line needs at least two real recorded points. Rather than invent a
+  // curve, we tell the user exactly what Aura is doing and when the chart fills.
+  if (status === "building" || !data || data.length < 2) {
     return (
-      <div className="h-[280px] w-full mt-2 flex items-center justify-center text-muted-foreground text-sm">
-        No portfolio history available
+      <div className="h-[280px] w-full mt-2 flex flex-col items-center justify-center gap-2 text-center px-6">
+        <p className="font-serif text-base text-foreground">Building your value history</p>
+        <p className="text-sm text-muted-foreground max-w-xs">
+          Aura records your collection&rsquo;s total value once a day. Your trend
+          line appears here after a couple of days of tracking.
+        </p>
       </div>
     );
   }
@@ -21,8 +29,8 @@ export function PortfolioChart({ data }: PortfolioChartProps) {
         <AreaChart data={data} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
           <defs>
             <linearGradient id="auraGradient" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#7C3AED" stopOpacity={0.3} />
-              <stop offset="100%" stopColor="#7C3AED" stopOpacity={0} />
+              <stop offset="0%" stopColor="var(--color-chart-1)" stopOpacity={0.3} />
+              <stop offset="100%" stopColor="var(--color-chart-1)" stopOpacity={0} />
             </linearGradient>
           </defs>
           <XAxis
@@ -53,11 +61,11 @@ export function PortfolioChart({ data }: PortfolioChartProps) {
           <Area
             type="monotone"
             dataKey="value"
-            stroke="#7C3AED"
+            stroke="var(--color-chart-1)"
             strokeWidth={2.5}
             fill="url(#auraGradient)"
             dot={false}
-            activeDot={{ r: 5, fill: "#7C3AED", stroke: "#fff", strokeWidth: 2 }}
+            activeDot={{ r: 5, fill: "var(--color-chart-1)", stroke: "hsl(var(--card))", strokeWidth: 2 }}
           />
         </AreaChart>
       </ResponsiveContainer>

@@ -149,7 +149,7 @@ export default function CollectionPage() {
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.3, delay: Math.min(i, 12) * 0.03 }}
                 >
-                  <div className="group cursor-pointer">
+                  <Link href={`/cards/${card.cardId}`} className="group block cursor-pointer">
                     <div className="card-frame relative border border-border bg-muted card-hover">
                       {(card.imageUrl || card.thumbnailUrl) ? (
                         /* eslint-disable-next-line @next/next/no-img-element */
@@ -174,7 +174,7 @@ export default function CollectionPage() {
                         <span className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground">{card.game}</span>
                       </div>
                     </div>
-                  </div>
+                  </Link>
                 </motion.div>
               ))}
             </div>
@@ -188,7 +188,7 @@ export default function CollectionPage() {
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ duration: 0.3, delay: Math.min(i, 12) * 0.03 }}
                 >
-                  <div className="flex items-center gap-4 p-3 cursor-pointer hover:bg-muted/60 transition-colors">
+                  <Link href={`/cards/${card.cardId}`} className="flex items-center gap-4 p-3 cursor-pointer hover:bg-muted/60 transition-colors">
                     <div className="w-9 shrink-0 card-frame bg-muted border border-border flex items-center justify-center">
                       {(card.imageUrl || card.thumbnailUrl) ? (
                         /* eslint-disable-next-line @next/next/no-img-element */
@@ -208,7 +208,7 @@ export default function CollectionPage() {
                       <p className="font-mono text-sm whitespace-nowrap">${(card.price || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
                       <p className="font-mono text-[10px] text-muted-foreground">×{card.qty}</p>
                     </div>
-                  </div>
+                  </Link>
                 </motion.div>
               ))}
             </div>

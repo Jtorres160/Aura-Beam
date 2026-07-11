@@ -71,7 +71,20 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    return NextResponse.json({ success: true, data: results, message: `Successfully added ${cardIds.length} cards` }, { status: 201 });
+    // Archive delta (Phase 5 · Batch 2): new archive totals after the bulk
+    // add. Failure-safe — never fails the add itself.
+    let archive = null;
+    try {
+      const agg = await prisma.collectionCard.aggregate({
+        where: { collectionId: collection.id },
+        _sum: { quantity: true },
+      });
+      archive = { totalCards: agg._sum.quantity ?? 0, added: cardIds.length };
+    } catch {
+      /* non-fatal */
+    }
+
+    return NextResponse.json({ success: true, data: results, archive, message: `Successfully added ${cardIds.length} cards` }, { status: 201 });
   } catch (error) {
     console.error("Error adding bulk cards to collection:", error);
     return NextResponse.json(

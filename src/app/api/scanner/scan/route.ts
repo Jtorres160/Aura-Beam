@@ -13,6 +13,7 @@ import { extractBottomStrip, extractCardFields } from "@/lib/scanner/extract";
 import { fetchAllPrintings } from "@/lib/scanner/candidates";
 import { scorer } from "@/lib/scanner/score";
 import { buildScanTelemetry } from "@/lib/scanner/telemetry";
+import { getArchiveContext } from "@/lib/scanner/archive-context";
 import { checkScanBurst, SCAN_DAILY_LIMIT, startOfUtcDay } from "@/lib/rate-limit";
 
 export async function POST(req: NextRequest) {
@@ -299,6 +300,11 @@ async function saveAndRespond(matchedCard: CandidatePrinting, userId: string, oc
 
   console.log(`[Scanner] ✅ Saved: "${localCard.name}" from "${localCard.setName}" (method: ${decision.method}, confidence: ${confidencePct}%)`);
 
+  // Archive context (Phase 5 · Batch 2): what this card means in the user's
+  // collection. Read-only, failure-safe (null on any error), and strictly
+  // additive to the response — identification is already complete here.
+  const archive = await getArchiveContext(userId, localCard);
+
   return NextResponse.json({
     success: true,
     data: {
@@ -306,6 +312,7 @@ async function saveAndRespond(matchedCard: CandidatePrinting, userId: string, oc
       name: localCard.name,
       set: localCard.setName,
       game: localCard.game,
+      archive,
       prices: {
         marketPrice: matchedCard.price?.marketPrice || 0,
         lowPrice: matchedCard.price?.lowPrice || 0,

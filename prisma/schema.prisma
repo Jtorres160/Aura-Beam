@@ -36,6 +36,7 @@ model User {
   notifications  Notification[]
   folders        Folder[]
   decks          Deck[]
+  portfolioSnapshots PortfolioSnapshot[]
 
   @@map("users")
 }
@@ -270,6 +271,27 @@ model Deck {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("decks")
+}
+
+// ─── Portfolio Snapshots ────────────────────────────────────────────
+// One real, recorded snapshot of a user's total collection value per day.
+// Written opportunistically when the user views Insights (idempotent per
+// UTC day) and by the price-update cron. This is the ONLY source of the
+// portfolio-over-time chart — no value shown to the user is ever synthesized.
+// Until at least two days accumulate, Insights shows a "building history"
+// state rather than inventing a trend line.
+
+model PortfolioSnapshot {
+  id         String   @id @default(cuid())
+  userId     String
+  totalValue Float    @default(0)
+  cardCount  Int      @default(0)
+  recordedAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, recordedAt])
+  @@map("portfolio_snapshots")
 }
 
 // ─── AI Learning Rules ───────────────────────────────────────────────

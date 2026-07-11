@@ -6,20 +6,13 @@ import { motion } from "framer-motion";
 import { ArrowLeft, Sparkles, Heart, Check, Loader2, Library, TrendingUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent } from "@/components/ui/card";
 import { useSession } from "next-auth/react";
-
-const gameColors: Record<string, string> = {
-  "POKEMON": "bg-yellow-500/10 text-yellow-500 border-yellow-500/20",
-  "MTG": "bg-purple-500/10 text-purple-500 border-purple-500/20",
-  "YUGIOH": "bg-blue-500/10 text-blue-500 border-blue-500/20",
-};
 
 export default function CardDetailsPage() {
   const params = useParams();
   const router = useRouter();
   const { data: session } = useSession();
-  
+
   const [card, setCard] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [addingToWatchlist, setAddingToWatchlist] = useState(false);
@@ -67,19 +60,12 @@ export default function CardDetailsPage() {
     if (!session?.user?.id || !card) return;
     setAddingToWatchlist(true);
     try {
-      const res = await fetch(`/api/watchlist`, {
+      // The watchlist/add route resolves the card by local id OR externalId,
+      // so we only need to pass an identifier — never a whole card object.
+      const res = await fetch(`/api/watchlist/add`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          externalId: card.externalId || card.id,
-          name: card.name,
-          setName: card.setName,
-          game: card.game,
-          rarity: card.rarity,
-          imageUrl: card.imageUrl,
-          thumbnailUrl: card.thumbnailUrl,
-          price: card.prices?.marketPrice || 0
-        }),
+        body: JSON.stringify({ cardId: card.id || card.externalId }),
       });
       if (res.ok) setInWatchlist(true);
     } catch (err) {
@@ -93,20 +79,12 @@ export default function CardDetailsPage() {
     if (!session?.user?.id || !card) return;
     setAddingToCollection(true);
     try {
-      const res = await fetch(`/api/collections/cards`, {
+      // Same contract as the scanner's "Add to Collection": the collections/add
+      // route resolves by id OR externalId and owns the upsert.
+      const res = await fetch(`/api/collections/add`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          externalId: card.externalId || card.id,
-          name: card.name,
-          setName: card.setName,
-          game: card.game,
-          rarity: card.rarity,
-          imageUrl: card.imageUrl,
-          thumbnailUrl: card.thumbnailUrl,
-          price: card.prices?.marketPrice || 0,
-          quantity: 1
-        }),
+        body: JSON.stringify({ cardId: card.id || card.externalId }),
       });
       if (res.ok) setInCollection(true);
     } catch (err) {
@@ -119,8 +97,8 @@ export default function CardDetailsPage() {
   if (isLoading) {
     return (
       <div className="flex flex-col items-center justify-center h-full min-h-[50vh] space-y-4">
-        <Loader2 className="h-10 w-10 text-aura-purple animate-spin" />
-        <p className="text-muted-foreground animate-pulse">Loading card details...</p>
+        <Loader2 className="h-8 w-8 text-brass animate-spin" />
+        <p className="font-mono text-xs uppercase tracking-[0.14em] text-muted-foreground">Loading catalog entry…</p>
       </div>
     );
   }
@@ -128,8 +106,8 @@ export default function CardDetailsPage() {
   if (!card) {
     return (
       <div className="p-8 text-center flex flex-col items-center justify-center h-full min-h-[50vh]">
-        <h1 className="text-2xl font-bold mb-2">Card Not Found</h1>
-        <p className="text-muted-foreground mb-6">We couldn't find a card matching this ID.</p>
+        <h1 className="font-serif text-2xl mb-2">Card not found</h1>
+        <p className="text-sm text-muted-foreground mb-6">We couldn&rsquo;t find a catalog entry matching this ID.</p>
         <Button onClick={() => router.back()} variant="outline">Go Back</Button>
       </div>
     );
@@ -138,115 +116,114 @@ export default function CardDetailsPage() {
   const prices = card.prices || {};
 
   return (
-    <div className="p-4 sm:p-6 lg:p-8 space-y-6 max-w-6xl mx-auto">
+    <div className="p-4 sm:p-6 lg:p-8 space-y-6 max-w-5xl mx-auto">
       {/* Header */}
       <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.3 }}>
-        <Button variant="ghost" className="mb-4 -ml-4 text-muted-foreground hover:text-foreground" onClick={() => router.back()}>
+        <Button variant="ghost" className="mb-2 -ml-4 text-muted-foreground hover:text-foreground" onClick={() => router.back()}>
           <ArrowLeft className="h-4 w-4 mr-2" />
-          Back to Results
+          Back
         </Button>
       </motion.div>
 
       <div className="grid grid-cols-1 md:grid-cols-12 gap-8 lg:gap-12">
-        {/* Left Column: Image */}
-        <motion.div 
+        {/* Left Column: the card object in its archive frame */}
+        <motion.div
           className="md:col-span-5 lg:col-span-4"
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.4, delay: 0.1 }}
         >
-          <div className="relative group perspective-1000">
-            {/* Glow effect */}
-            <div className={`absolute -inset-4 bg-gradient-to-tr ${card.game === 'MTG' ? 'from-purple-500/20' : card.game === 'POKEMON' ? 'from-yellow-500/20' : 'from-blue-500/20'} to-transparent rounded-[2rem] blur-xl opacity-0 group-hover:opacity-100 transition-opacity duration-700 -z-10`} />
-            
-            <div className="w-full aspect-[2.5/3.5] rounded-xl sm:rounded-2xl bg-black/40 border border-white/10 shadow-2xl overflow-hidden flex items-center justify-center relative">
-              {(card.imageUrl || card.thumbnailUrl) ? (
-                /* eslint-disable-next-line @next/next/no-img-element */
-                <img 
-                  src={card.imageUrl || card.thumbnailUrl} 
-                  alt={card.name} 
-                  className="w-full h-full object-cover shadow-inner"
-                />
-              ) : (
-                <div className="flex flex-col items-center justify-center text-muted-foreground">
-                  <Sparkles className="h-12 w-12 mb-4 opacity-20" />
-                  <p className="text-sm">No artwork available</p>
-                </div>
-              )}
-            </div>
+          <div className="card-frame border border-border bg-muted shadow-[0_24px_48px_-24px_rgba(19,18,16,0.5)]">
+            {(card.imageUrl || card.thumbnailUrl) ? (
+              /* eslint-disable-next-line @next/next/no-img-element */
+              <img
+                src={card.imageUrl || card.thumbnailUrl}
+                alt={card.name}
+                className="w-full h-full object-cover"
+              />
+            ) : (
+              <div className="w-full h-full flex flex-col items-center justify-center text-muted-foreground">
+                <Sparkles className="h-10 w-10 mb-3 opacity-30" />
+                <p className="font-mono text-[11px] uppercase tracking-[0.14em]">No artwork</p>
+              </div>
+            )}
           </div>
         </motion.div>
 
-        {/* Right Column: Info & Actions */}
-        <motion.div 
+        {/* Right Column: catalog details + actions */}
+        <motion.div
           className="md:col-span-7 lg:col-span-8 flex flex-col"
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.4, delay: 0.2 }}
         >
-          {/* Title & Game Badge */}
+          {/* Catalog caption */}
+          <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-muted-foreground mb-3">
+            Catalog entry
+          </p>
+
+          {/* Title & Game */}
           <div className="flex flex-wrap items-start justify-between gap-4 mb-2">
             <div>
-              <h1 className="text-3xl sm:text-4xl lg:text-5xl font-extrabold tracking-tight mb-2">
+              <h1 className="font-serif text-3xl sm:text-4xl tracking-tight leading-tight mb-2">
                 {card.name}
               </h1>
-              <p className="text-lg text-muted-foreground">
-                {card.setName} · {card.rarity?.replace('_', ' ')}
+              <p className="text-sm text-muted-foreground">
+                {card.setName} · {card.rarity?.replace(/_/g, " ")}
               </p>
             </div>
-            <Badge variant="outline" className={`px-3 py-1 text-xs uppercase tracking-wider font-bold ${gameColors[card.game] || ''}`}>
+            <Badge variant="outline" className="px-3 py-1 font-mono text-[10px] uppercase tracking-wide border-brass/40 text-foreground">
               {card.game}
             </Badge>
           </div>
 
-          <div className="w-full h-px bg-border/50 my-6" />
+          {/* Foil rule — the screen's single foil moment */}
+          <div className="foil-edge h-px w-24 my-6" />
 
-          {/* Pricing Grid */}
+          {/* Market Value */}
           <div className="mb-8">
-            <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-4 flex items-center gap-2">
-              <TrendingUp className="h-4 w-4" /> Market Value
+            <h3 className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted-foreground mb-4 flex items-center gap-2">
+              <TrendingUp className="h-3.5 w-3.5 text-brass" /> Market value
             </h3>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <div className="p-4 rounded-xl glass border-border/50 flex flex-col items-center justify-center relative overflow-hidden">
-                <div className="absolute top-0 right-0 w-16 h-16 bg-aura-purple/10 rounded-full blur-xl" />
-                <p className="text-xs text-muted-foreground mb-1 font-medium">Market</p>
-                <p className="text-xl font-bold">${(prices.marketPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+              <div className="p-4 rounded-lg border border-brass/40 bg-card flex flex-col items-center justify-center">
+                <p className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Market</p>
+                <p className="font-mono text-xl">${(prices.marketPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
               </div>
-              <div className="p-4 rounded-xl bg-accent/30 border border-border/20 flex flex-col items-center justify-center">
-                <p className="text-xs text-muted-foreground mb-1 font-medium">Low</p>
-                <p className="text-lg font-semibold">${(prices.lowPrice ? prices.lowPrice : prices.marketPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+              <div className="p-4 rounded-lg border border-border bg-card flex flex-col items-center justify-center">
+                <p className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Low</p>
+                <p className="font-mono text-lg">${(prices.lowPrice ? prices.lowPrice : prices.marketPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
               </div>
-              <div className="p-4 rounded-xl bg-accent/30 border border-border/20 flex flex-col items-center justify-center">
-                <p className="text-xs text-muted-foreground mb-1 font-medium">Mid</p>
-                <p className="text-lg font-semibold">${(prices.midPrice ? prices.midPrice : prices.marketPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+              <div className="p-4 rounded-lg border border-border bg-card flex flex-col items-center justify-center">
+                <p className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Mid</p>
+                <p className="font-mono text-lg">${(prices.midPrice ? prices.midPrice : prices.marketPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
               </div>
-              <div className="p-4 rounded-xl bg-accent/30 border border-border/20 flex flex-col items-center justify-center">
-                <p className="text-xs text-muted-foreground mb-1 font-medium">High</p>
-                <p className="text-lg font-semibold">${(prices.highPrice ? prices.highPrice : prices.marketPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+              <div className="p-4 rounded-lg border border-border bg-card flex flex-col items-center justify-center">
+                <p className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground mb-1">High</p>
+                <p className="font-mono text-lg">${(prices.highPrice ? prices.highPrice : prices.marketPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
               </div>
             </div>
           </div>
 
           {/* Actions */}
-          <div className="mt-auto pt-6 flex flex-col sm:flex-row gap-4 border-t border-border/30">
-            <Button 
-              className="flex-1 h-12 rounded-xl gradient-bg text-white font-medium shadow-lg shadow-aura-purple/20 transition-all hover:shadow-aura-purple/40 hover:-translate-y-0.5"
+          <div className="mt-auto pt-6 flex flex-col sm:flex-row gap-3 border-t border-border">
+            <Button
+              className="flex-1 h-12"
               onClick={handleAddToCollection}
               disabled={addingToCollection || inCollection}
             >
               {addingToCollection ? <Loader2 className="h-5 w-5 animate-spin" /> : inCollection ? <><Check className="h-5 w-5 mr-2" /> In Collection</> : <><Library className="h-5 w-5 mr-2" /> Add to Collection</>}
             </Button>
-            
-            <Button 
+
+            <Button
               variant="outline"
-              className={`flex-1 h-12 rounded-xl font-medium transition-all ${inWatchlist ? 'bg-pink-500/10 border-pink-500/30 text-pink-500' : 'hover:border-pink-500/50 hover:bg-pink-500/5 hover:text-pink-500'}`}
+              className="flex-1 h-12"
               onClick={handleAddToWatchlist}
               disabled={addingToWatchlist || inWatchlist}
             >
               {addingToWatchlist ? <Loader2 className="h-5 w-5 animate-spin" /> : inWatchlist ? <><Check className="h-5 w-5 mr-2" /> In Watchlist</> : <><Heart className="h-5 w-5 mr-2" /> Add to Watchlist</>}
             </Button>
           </div>
-
         </motion.div>
       </div>
     </div>

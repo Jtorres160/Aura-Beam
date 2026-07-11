@@ -1,0 +1,12 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/update-prices",
+      "schedule": "0 6 * * *"
+    },
+    {
+      "path": "/api/cron/analyze-scans",
+      "schedule": "30 6 * * *"
+    }
+  ]
+}

@@ -15,43 +15,68 @@ export async function GET(request: Request) {
 
     console.log("[CRON] Starting price update job...");
 
-    // 1. Find all cards that are actively being watched by users
-    // Group by card to avoid duplicate API calls
-    const activeWatchlists = await prisma.watchlist.findMany({
-      where: {
-        alertEnabled: true,
-        OR: [
-          { alertAbove: { not: null } },
-          { alertBelow: { not: null } }
-        ]
-      },
-      include: {
-        card: true,
-        user: true,
-      }
-    });
+    // 1. Build the set of cards worth refreshing: everything any user OWNS
+    // (so collection value stays true and PriceHistory accrues for the movers
+    // + portfolio chart) UNION everything under an active price alert. Owned
+    // cards were previously never refreshed after scan time — that was the
+    // root cause of stale collection values.
+    const [ownedCardLinks, activeWatchlists] = await Promise.all([
+      prisma.collectionCard.findMany({
+        distinct: ["cardId"],
+        select: { card: { select: { id: true, externalId: true, game: true } } },
+      }),
+      prisma.watchlist.findMany({
+        where: {
+          alertEnabled: true,
+          OR: [{ alertAbove: { not: null } }, { alertBelow: { not: null } }],
+        },
+        include: { card: true, user: true },
+      }),
+    ]);
 
-    if (activeWatchlists.length === 0) {
-      return NextResponse.json({ success: true, message: "No active price alerts to process." });
-    }
-
-    // Group watchlists by card
+    // Alerts to evaluate, grouped by card.
     const watchlistsByCard = activeWatchlists.reduce((acc, watchlist) => {
-      if (!acc[watchlist.cardId]) {
-        acc[watchlist.cardId] = [];
-      }
-      acc[watchlist.cardId].push(watchlist);
+      (acc[watchlist.cardId] ??= []).push(watchlist);
       return acc;
     }, {} as Record<string, typeof activeWatchlists>);
+
+    // Union of card records to refresh, de-duplicated by id.
+    const cardsById = new Map<string, { id: string; externalId: string | null; game: string }>();
+    for (const link of ownedCardLinks) {
+      if (link.card) cardsById.set(link.card.id, link.card);
+    }
+    for (const w of activeWatchlists) {
+      cardsById.set(w.card.id, { id: w.card.id, externalId: w.card.externalId, game: w.card.game });
+    }
+
+    if (cardsById.size === 0) {
+      return NextResponse.json({ success: true, message: "No owned or watched cards to process." });
+    }
+
+    // 2. Prioritize the stalest prices so repeated runs make steady progress
+    // and one run never fans out to an unbounded number of external calls.
+    const MAX_CARDS_PER_RUN = 250;
+    const priceRows = await prisma.cardPrice.findMany({
+      where: { cardId: { in: Array.from(cardsById.keys()) } },
+      select: { cardId: true, lastUpdated: true },
+    });
+    const lastUpdatedByCard = new Map(priceRows.map((p) => [p.cardId, p.lastUpdated]));
+
+    const orderedCards = Array.from(cardsById.values())
+      .filter((c) => c.externalId)
+      .sort((a, b) => {
+        // Never-priced cards first, then oldest lastUpdated first.
+        const ta = lastUpdatedByCard.get(a.id)?.getTime() ?? 0;
+        const tb = lastUpdatedByCard.get(b.id)?.getTime() ?? 0;
+        return ta - tb;
+      })
+      .slice(0, MAX_CARDS_PER_RUN);
 
     let updatedCount = 0;
     let alertsTriggered = 0;
 
-    // 2. Iterate through each unique card and fetch its latest price
-    for (const cardId in watchlistsByCard) {
-      const watchlists = watchlistsByCard[cardId];
-      const card = watchlists[0].card;
-      
+    // 3. Iterate through each unique card and fetch its latest price
+    for (const card of orderedCards) {
       if (!card.externalId) continue;
 
       let newPriceData = null;
@@ -72,11 +97,11 @@ export async function GET(request: Request) {
         continue;
       }
 
-      if (!newPriceData || newPriceData.marketPrice === undefined) continue;
+      if (!newPriceData || newPriceData.marketPrice === undefined || newPriceData.marketPrice === null) continue;
 
       const newMarketPrice = newPriceData.marketPrice;
 
-      // 3. Update the CardPrice in our database
+      // Update the CardPrice in our database
       await prisma.cardPrice.upsert({
         where: { cardId: card.id },
         update: {
@@ -88,28 +113,29 @@ export async function GET(request: Request) {
           marketPrice: newMarketPrice,
         }
       });
-      
-      // Also record in price history
+
+      // Record in price history — this is what powers real price movers.
       await prisma.priceHistory.create({
         data: {
           cardId: card.id,
           marketPrice: newMarketPrice,
         }
       });
-      
+
       updatedCount++;
 
       // 4. Check alerts for each user watching this card
+      const watchlists = watchlistsByCard[card.id] ?? [];
       for (const watchlist of watchlists) {
         let triggered = false;
         let alertMessage = "";
 
         if (watchlist.alertAbove && newMarketPrice >= watchlist.alertAbove) {
           triggered = true;
-          alertMessage = `${card.name} has risen above $${watchlist.alertAbove.toFixed(2)}! Current price: $${newMarketPrice.toFixed(2)}`;
+          alertMessage = `${watchlist.card.name} has risen above $${watchlist.alertAbove.toFixed(2)}! Current price: $${newMarketPrice.toFixed(2)}`;
         } else if (watchlist.alertBelow && newMarketPrice <= watchlist.alertBelow) {
           triggered = true;
-          alertMessage = `${card.name} has dropped below $${watchlist.alertBelow.toFixed(2)}! Current price: $${newMarketPrice.toFixed(2)}`;
+          alertMessage = `${watchlist.card.name} has dropped below $${watchlist.alertBelow.toFixed(2)}! Current price: $${newMarketPrice.toFixed(2)}`;
         }
 
         if (triggered) {

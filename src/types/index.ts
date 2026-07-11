@@ -54,6 +54,16 @@ export interface ScanRequest {
   game?: Game; // optional hint
 }
 
+/** What an identified card means in the user's own archive (Phase 5 · Batch 2).
+ *  Attached to scan/save-selection responses; null when lookup was unavailable. */
+export interface ArchiveContext {
+  inCollection: boolean;
+  quantity: number;
+  addedAt: string | null;
+  setOwnedCount: number;
+  setName: string;
+}
+
 // ─── Collection ─────────────────────────────────────────────
 
 export interface CollectionCard {

@@ -82,22 +82,40 @@ export async function POST(req: NextRequest) {
       },
     });
 
+    let entry;
+    let message;
     if (existingEntry) {
-      const updated = await prisma.collectionCard.update({
+      entry = await prisma.collectionCard.update({
         where: { id: existingEntry.id },
         data: { quantity: existingEntry.quantity + 1 },
       });
-      return NextResponse.json({ success: true, data: updated, message: "Card quantity updated" }, { status: 201 });
+      message = "Card quantity updated";
     } else {
-      const added = await prisma.collectionCard.create({
+      entry = await prisma.collectionCard.create({
         data: {
           collectionId: collection.id,
           cardId: localCardId,
           quantity: 1,
         },
       });
-      return NextResponse.json({ success: true, data: added, message: "Card added to collection" }, { status: 201 });
+      message = "Card added to collection";
     }
+
+    // Archive delta (Phase 5 · Batch 2): the new archive totals, so the client
+    // can show what this add changed. Failure-safe — totals are additive info
+    // and must never fail the add itself.
+    let archive = null;
+    try {
+      const agg = await prisma.collectionCard.aggregate({
+        where: { collectionId: collection.id },
+        _sum: { quantity: true },
+      });
+      archive = { totalCards: agg._sum.quantity ?? 0, quantity: entry.quantity };
+    } catch {
+      /* non-fatal */
+    }
+
+    return NextResponse.json({ success: true, data: entry, archive, message }, { status: 201 });
   } catch (error) {
     console.error("Error adding card to collection:", error);
     return NextResponse.json(

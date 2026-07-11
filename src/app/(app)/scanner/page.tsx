@@ -72,6 +72,30 @@ async function acquireCameraStream(): Promise<MediaStream> {
   }
 }
 
+/** "Jun 28" / "Jun 28, 2025" — the register a catalog card would use. */
+function formatFiledDate(iso: string): string {
+  const d = new Date(iso);
+  const opts: Intl.DateTimeFormatOptions =
+    d.getFullYear() === new Date().getFullYear()
+      ? { month: "short", day: "numeric" }
+      : { month: "short", day: "numeric", year: "numeric" };
+  return d.toLocaleDateString("en-US", opts);
+}
+
+/** One quiet line describing what this card means in the user's archive. */
+function archiveCaption(archive: any): string | null {
+  if (!archive) return null;
+  if (archive.inCollection) {
+    const copies = archive.quantity > 1 ? ` · ×${archive.quantity}` : "";
+    const filed = archive.addedAt ? ` · filed ${formatFiledDate(archive.addedAt)}` : "";
+    return `Already in your archive${copies}${filed}`;
+  }
+  if (archive.setOwnedCount > 0) {
+    return `New to your archive · ${archive.setOwnedCount} from this set already held`;
+  }
+  return "New to your archive · first from this set";
+}
+
 const LOADING_STATUSES = [
   "Detecting card borders...",
   "Analyzing card artwork...",
@@ -89,6 +113,8 @@ export default function ScannerPage() {
   const [errorMessage, setErrorMessage] = useState("");
   const [isAdding, setIsAdding] = useState(false);
   const [addSuccess, setAddSuccess] = useState(false);
+  // Post-add archive totals (Phase 5 · Batch 2) — returned by the add routes.
+  const [postAddArchive, setPostAddArchive] = useState<any>(null);
   const [selectedGame, setSelectedGame] = useState<string>("All");
   const [loadingStatusIndex, setLoadingStatusIndex] = useState(0);
   const [disambiguationCandidates, setDisambiguationCandidates] = useState<any[]>([]);
@@ -753,6 +779,7 @@ export default function ScannerPage() {
     setScanResult(null);
     setErrorMessage("");
     setAddSuccess(false);
+    setPostAddArchive(null);
     setBulkQueue([]);
     setDisambiguationCandidates([]);
     setDisambiguationCardName("");
@@ -808,6 +835,8 @@ export default function ScannerPage() {
         body: JSON.stringify({ cardId: scanResult.id }),
       });
       if (!res.ok) throw new Error("Failed to add to collection");
+      const json = await res.json().catch(() => null);
+      setPostAddArchive(json?.archive ?? null);
       setAddSuccess(true);
     } catch (error) {
       console.error(error);
@@ -828,6 +857,8 @@ export default function ScannerPage() {
         body: JSON.stringify({ cardIds }),
       });
       if (!res.ok) throw new Error("Failed to add bulk to collection");
+      const json = await res.json().catch(() => null);
+      setPostAddArchive(json?.archive ?? null);
       setAddSuccess(true);
     } catch (error) {
       console.error(error);
@@ -1308,6 +1339,14 @@ export default function ScannerPage() {
                   <span className="font-mono text-xl text-foreground">${scanResult.prices?.marketPrice?.toFixed(2) || "0.00"}</span>
                 </div>
 
+                {/* Archive context (Phase 5 · Batch 2) — what this card means
+                    in the user's own collection. One quiet catalog line. */}
+                {archiveCaption(scanResult.archive) && (
+                  <p className="text-center font-mono text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
+                    {archiveCaption(scanResult.archive)}
+                  </p>
+                )}
+
                 <div className="flex gap-3 pt-2">
                   <Button variant="outline" className="flex-1 h-12" onClick={resetScan}>
                     <RotateCcw className="h-4 w-4 mr-2" /> Scan Next
@@ -1322,6 +1361,19 @@ export default function ScannerPage() {
                     )}
                   </Button>
                 </div>
+
+                {/* Post-add archive delta — the add banked into the archive. */}
+                {addSuccess && postAddArchive?.totalCards != null && (
+                  <motion.p
+                    initial={{ opacity: 0, y: 4 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="text-center font-mono text-[11px] uppercase tracking-[0.14em] text-muted-foreground"
+                  >
+                    Archive · {postAddArchive.totalCards} {postAddArchive.totalCards === 1 ? "card" : "cards"}
+                    {(scanResult.prices?.marketPrice ?? 0) > 0 &&
+                      ` · +$${scanResult.prices.marketPrice.toFixed(2)}`}
+                  </motion.p>
+                )}
               </motion.div>
             )}
 
@@ -1356,7 +1408,14 @@ export default function ScannerPage() {
 
                       <div className="flex-1 min-w-0">
                         <h4 className="font-medium text-sm truncate">{card.name}</h4>
-                        <p className="text-xs text-muted-foreground truncate">{card.set} · {card.game}</p>
+                        <p className="text-xs text-muted-foreground truncate">
+                          {card.set} · {card.game}
+                          {/* Quiet ownership chip — the card was already held
+                              before this bulk session (Phase 5 · Batch 2). */}
+                          {card.archive?.inCollection && (
+                            <span className="font-mono text-[10px] text-brass"> · ×{card.archive.quantity} owned</span>
+                          )}
+                        </p>
                       </div>
 
                       <span className="font-mono text-sm shrink-0">${card.prices?.marketPrice?.toFixed(2) || "0.00"}</span>
@@ -1382,6 +1441,13 @@ export default function ScannerPage() {
                       <>Add All {bulkQueue.length} to Collection</>
                     )}
                   </Button>
+
+                  {/* Post-add archive delta (Phase 5 · Batch 2) */}
+                  {addSuccess && postAddArchive?.totalCards != null && (
+                    <p className="mt-3 text-center font-mono text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
+                      Archive · {postAddArchive.totalCards} {postAddArchive.totalCards === 1 ? "card" : "cards"}
+                    </p>
+                  )}
 
                   {addSuccess && (
                     <Button variant="outline" className="w-full h-12 mt-3" onClick={resetScan}>

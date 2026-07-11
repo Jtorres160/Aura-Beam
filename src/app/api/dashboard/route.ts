@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/auth";
+import { startOfUtcDay } from "@/lib/rate-limit";
 
 export async function GET() {
   try {
@@ -61,67 +62,123 @@ export async function GET() {
       createdAt: scan.createdAt,
     }));
 
-    // 4. Generate Price Movers from Collection (Mocked trends for top valuable cards)
+    // 4. Real Price Movers — computed ONLY from recorded PriceHistory.
+    // A card can only "move" if Aura has stored at least two price points for
+    // it (the price-update cron records these). Cards without history are not
+    // shown at all — we never invent a trend. If nothing has moved, the client
+    // renders an honest empty state.
     let priceMovers: any[] = [];
-    if (collection && collection.cards) {
-      // Sort by value
-      const valuableCards = [...collection.cards]
-        .filter(c => (c.card.prices?.marketPrice || 0) > 0)
-        .sort((a, b) => (b.card.prices?.marketPrice || 0) - (a.card.prices?.marketPrice || 0))
-        .slice(0, 4);
+    if (collection && collection.cards && collection.cards.length > 0) {
+      const ownedCardIds = collection.cards.map((c) => c.card.id);
 
-      priceMovers = valuableCards.map(c => {
-        const price = c.card.prices?.marketPrice || 0;
-        // Pseudo-random trend based on card ID
-        const isUp = c.card.id.charCodeAt(0) % 2 === 0;
-        const changePct = ((c.card.id.charCodeAt(1) % 15) + 1.2).toFixed(1);
-        const changeAmt = (price * (parseFloat(changePct) / 100)).toFixed(2);
-        
-        return {
-          name: c.card.name,
-          game: c.card.game,
-          trend: isUp ? "up" : "down",
-          percent: `${isUp ? "+" : "-"}${changePct}%`,
-          change: `${isUp ? "+" : "-"}$${changeAmt}`,
-        };
+      // Pull recent history for owned cards; newest first so the first two rows
+      // per card are the latest and its immediate predecessor.
+      const history = await prisma.priceHistory.findMany({
+        where: { cardId: { in: ownedCardIds }, marketPrice: { not: null } },
+        orderBy: { recordedAt: "desc" },
+        select: { cardId: true, marketPrice: true, recordedAt: true },
       });
+
+      const latestTwoByCard = new Map<string, { marketPrice: number }[]>();
+      for (const row of history) {
+        const list = latestTwoByCard.get(row.cardId) ?? [];
+        if (list.length < 2) {
+          list.push({ marketPrice: row.marketPrice as number });
+          latestTwoByCard.set(row.cardId, list);
+        }
+      }
+
+      const cardById = new Map(collection.cards.map((c) => [c.card.id, c.card]));
+      const movers = [];
+      for (const [cardId, points] of latestTwoByCard) {
+        if (points.length < 2) continue; // needs a prior price to have moved
+        const current = points[0].marketPrice;
+        const previous = points[1].marketPrice;
+        if (!previous || previous === 0 || current === previous) continue;
+        const card = cardById.get(cardId);
+        if (!card) continue;
+
+        const changeAmt = current - previous;
+        const changePct = (changeAmt / previous) * 100;
+        const up = changeAmt > 0;
+        movers.push({
+          name: card.name,
+          game: card.game,
+          trend: up ? "up" : "down",
+          percent: `${up ? "+" : "-"}${Math.abs(changePct).toFixed(1)}%`,
+          change: `${up ? "+" : "-"}$${Math.abs(changeAmt).toFixed(2)}`,
+          _abs: Math.abs(changePct),
+        });
+      }
+
+      // Biggest absolute movers first; drop the internal sort key.
+      priceMovers = movers
+        .sort((a, b) => b._abs - a._abs)
+        .slice(0, 4)
+        .map(({ _abs, ...m }) => m);
     }
 
-    // 5. Generate Synthetic Portfolio History (30 Days)
-    // We start from 30 days ago and generate realistic deterministic fluctuations ending at `totalValue` today.
-    const portfolioHistory = [];
-    if (totalValue > 0) {
-      // Assume about 15% growth over the last 30 days
-      let simulatedValue = totalValue * 0.85; 
-      const now = new Date();
-      for (let i = 30; i >= 0; i--) {
-        const d = new Date(now);
-        d.setDate(d.getDate() - i);
-        
-        if (i < 30 && i > 0) {
-           // Deterministic noise using Math.sin
-           const pseudoRandom = Math.sin(i * 12.345) * 0.02; // ±2%
-           // Slight upward bias
-           simulatedValue = simulatedValue * (1 + 0.005 + pseudoRandom);
-        } else if (i === 0) {
-           simulatedValue = totalValue; // Ensure today's exact value
+    // 5. Portfolio history — real recorded snapshots only.
+    // We opportunistically record ONE snapshot of the true collection value per
+    // UTC day when the user opens Insights, so history accrues from genuine use
+    // even without a scheduled cron. The chart is drawn strictly from these
+    // stored points; until two days exist the client shows "building history".
+    // All snapshot access is guarded so a not-yet-migrated table degrades to the
+    // building-history state instead of failing the request.
+    let portfolioHistory: { date: string; value: number }[] = [];
+    let portfolioStatus: "building" | "ready" = "building";
+    let weeklyChange: { amount: number; percent: number } | null = null;
+
+    try {
+      const todayStart = startOfUtcDay();
+      const existingToday = await prisma.portfolioSnapshot.findFirst({
+        where: { userId, recordedAt: { gte: todayStart } },
+      });
+      if (existingToday) {
+        await prisma.portfolioSnapshot.update({
+          where: { id: existingToday.id },
+          data: { totalValue, cardCount: totalCards, recordedAt: new Date() },
+        });
+      } else {
+        await prisma.portfolioSnapshot.create({
+          data: { userId, totalValue, cardCount: totalCards },
+        });
+      }
+
+      const snapshots = await prisma.portfolioSnapshot.findMany({
+        where: { userId },
+        orderBy: { recordedAt: "asc" },
+        take: 90,
+      });
+
+      portfolioHistory = snapshots.map((s) => ({
+        date: s.recordedAt.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+        value: parseFloat(s.totalValue.toFixed(2)),
+      }));
+
+      // A trend needs at least two distinct days of real data.
+      if (snapshots.length >= 2) {
+        portfolioStatus = "ready";
+        const latest = snapshots[snapshots.length - 1];
+        const weekAgoCutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+        // The oldest snapshot within the last 7 days, else the earliest we have.
+        const baseline =
+          [...snapshots].find((s) => s.recordedAt >= weekAgoCutoff) ?? snapshots[0];
+        if (baseline.id !== latest.id && baseline.totalValue > 0) {
+          const amount = latest.totalValue - baseline.totalValue;
+          weeklyChange = {
+            amount: parseFloat(amount.toFixed(2)),
+            percent: parseFloat(((amount / baseline.totalValue) * 100).toFixed(1)),
+          };
         }
-        
-        portfolioHistory.push({
-          date: d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-          value: parseFloat(simulatedValue.toFixed(2))
-        });
       }
-    } else {
-      const now = new Date();
-      for (let i = 30; i >= 0; i--) {
-        const d = new Date(now);
-        d.setDate(d.getDate() - i);
-        portfolioHistory.push({
-          date: d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-          value: 0
-        });
-      }
+    } catch (err) {
+      // Table not migrated yet, or a transient DB issue — fall back to the
+      // honest building-history state rather than surfacing an error.
+      console.warn("[Dashboard] Portfolio snapshot unavailable:", (err as Error)?.message);
+      portfolioHistory = [];
+      portfolioStatus = "building";
+      weeklyChange = null;
     }
 
     return NextResponse.json({
@@ -132,8 +189,10 @@ export async function GET() {
           cardsOwned: totalCards,
         },
         recentScans: formattedScans,
-        priceMovers: priceMovers,
-        portfolioHistory: portfolioHistory,
+        priceMovers,
+        portfolioHistory,
+        portfolioStatus,
+        weeklyChange,
       },
     });
   } catch (error) {

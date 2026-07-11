@@ -4,6 +4,7 @@ import { auth } from "@/auth";
 import { METHOD_CONFIDENCE } from "@/lib/scanner/decision";
 import { fetchPrintingById } from "@/lib/scanner/candidates";
 import { withSelection } from "@/lib/scanner/telemetry";
+import { getArchiveContext } from "@/lib/scanner/archive-context";
 
 // The user looked at the physical card and picked — that's ground truth.
 const USER_SELECTION_CONFIDENCE = Math.round(METHOD_CONFIDENCE["user-selection"] * 100);
@@ -121,6 +122,10 @@ export async function POST(req: NextRequest) {
 
     console.log(`[Scanner] User-selected: "${localCard.name}" from "${localCard.setName}"`);
 
+    // Archive context (Phase 5 · Batch 2) — same additive, failure-safe field
+    // the auto-accept path returns, so both save paths feel identical.
+    const archive = await getArchiveContext(session.user.id, localCard);
+
     return NextResponse.json({
       success: true,
       data: {
@@ -128,6 +133,7 @@ export async function POST(req: NextRequest) {
         name: localCard.name,
         set: localCard.setName,
         game: localCard.game,
+        archive,
         prices: {
           marketPrice: card.price?.marketPrice || 0,
           lowPrice: card.price?.lowPrice || 0,

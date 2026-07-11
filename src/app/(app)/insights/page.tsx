@@ -51,6 +51,8 @@ export default function InsightsPage() {
   const stats = dashboardData?.stats || { collectionValue: 0, cardsOwned: 0 };
   const recentScans = dashboardData?.recentScans || [];
   const priceMovers = dashboardData?.priceMovers || [];
+  const portfolioStatus = dashboardData?.portfolioStatus || "building";
+  const weeklyChange = dashboardData?.weeklyChange || null;
 
   return (
     <div className="p-4 sm:p-6 lg:p-8 space-y-6">
@@ -63,9 +65,28 @@ export default function InsightsPage() {
           <p className="font-heading text-4xl sm:text-5xl mt-2 tabular-nums">
             ${stats.collectionValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </p>
-          <p className="text-sm text-muted-foreground mt-2">
-            {stats.cardsOwned.toLocaleString()} {stats.cardsOwned === 1 ? "card" : "cards"} in your collection
-          </p>
+          <div className="flex items-center gap-3 mt-2">
+            <p className="text-sm text-muted-foreground">
+              {stats.cardsOwned.toLocaleString()} {stats.cardsOwned === 1 ? "card" : "cards"} in your collection
+            </p>
+            {weeklyChange && (
+              <span
+                className={`inline-flex items-center gap-1 text-xs font-medium tabular-nums ${
+                  weeklyChange.amount >= 0 ? "text-success" : "text-destructive"
+                }`}
+                title="Change over the last 7 days of recorded value"
+              >
+                {weeklyChange.amount >= 0 ? (
+                  <ArrowUpRight className="h-3 w-3" />
+                ) : (
+                  <ArrowDownRight className="h-3 w-3" />
+                )}
+                {weeklyChange.amount >= 0 ? "+" : "-"}$
+                {Math.abs(weeklyChange.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                <span className="text-muted-foreground">· 7d</span>
+              </span>
+            )}
+          </div>
         </div>
         <Link href="/notifications" aria-label="Notifications">
           <Button variant="ghost" size="icon" className="text-muted-foreground">
@@ -74,13 +95,16 @@ export default function InsightsPage() {
         </Link>
       </div>
 
-      {/* Portfolio chart */}
+      {/* Portfolio chart — real recorded snapshots only */}
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-base">Value over time</CardTitle>
         </CardHeader>
         <CardContent className="pb-4">
-          <PortfolioChart data={dashboardData?.portfolioHistory || []} />
+          <PortfolioChart
+            data={dashboardData?.portfolioHistory || []}
+            status={portfolioStatus}
+          />
         </CardContent>
       </Card>
 
@@ -149,8 +173,10 @@ export default function InsightsPage() {
           <CardContent className="pb-4">
             <div className="space-y-3">
               {priceMovers.length === 0 ? (
-                <div className="text-center py-6 text-sm text-muted-foreground">
-                  Add cards to your collection to see price movers!
+                <div className="text-center py-6 px-4 text-sm text-muted-foreground">
+                  {stats.cardsOwned === 0
+                    ? "Add cards to your collection to track price movement."
+                    : "No price movement recorded yet. Aura logs your cards' prices over time — movers appear here once there's a change to report."}
                 </div>
               ) : priceMovers.map((mover: any) => (
                 <div key={mover.name} className="flex items-center justify-between py-2 border-b border-border/50 last:border-0">
