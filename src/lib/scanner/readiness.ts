@@ -38,7 +38,19 @@ export const LIVE_THRESHOLDS: ReadinessThresholds = {
   minBrightness: 45,
   maxBrightness: 232,
   maxGlareFraction: 0.06, // ~6% of the frame blown to specular white
-  maxMotion: 3.5, // mean luma delta between consecutive ~10Hz samples
+  // Mean |Δluma| (0–255) between consecutive ~10Hz full-frame samples.
+  // Calibrated for HANDHELD scanning, not a stationary card. On detailed card
+  // art, temporal sensor noise alone reads ~1.5–4.5 and natural hand micro-
+  // tremor pushes a "held reasonably still" card to ~3–8, while deliberately
+  // sweeping a card into frame reads ~10–40+. The old 3.5 sat inside the
+  // noise+tremor band, so a steady handheld hold rarely crossed it and the
+  // guidance chip stayed on "Hold steady" — the scanner felt too slow to arm.
+  // 7.0 admits natural tremor while still rejecting real motion. This is SAFE
+  // for quality: readiness only gates the chip and auto-capture ARMING; the
+  // capture pipeline still samples N frames, keeps the sharpest, and rejects a
+  // blurry result (assessQuality) before any OCR — so a slightly-moving frame
+  // that passes here can never degrade the uploaded image or recognition.
+  maxMotion: 7.0,
   minSharpness: 12,
 };
 
