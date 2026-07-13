@@ -120,6 +120,7 @@ export class HeuristicScorer implements Scorer {
         },
         learningRule,
       );
+      // artworkBoundary is now attached by decideAmongPrintings
     }
 
     // Rarity guard: a printed-rarity contradiction demotes accepts that lack
@@ -142,10 +143,13 @@ export class HeuristicScorer implements Scorer {
       };
     }
 
+    // Use calculated margin from vision comparison if available; otherwise use heuristic.
+    const margin = decision.decisionMargin ?? (decision.action === "accept" ? 1 : 0);
+
     return {
       decision,
       confidence: decision.confidence,
-      margin: decision.action === "accept" ? 1 : 0,
+      margin,
       evidenceMass: countEvidenceMass(evidence),
       methodLabel: decision.method ?? decision.action,
     };
