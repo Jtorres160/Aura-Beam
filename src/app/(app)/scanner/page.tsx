@@ -683,7 +683,12 @@ export default function ScannerPage() {
 
       const m = liveMetricsRef.current?.getLatest() ?? null;
       const fresh = !!m && now - m.at <= SMART_STALE_MS;
-      const rd = fresh ? evaluateReadiness(m!) : null;
+      // Motion hysteresis: if a dwell is already counting down (state
+      // "candidate"), evaluate motion against the relaxed EXIT ceiling so
+      // handheld-webcam jitter in the 10–16 band can't reset it. This only
+      // READS the machine's existing state — it doesn't alter the state flow.
+      const holding = machine.state === "candidate";
+      const rd = fresh ? evaluateReadiness(m!, LIVE_THRESHOLDS, holding) : null;
       const ready = !!rd && rd.ready;
 
       // Widened to string so the diag transition compare below isn't narrowed
