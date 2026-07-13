@@ -330,14 +330,23 @@
   scrollbar-width: none;
 }
 
-/* Full dynamic-viewport height. The dvh unit excludes the mobile browser's
-   collapsing chrome (address bar / toolbar), so a full-height app shell fits
-   the ACTUALLY visible area instead of overflowing behind the toolbars the way
-   100vh does on iOS Safari. The plain vh line is a fallback for browsers that
-   don't understand dvh; modern browsers use the second declaration. */
+/* Full SMALL-viewport height. svh is the viewport height WITH the mobile
+   browser's chrome (address bar / toolbar) shown — i.e. its smallest, STABLE
+   size. We deliberately use svh, not dvh, for the app shell: dvh changes as
+   iOS Safari collapses/expands its toolbar mid-scroll, which resized the shell
+   and made nested scroll positions spring back (the scan-result actions became
+   untappable). svh never changes, so the shell — and any scroll inside it —
+   stays put. The plain vh line is the fallback for engines without svh. */
 .h-dvh-screen {
   height: 100vh;
-  height: 100dvh;
+  height: 100svh;
+}
+
+/* Top clearance for the fixed mobile top bar (wordmark + hamburger): its h-14
+   content plus the notch inset it pads itself with. Keeps page content from
+   sliding under the bar. 0 on desktop (md:pt-0) and non-notched top inset. */
+.pt-mobile-topbar {
+  padding-top: calc(3.5rem + env(safe-area-inset-top));
 }
 
 /* Bottom safe-area padding for fixed elements that sit against the display
