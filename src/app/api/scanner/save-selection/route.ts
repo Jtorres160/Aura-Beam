@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { dbRetry, prisma } from "@/lib/prisma";
 import { auth } from "@/auth";
 import { METHOD_CONFIDENCE } from "@/lib/scanner/decision";
 import { fetchPrintingById } from "@/lib/scanner/candidates";
 import { withSelection } from "@/lib/scanner/telemetry";
 import { getArchiveContext } from "@/lib/scanner/archive-context";
+import { messageForStage, runStage, stageOfError } from "@/lib/scanner/failure";
 
 // The user looked at the physical card and picked — that's ground truth.
 const USER_SELECTION_CONFIDENCE = Math.round(METHOD_CONFIDENCE["user-selection"] * 100);
@@ -19,6 +20,12 @@ const USER_SELECTION_CONFIDENCE = Math.round(METHOD_CONFIDENCE["user-selection"]
 // its source database server-side and that authoritative copy is what gets
 // persisted. A tampered request can, at worst, save a card that exists.
 export async function POST(req: NextRequest) {
+  // Hoisted for the catch-all's structured log — a failure should name the
+  // card it was trying to save, not just "an error".
+  let externalId: string | undefined;
+  let game: string | undefined;
+  let cardName: string | undefined;
+  let localCardId: string | undefined;
   try {
     const session = await auth();
     if (!session?.user?.id) {
@@ -28,8 +35,8 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     // body.candidate is the legacy shape (kept so a cached client keeps
     // working across the deploy); only its identifiers are read.
-    const externalId: string | undefined = body.externalId ?? body.candidate?.externalId;
-    const game: string | undefined = body.game ?? body.candidate?.game;
+    externalId = body.externalId ?? body.candidate?.externalId;
+    game = body.game ?? body.candidate?.game;
     // Links the pick back to the originating scan attempt's telemetry row.
     const scanId: string | undefined = typeof body.scanId === "string" ? body.scanId : undefined;
 
@@ -45,80 +52,91 @@ export async function POST(req: NextRequest) {
         { status: 404 }
       );
     }
+    cardName = card.name;
 
-    // Atomic upsert on the unique externalId (no findFirst→create race); the
-    // update branch refreshes metadata from the card database.
-    const cardData = {
-      name: card.name,
-      setName: card.setName,
-      setCode: card.setCode || null,
-      collectorNumber: card.collectorNumber || null,
-      rarity: card.rarity,
-      imageUrl: card.imageUrl,
-      thumbnailUrl: card.thumbnailUrl,
-    };
-    const localCard = await prisma.card.upsert({
-      where: { externalId: card.externalId },
-      update: cardData,
-      create: { externalId: card.externalId, game: card.game, ...cardData },
-    });
+    // ─── Persist (Phase 5.2.5 parity) ──────────────────────────────────
+    // Same reliability contract as the scan route's saveAndRespond: every
+    // write is dbRetry-wrapped so a transient serverless connection drop is
+    // recovered instead of surfacing as a 500, and the whole block is tagged
+    // "database" so a hard failure is stage-classified (not a generic error).
+    const { localCard, history } = await runStage("database", async () => {
+      // Atomic upsert on the unique externalId (no findFirst→create race); the
+      // update branch refreshes metadata from the card database.
+      const cardData = {
+        name: card.name,
+        setName: card.setName,
+        setCode: card.setCode || null,
+        collectorNumber: card.collectorNumber || null,
+        rarity: card.rarity,
+        imageUrl: card.imageUrl,
+        thumbnailUrl: card.thumbnailUrl,
+      };
+      const localCard = await dbRetry(() => prisma.card.upsert({
+        where: { externalId: card.externalId },
+        update: cardData,
+        create: { externalId: card.externalId, game: card.game, ...cardData },
+      }));
 
-    // Always refresh the stored price with what the card database returned
-    // just now — a card first saved months ago must not keep its stale price.
-    await prisma.cardPrice.upsert({
-      where: { cardId: localCard.id },
-      update: {
-        marketPrice: card.price?.marketPrice || 0,
-        lowPrice: card.price?.lowPrice || null,
-        midPrice: card.price?.midPrice || null,
-        highPrice: card.price?.highPrice || null,
-        lastUpdated: new Date(),
-      },
-      create: {
-        cardId: localCard.id,
-        marketPrice: card.price?.marketPrice || 0,
-        lowPrice: card.price?.lowPrice || null,
-        midPrice: card.price?.midPrice || null,
-        highPrice: card.price?.highPrice || null,
-      },
-    });
+      // Always refresh the stored price with what the card database returned
+      // just now — a card first saved months ago must not keep its stale price.
+      await dbRetry(() => prisma.cardPrice.upsert({
+        where: { cardId: localCard.id },
+        update: {
+          marketPrice: card.price?.marketPrice || 0,
+          lowPrice: card.price?.lowPrice || null,
+          midPrice: card.price?.midPrice || null,
+          highPrice: card.price?.highPrice || null,
+          lastUpdated: new Date(),
+        },
+        create: {
+          cardId: localCard.id,
+          marketPrice: card.price?.marketPrice || 0,
+          lowPrice: card.price?.lowPrice || null,
+          midPrice: card.price?.midPrice || null,
+          highPrice: card.price?.highPrice || null,
+        },
+      }));
 
-    // Save to scan history. matchMethod "user-selection" is what the learning
-    // analyzer counts as a pipeline failure — the AI couldn't finish the job.
-    // When the client echoed the scanId, UPDATE the originating attempt's row
-    // instead of creating a new one: the pick becomes the ground-truth label
-    // attached to that scan's evidence (Phase 6 eval dataset). The ownership
-    // check keeps one user from labeling another user's scan.
-    let history = null;
-    if (scanId) {
-      const origin = await prisma.scanHistory.findFirst({
-        where: { id: scanId, userId: session.user.id },
-      });
-      if (origin) {
-        history = await prisma.scanHistory.update({
-          where: { id: origin.id },
+      // Save to scan history. matchMethod "user-selection" is what the learning
+      // analyzer counts as a pipeline failure — the AI couldn't finish the job.
+      // When the client echoed the scanId, UPDATE the originating attempt's row
+      // instead of creating a new one: the pick becomes the ground-truth label
+      // attached to that scan's evidence (Phase 6 eval dataset). The ownership
+      // check keeps one user from labeling another user's scan.
+      let history = null;
+      if (scanId) {
+        const origin = await dbRetry(() => prisma.scanHistory.findFirst({
+          where: { id: scanId, userId: session.user.id },
+        }));
+        if (origin) {
+          history = await dbRetry(() => prisma.scanHistory.update({
+            where: { id: origin.id },
+            data: {
+              cardId: localCard.id,
+              confidence: USER_SELECTION_CONFIDENCE,
+              matchMethod: "user-selection",
+              imageUrl: localCard.imageUrl,
+              ocrText: withSelection(origin.ocrText, { externalId: card.externalId, game: card.game }),
+            },
+          }));
+        }
+      }
+      if (!history) {
+        history = await dbRetry(() => prisma.scanHistory.create({
           data: {
+            userId: session.user.id,
             cardId: localCard.id,
             confidence: USER_SELECTION_CONFIDENCE,
             matchMethod: "user-selection",
             imageUrl: localCard.imageUrl,
-            ocrText: withSelection(origin.ocrText, { externalId: card.externalId, game: card.game }),
+            ocrText: withSelection(null, { externalId: card.externalId, game: card.game }),
           },
-        });
+        }));
       }
-    }
-    if (!history) {
-      history = await prisma.scanHistory.create({
-        data: {
-          userId: session.user.id,
-          cardId: localCard.id,
-          confidence: USER_SELECTION_CONFIDENCE,
-          matchMethod: "user-selection",
-          imageUrl: localCard.imageUrl,
-          ocrText: withSelection(null, { externalId: card.externalId, game: card.game }),
-        },
-      });
-    }
+
+      return { localCard, history };
+    });
+    localCardId = localCard.id;
 
     console.log(`[Scanner] User-selected: "${localCard.name}" from "${localCard.setName}"`);
 
@@ -149,7 +167,15 @@ export async function POST(req: NextRequest) {
     });
 
   } catch (error: any) {
-    console.error("[SaveSelection] Error:", error?.message || error);
-    return NextResponse.json({ success: false, message: "Failed to save card selection." }, { status: 500 });
+    // ─── Stage-classified failure (Phase 5.2.5 parity) ──────────────────
+    // Same taxonomy the scan route uses: name WHERE the save failed and never
+    // blame the image. Persistence throws surface here tagged "database".
+    const stage = stageOfError(error);
+    const causeMessage: string = error?.cause_?.message || error?.message || String(error);
+    console.error(
+      `[SaveSelection] Failed at stage "${stage}" — game=${game ?? "?"} card="${cardName ?? "?"}" externalId=${externalId ?? "?"} localId=${localCardId ?? "?"}:`,
+      causeMessage
+    );
+    return NextResponse.json({ success: false, stage, message: messageForStage(stage) }, { status: 500 });
   }
 }
