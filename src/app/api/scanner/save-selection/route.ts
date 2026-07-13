@@ -5,6 +5,8 @@ import { METHOD_CONFIDENCE } from "@/lib/scanner/decision";
 import { fetchPrintingById } from "@/lib/scanner/candidates";
 import { withSelection } from "@/lib/scanner/telemetry";
 import { getArchiveContext } from "@/lib/scanner/archive-context";
+import { persistPrinting } from "@/lib/cards/persist-printing";
+import { serializeSavedCard } from "@/lib/cards/serialize-card";
 import { messageForStage, runStage, stageOfError } from "@/lib/scanner/failure";
 
 // The user looked at the physical card and picked — that's ground truth.
@@ -60,42 +62,9 @@ export async function POST(req: NextRequest) {
     // recovered instead of surfacing as a 500, and the whole block is tagged
     // "database" so a hard failure is stage-classified (not a generic error).
     const { localCard, history } = await runStage("database", async () => {
-      // Atomic upsert on the unique externalId (no findFirst→create race); the
-      // update branch refreshes metadata from the card database.
-      const cardData = {
-        name: card.name,
-        setName: card.setName,
-        setCode: card.setCode || null,
-        collectorNumber: card.collectorNumber || null,
-        rarity: card.rarity,
-        imageUrl: card.imageUrl,
-        thumbnailUrl: card.thumbnailUrl,
-      };
-      const localCard = await dbRetry(() => prisma.card.upsert({
-        where: { externalId: card.externalId },
-        update: cardData,
-        create: { externalId: card.externalId, game: card.game, ...cardData },
-      }));
-
-      // Always refresh the stored price with what the card database returned
-      // just now — a card first saved months ago must not keep its stale price.
-      await dbRetry(() => prisma.cardPrice.upsert({
-        where: { cardId: localCard.id },
-        update: {
-          marketPrice: card.price?.marketPrice || 0,
-          lowPrice: card.price?.lowPrice || null,
-          midPrice: card.price?.midPrice || null,
-          highPrice: card.price?.highPrice || null,
-          lastUpdated: new Date(),
-        },
-        create: {
-          cardId: localCard.id,
-          marketPrice: card.price?.marketPrice || 0,
-          lowPrice: card.price?.lowPrice || null,
-          midPrice: card.price?.midPrice || null,
-          highPrice: card.price?.highPrice || null,
-        },
-      }));
+      // Shared Card + CardPrice persistence (Phase 2 · C4) — identical to the
+      // scan auto-accept path.
+      const localCard = await persistPrinting(card);
 
       // Save to scan history. matchMethod "user-selection" is what the learning
       // analyzer counts as a pipeline failure — the AI couldn't finish the job.
@@ -146,24 +115,13 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      data: {
-        id: localCard.id,
-        name: localCard.name,
-        set: localCard.setName,
-        game: localCard.game,
+      data: serializeSavedCard({
+        localCard,
+        printing: card,
         archive,
-        prices: {
-          marketPrice: card.price?.marketPrice || 0,
-          lowPrice: card.price?.lowPrice || 0,
-          midPrice: card.price?.midPrice || 0,
-          highPrice: card.price?.highPrice || 0,
-        },
-        rarity: localCard.rarity,
         confidence: USER_SELECTION_CONFIDENCE,
-        imageUrl: localCard.imageUrl,
-        thumbnailUrl: localCard.thumbnailUrl,
         historyId: history.id,
-      },
+      }),
     });
 
   } catch (error: any) {

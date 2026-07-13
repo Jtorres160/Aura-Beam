@@ -15,6 +15,8 @@ import { fetchAllPrintings } from "@/lib/scanner/candidates";
 import { scorer } from "@/lib/scanner/score";
 import { buildScanTelemetry } from "@/lib/scanner/telemetry";
 import { getArchiveContext } from "@/lib/scanner/archive-context";
+import { persistPrinting } from "@/lib/cards/persist-printing";
+import { serializeSavedCard } from "@/lib/cards/serialize-card";
 import { checkScanBurst, SCAN_DAILY_LIMIT, startOfUtcDay } from "@/lib/rate-limit";
 
 // Two OCR passes + a possible vision comparison + card-DB fetches can
@@ -323,48 +325,9 @@ function disambiguationResponse(cardName: string, candidates: CandidatePrinting[
 async function saveAndRespond(matchedCard: CandidatePrinting, userId: string, ocrData: any, decision: Decision, telemetryJson: string, startedAt: number) {
   const confidencePct = Math.round(decision.confidence * 100);
 
-  // Upsert keyed on the unique externalId. Atomic — two concurrent scans of
-  // the same NEW card (bulk/smart mode) previously raced findFirst→create and
-  // the loser 500'd on the unique constraint. The update branch also refreshes
-  // card metadata from the card database, so stale names/images self-heal.
-  const cardData = {
-    name: matchedCard.name,
-    setName: matchedCard.setName,
-    setCode: matchedCard.setCode || null,
-    collectorNumber: matchedCard.collectorNumber || null,
-    rarity: matchedCard.rarity,
-    imageUrl: matchedCard.imageUrl,
-    thumbnailUrl: matchedCard.thumbnailUrl,
-  };
-  const localCard = await dbRetry(() => prisma.card.upsert({
-    where: { externalId: matchedCard.externalId },
-    update: cardData,
-    create: {
-      externalId: matchedCard.externalId,
-      game: matchedCard.game,
-      ...cardData,
-    },
-  }));
-
-  // Always refresh the stored price with what the card database returned just
-  // now — a card first scanned months ago must not keep its stale price.
-  await dbRetry(() => prisma.cardPrice.upsert({
-    where: { cardId: localCard.id },
-    update: {
-      marketPrice: matchedCard.price?.marketPrice || 0,
-      lowPrice: matchedCard.price?.lowPrice || null,
-      midPrice: matchedCard.price?.midPrice || null,
-      highPrice: matchedCard.price?.highPrice || null,
-      lastUpdated: new Date(),
-    },
-    create: {
-      cardId: localCard.id,
-      marketPrice: matchedCard.price?.marketPrice || 0,
-      lowPrice: matchedCard.price?.lowPrice || null,
-      midPrice: matchedCard.price?.midPrice || null,
-      highPrice: matchedCard.price?.highPrice || null,
-    },
-  }));
+  // Shared Card + CardPrice persistence (Phase 2 · C4) — identical to the
+  // user-selection save path.
+  const localCard = await persistPrinting(matchedCard);
 
   const history = await dbRetry(() => prisma.scanHistory.create({
     data: {
@@ -387,25 +350,14 @@ async function saveAndRespond(matchedCard: CandidatePrinting, userId: string, oc
 
   return NextResponse.json({
     success: true,
-    data: {
-      id: localCard.id,
-      name: localCard.name,
-      set: localCard.setName,
-      game: localCard.game,
+    data: serializeSavedCard({
+      localCard,
+      printing: matchedCard,
       archive,
-      prices: {
-        marketPrice: matchedCard.price?.marketPrice || 0,
-        lowPrice: matchedCard.price?.lowPrice || 0,
-        midPrice: matchedCard.price?.midPrice || 0,
-        highPrice: matchedCard.price?.highPrice || 0,
-      },
-      rarity: localCard.rarity,
       confidence: confidencePct,
       method: decision.method,
-      imageUrl: localCard.imageUrl,
-      thumbnailUrl: localCard.thumbnailUrl,
       historyId: history.id,
-    },
+    }),
     ocrData,
   });
 }
