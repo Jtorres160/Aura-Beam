@@ -80,11 +80,13 @@ export default function CardDetailsPage() {
     setAddingToCollection(true);
     try {
       // Same contract as the scanner's "Add to Collection": the collections/add
-      // route resolves by id OR externalId and owns the upsert.
+      // route resolves by id OR externalId and owns the upsert. We pass `game`
+      // so a card not yet in the local DB is re-fetched from the RIGHT source
+      // (Pokémon / MTG / Yu-Gi-Oh), never assumed to be Pokémon.
       const res = await fetch(`/api/collections/add`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cardId: card.id || card.externalId }),
+        body: JSON.stringify({ cardId: card.id || card.externalId, game: card.game }),
       });
       if (res.ok) setInCollection(true);
     } catch (err) {
