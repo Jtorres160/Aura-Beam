@@ -2,10 +2,18 @@ import type { CandidatePrinting } from "@/lib/scanner/evidence";
 
 const BASE_URL = "https://db.ygoprodeck.com/api/v7/cardinfo.php";
 
+// Per-request timeout (Phase 5.2.5): a hung upstream must become a classified
+// failure, not an indefinitely spinning scan. Callers already treat throws as
+// "no result", so an AbortError degrades gracefully.
+const FETCH_TIMEOUT_MS = 8_000;
+const fetchOpts = (): RequestInit => ({
+  signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+});
+
 export async function searchYugiohCards(query: string, setCode?: string) {
   try {
     // Try exact name first
-    const exactRes = await fetch(`${BASE_URL}?name=${encodeURIComponent(query)}`);
+    const exactRes = await fetch(`${BASE_URL}?name=${encodeURIComponent(query)}`, fetchOpts());
     if (exactRes.ok) {
       const json = await exactRes.json();
       if (json.data && json.data.length > 0) {
@@ -15,7 +23,7 @@ export async function searchYugiohCards(query: string, setCode?: string) {
     }
 
     // Fall back to fuzzy name search
-    const fuzzyRes = await fetch(`${BASE_URL}?fname=${encodeURIComponent(query)}`);
+    const fuzzyRes = await fetch(`${BASE_URL}?fname=${encodeURIComponent(query)}`, fetchOpts());
     
     if (!fuzzyRes.ok) {
       if (fuzzyRes.status === 400) {
@@ -39,7 +47,7 @@ export async function getYugiohCardById(id: string) {
     // Scanner ids for alternate-art cards are variant-qualified ("cardId:imageId")
     // so each artwork gets its own local Card row; the API only knows the base id.
     const baseId = id.split(":")[0];
-    const response = await fetch(`${BASE_URL}?id=${encodeURIComponent(baseId)}`);
+    const response = await fetch(`${BASE_URL}?id=${encodeURIComponent(baseId)}`, fetchOpts());
     if (!response.ok) return null;
     const json = await response.json();
     return json.data && json.data.length > 0 ? json.data[0] : null;

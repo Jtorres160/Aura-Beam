@@ -10,6 +10,13 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY || "dummy_build_key",
 });
 
+// Per-call ceilings (Phase 5.2.5): a hung vision call must fail fast into a
+// classified error, not spin until the platform kills the whole function.
+// One SDK-level retry keeps transient blips invisible; 20s × 2 attempts stays
+// well inside the route's 60s maxDuration.
+const OCR_TIMEOUT_MS = 20_000;
+const OCR_MAX_RETRIES = 1;
+
 /** The fields OCR reads off a card, trimmed and normalized to strings. */
 export interface OcrFields {
   /** Raw parsed OCR object, passed through to the client as ocrData. */
@@ -54,7 +61,7 @@ Return ONLY raw JSON. No markdown. No explanation.`
       ],
       max_tokens: 80,
       temperature: 0.1,
-    });
+    }, { timeout: OCR_TIMEOUT_MS, maxRetries: OCR_MAX_RETRIES });
 
     const aiMessage = aiResponse.choices[0]?.message?.content || "{}";
     console.log("[Scanner] OCR response:", aiMessage);
@@ -129,7 +136,7 @@ If the bottom strip is not legible, return every value as "". Return ONLY raw JS
       ],
       max_tokens: 80,
       temperature: 0.0,
-    });
+    }, { timeout: OCR_TIMEOUT_MS, maxRetries: OCR_MAX_RETRIES });
 
     const raw = aiResponse.choices[0]?.message?.content || "{}";
     console.log("[Scanner] Strip OCR response:", raw);

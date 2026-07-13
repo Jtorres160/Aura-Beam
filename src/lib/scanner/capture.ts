@@ -39,8 +39,10 @@ export const AUTO_FRAME_COUNT = 3;
 const FRAME_INTERVAL_MS = 55;
 
 /** Sharpness/brightness are measured on a small normalized grayscale copy so
- *  the thresholds below are independent of the camera's native resolution. */
-const ANALYSIS_DIM = 256;
+ *  the thresholds below are independent of the camera's native resolution.
+ *  Exported (Phase 5.2.5): the live-metrics loop analyses at the SAME dim over
+ *  the SAME ROI content, so readiness and this gate finally share one scale. */
+export const ANALYSIS_DIM = 256;
 
 // ─── ROI capture (Phase 4.5 · Commit 2) ──────────────────────────────────────
 
@@ -129,10 +131,13 @@ export function computeCaptureRoi(p: RoiParams): CaptureRegion | null {
 
 // Quality-gate thresholds (measured on the ANALYSIS_DIM grayscale, 0–255).
 // Deliberately CONSERVATIVE — reject only obviously unusable frames.
+// MIN_SHARPNESS is exported as the ONE sharpness floor: readiness.ts uses the
+// same constant, so "Ready to scan" can never coexist with a "too blurry"
+// rejection of the same still scene (Phase 5.2.5 gate alignment).
 const NOT_READY_BRIGHTNESS = 8;   // effectively a black frame (camera warming up)
 const MIN_BRIGHTNESS = 32;        // too dark to read
 const MAX_BRIGHTNESS = 236;       // blown out / overexposed
-const MIN_SHARPNESS = 22;         // Laplacian variance floor (badly out of focus)
+export const MIN_SHARPNESS = 22;  // Laplacian variance floor (badly out of focus)
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 

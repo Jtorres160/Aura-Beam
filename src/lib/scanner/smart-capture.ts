@@ -10,7 +10,11 @@
 //
 // Duplicate prevention is an 8×8 average-hash (aHash) checked at the
 // candidate→capturing edge: if the stable frame hashes ~identical to the last
-// captured one, it's the SAME card still there — skip it, spend no OCR call.
+// SUCCESSFULLY IDENTIFIED one, it's the SAME card still there — skip it, spend
+// no OCR call. The hash is committed only when the server actually identified
+// a card (Phase 5.2.5): committing it on a failed attempt would fingerprint a
+// scene that was never scanned, and the unchanged card in frame would then be
+// blocked as a "duplicate" forever — the bulk-mode dead stall.
 // (This aHash approach is intentionally aligned with future Phase 7 artwork
 // hashing.)
 //
@@ -29,8 +33,13 @@ export const STABILITY_DWELL_MS = 500;
 export const COOLDOWN_MS = 1200;
 
 /** Max Hamming distance (of 64 bits) at which two frames are considered the
- *  same card still in frame. Higher = more aggressive dedup. */
-export const DUP_HAMMING_MAX = 6;
+ *  same card still in frame. Higher = more aggressive dedup.
+ *  Tuned for ROI-cropped hashes (Phase 5.2.5): the hash now covers the card
+ *  region only, so a card swap flips far more bits than it did on the full
+ *  frame (where the static background dominated). 10 tolerates hand tremor and
+ *  small drift of the SAME card; validate against ?diag=1 exports, which log
+ *  the measured distance on every dedup verdict. */
+export const DUP_HAMMING_MAX = 10;
 
 /** Side length of the average-hash grid (8×8 = 64-bit hash). */
 export const AHASH_DIM = 8;
@@ -52,14 +61,27 @@ export interface AHash {
   lo: number;
 }
 
+/** A source-pixel crop region, structurally identical to capture.ts's
+ *  CaptureRegion — redeclared here so this module stays dependency-free. */
+export interface HashRegion {
+  sx: number;
+  sy: number;
+  sw: number;
+  sh: number;
+}
+
 /**
  * 64-bit average hash of the current video frame, using a caller-owned 8×8
- * canvas (reused across calls). Only invoked at a capture decision, so its tiny
- * per-call allocation is inconsequential. Returns null if the frame isn't ready.
+ * canvas (reused across calls). When `roi` is given, only that source region
+ * (the guide-box card area) is hashed — the static background would otherwise
+ * dominate the 64 cells and make two DIFFERENT cards hash near-identically.
+ * Only invoked at a capture decision, so its tiny per-call allocation is
+ * inconsequential. Returns null if the frame isn't ready.
  */
 export function computeAverageHash(
   video: HTMLVideoElement,
-  canvas: HTMLCanvasElement
+  canvas: HTMLCanvasElement,
+  roi?: HashRegion | null
 ): AHash | null {
   if (!video.videoWidth || !video.videoHeight) return null;
   const S = AHASH_DIM;
@@ -67,7 +89,11 @@ export function computeAverageHash(
   canvas.height = S;
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
   if (!ctx) return null;
-  ctx.drawImage(video, 0, 0, S, S);
+  if (roi && roi.sw >= 10 && roi.sh >= 10) {
+    ctx.drawImage(video, roi.sx, roi.sy, roi.sw, roi.sh, 0, 0, S, S);
+  } else {
+    ctx.drawImage(video, 0, 0, S, S);
+  }
   const { data } = ctx.getImageData(0, 0, S, S);
 
   const n = S * S; // 64
@@ -118,6 +144,9 @@ export type StepResult =
  */
 export class SmartCaptureMachine {
   state: SmartState = "scanning";
+  /** Hamming distance measured at the most recent duplicate-gate check, for
+   *  diagnostics/calibration. null until the gate has run against a hash. */
+  lastDuplicateDistance: number | null = null;
   private readySince = 0;
   private cooldownUntil = 0;
   private lastHash: AHash | null = null;
@@ -128,6 +157,7 @@ export class SmartCaptureMachine {
     this.readySince = 0;
     this.cooldownUntil = 0;
     this.lastHash = null;
+    this.lastDuplicateDistance = null;
   }
 
   /**
@@ -165,16 +195,17 @@ export class SmartCaptureMachine {
         if (now - this.readySince < STABILITY_DWELL_MS) {
           return { action: "none" };
         }
-        // Dwell satisfied. Duplicate gate: same card still in frame?
+        // Dwell satisfied. Duplicate gate: same card still in frame? Compared
+        // against the last SUCCESSFULLY identified frame only (see settle()).
         const hash = getHash();
-        if (
-          this.lastHash !== null &&
-          hash !== null &&
-          hammingDistance(hash, this.lastHash) <= DUP_HAMMING_MAX
-        ) {
-          // Same card — skip the OCR call, take a cooldown, then re-scan.
-          this.enterCooldown(now);
-          return { action: "none" };
+        if (this.lastHash !== null && hash !== null) {
+          const distance = hammingDistance(hash, this.lastHash);
+          this.lastDuplicateDistance = distance;
+          if (distance <= DUP_HAMMING_MAX) {
+            // Same card — skip the OCR call, take a cooldown, then re-scan.
+            this.enterCooldown(now);
+            return { action: "none" };
+          }
         }
         this.state = "capturing";
         return { action: "capture", hash };
@@ -182,10 +213,13 @@ export class SmartCaptureMachine {
     }
   }
 
-  /** Report an async capture finished. Records the captured frame's hash for
-   *  dedup and enters cooldown. */
-  settle(now: number, capturedHash: AHash | null): void {
-    if (capturedHash !== null) this.lastHash = capturedHash;
+  /** Report an async capture finished. The frame's hash is committed for
+   *  dedup ONLY when the attempt actually identified a card — a failed attempt
+   *  (quality-gate rejection, server error, no card detected) must leave dedup
+   *  memory untouched so the very same scene can be retried. Always enters
+   *  cooldown. */
+  settle(now: number, capturedHash: AHash | null, identified: boolean): void {
+    if (identified && capturedHash !== null) this.lastHash = capturedHash;
     this.enterCooldown(now);
   }
 

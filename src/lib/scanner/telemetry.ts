@@ -42,6 +42,9 @@ export interface ScanTelemetryV1 {
   ocr?: unknown;
   game?: string;
   isAutoScan?: boolean;
+  /** Per-stage wall-clock timings in ms (ocrMs, candidatesMs, scoreMs, …) —
+   *  Phase 5.2.5 black-box data for latency/failure analysis. */
+  timings?: Record<string, number>;
   /** Present once the user picked from the disambiguation grid. */
   selection?: SelectionLabel;
 }
@@ -54,8 +57,9 @@ export function buildScanTelemetry(input: {
   ocr?: unknown;
   game?: string;
   isAutoScan?: boolean;
+  timings?: Record<string, number>;
 }): ScanTelemetryV1 {
-  const { evidence, scored, decision, printingsCount, ocr, game, isAutoScan } = input;
+  const { evidence, scored, decision, printingsCount, ocr, game, isAutoScan, timings } = input;
   return {
     v: 1,
     evidence,
@@ -71,6 +75,7 @@ export function buildScanTelemetry(input: {
     ocr,
     game,
     isAutoScan,
+    timings,
   };
 }
 

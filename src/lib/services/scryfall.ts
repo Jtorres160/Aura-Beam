@@ -8,6 +8,15 @@ const SCRYFALL_HEADERS = {
   "Accept": "application/json"
 };
 
+// Per-request timeout (Phase 5.2.5): a hung upstream must become a classified
+// "candidates" failure, not an indefinitely spinning scan. Callers already
+// treat throws as "no result", so an AbortError degrades gracefully.
+const FETCH_TIMEOUT_MS = 8_000;
+const fetchOpts = (): RequestInit => ({
+  headers: SCRYFALL_HEADERS,
+  signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+});
+
 // Scryfall requests 50-100ms delay between requests to avoid blacklisting
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -19,7 +28,7 @@ export async function searchScryfallCardByName(query: string, setCode?: string) 
     let url = `${NAMED_URL}?exact=${encodeURIComponent(query)}`;
     if (setCode) url += `&set=${encodeURIComponent(setCode)}`;
 
-    const exactRes = await fetch(url, { headers: SCRYFALL_HEADERS });
+    const exactRes = await fetch(url, fetchOpts());
     if (exactRes.ok) {
       const card = await exactRes.json();
       console.log(`[Scryfall] Exact match found: "${card.name}" (Set: ${setCode || 'any'})`);
@@ -30,7 +39,7 @@ export async function searchScryfallCardByName(query: string, setCode?: string) 
 
     let fuzzyUrl = `${NAMED_URL}?fuzzy=${encodeURIComponent(query)}`;
     if (setCode) fuzzyUrl += `&set=${encodeURIComponent(setCode)}`;
-    const fuzzyRes = await fetch(fuzzyUrl, { headers: SCRYFALL_HEADERS });
+    const fuzzyRes = await fetch(fuzzyUrl, fetchOpts());
     if (fuzzyRes.ok) {
       const card = await fuzzyRes.json();
       console.log(`[Scryfall] Fuzzy match found: "${card.name}"`);
@@ -52,7 +61,7 @@ export async function searchScryfallCardByName(query: string, setCode?: string) 
 export async function searchScryfallBySetAndCollector(setCode: string, collectorNumber: string) {
   try {
     const query = `set:${setCode} cn:${collectorNumber}`;
-    const response = await fetch(`${SEARCH_URL}?q=${encodeURIComponent(query)}`, { headers: SCRYFALL_HEADERS });
+    const response = await fetch(`${SEARCH_URL}?q=${encodeURIComponent(query)}`, fetchOpts());
     
     if (response.ok) {
       const json = await response.json();
@@ -122,7 +131,7 @@ export async function searchScryfallDeepFallback(
     const query = queryParts.join(' ');
     console.log(`[Scryfall] Deep Semantic Fallback Query: "${query}"`);
 
-    const response = await fetch(`${SEARCH_URL}?q=${encodeURIComponent(query)}&order=released`, { headers: SCRYFALL_HEADERS });
+    const response = await fetch(`${SEARCH_URL}?q=${encodeURIComponent(query)}&order=released`, fetchOpts());
     
     if (response.ok) {
       const json = await response.json();
@@ -147,7 +156,7 @@ export async function searchScryfallCards(query: string, setCode?: string, colle
     if (setCode) exactQuery += ` set:${setCode}`;
     if (collectorNumber) exactQuery += ` cn:${collectorNumber}`;
 
-    const response = await fetch(`${SEARCH_URL}?q=${encodeURIComponent(exactQuery)}&order=released&dir=desc`, { headers: SCRYFALL_HEADERS });
+    const response = await fetch(`${SEARCH_URL}?q=${encodeURIComponent(exactQuery)}&order=released&dir=desc`, fetchOpts());
     
     if (response.ok) {
       const json = await response.json();
@@ -159,7 +168,7 @@ export async function searchScryfallCards(query: string, setCode?: string, colle
 
     await delay(100);
 
-    const broadResponse = await fetch(`${SEARCH_URL}?q=${encodeURIComponent(query)}&order=released&dir=desc`, { headers: SCRYFALL_HEADERS });
+    const broadResponse = await fetch(`${SEARCH_URL}?q=${encodeURIComponent(query)}&order=released&dir=desc`, fetchOpts());
     
     if (!broadResponse.ok) {
       if (broadResponse.status === 404) {
@@ -185,7 +194,7 @@ export async function searchScryfallCards(query: string, setCode?: string, colle
 export async function fetchAllMTGPrintings(name: string): Promise<any[]> {
   try {
     const query = `!"${name}" unique:prints`;
-    const res = await fetch(`${SEARCH_URL}?q=${encodeURIComponent(query)}&order=released&dir=desc`, { headers: SCRYFALL_HEADERS });
+    const res = await fetch(`${SEARCH_URL}?q=${encodeURIComponent(query)}&order=released&dir=desc`, fetchOpts());
     if (!res.ok) return [];
     const json = await res.json();
     return json.data || [];
@@ -196,7 +205,7 @@ export async function fetchAllMTGPrintings(name: string): Promise<any[]> {
 
 export async function getScryfallCardById(id: string) {
   try {
-    const response = await fetch(`https://api.scryfall.com/cards/${encodeURIComponent(id)}`, { headers: SCRYFALL_HEADERS });
+    const response = await fetch(`https://api.scryfall.com/cards/${encodeURIComponent(id)}`, fetchOpts());
     if (!response.ok) return null;
     const json = await response.json();
     return json;

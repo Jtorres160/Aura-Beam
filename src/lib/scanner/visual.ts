@@ -11,6 +11,10 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY || "dummy_build_key",
 });
 
+// Per-call ceiling (Phase 5.2.5): a hung comparison degrades to "uncertain"
+// (user disambiguation) via the existing catch instead of hanging the scan.
+const VISION_TIMEOUT_MS = 20_000;
+
 /** The slice of an AiLearningRule the pipeline consumes. */
 export interface LearningRuleInfo {
   ruleType: string;
@@ -56,7 +60,7 @@ export async function pickArtGroupByVision(
       ],
       max_tokens: 5,
       temperature: 0.0,
-    });
+    }, { timeout: VISION_TIMEOUT_MS, maxRetries: 1 });
 
     const raw = (visualResponse.choices[0]?.message?.content || "-1").trim();
     const parsed = parseInt(raw, 10);

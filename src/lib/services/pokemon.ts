@@ -11,6 +11,15 @@ function getHeaders(): HeadersInit {
   return headers;
 }
 
+// Per-request timeout (Phase 5.2.5): a hung upstream must become a classified
+// failure, not an indefinitely spinning scan. Callers already treat throws as
+// "no result", so an AbortError degrades gracefully.
+const FETCH_TIMEOUT_MS = 8_000;
+const fetchOpts = (): RequestInit => ({
+  headers: getHeaders(),
+  signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+});
+
 export async function searchPokemonCards(query: string, setCode?: string, collectorNumber?: string) {
   try {
     let searchQuery = `name:"${encodeURIComponent(query)}"`;
@@ -21,9 +30,7 @@ export async function searchPokemonCards(query: string, setCode?: string, collec
       searchQuery += ` number:${encodeURIComponent(collectorNumber)}`;
     }
     
-    const response = await fetch(`${BASE_URL}?q=${searchQuery}&pageSize=50`, {
-      headers: getHeaders(),
-    });
+    const response = await fetch(`${BASE_URL}?q=${searchQuery}&pageSize=50`, fetchOpts());
 
     if (!response.ok) {
       throw new Error(`Pokemon TCG API Error: ${response.status}`);
@@ -52,7 +59,7 @@ export async function searchPokemonBySetAndNumber(setCode: string, collectorNumb
     const setQuery = `(set.ptcgoCode:"${setCode}" OR set.id:"${setCode.toLowerCase()}")`;
     const response = await fetch(
       `${BASE_URL}?q=${encodeURIComponent(`${numberQuery} ${setQuery}`)}&pageSize=10`,
-      { headers: getHeaders() }
+      fetchOpts()
     );
     if (!response.ok) return [];
     const json = await response.json();
@@ -71,9 +78,7 @@ export async function fetchAllPokemonPrintings(name: string): Promise<any[]> {
   try {
     // Use exact name match to avoid getting unrelated cards
     const searchQuery = `name:"${encodeURIComponent(name)}"`;
-    const response = await fetch(`${BASE_URL}?q=${searchQuery}&pageSize=50&orderBy=releaseDate`, {
-      headers: getHeaders(),
-    });
+    const response = await fetch(`${BASE_URL}?q=${searchQuery}&pageSize=50&orderBy=releaseDate`, fetchOpts());
     if (!response.ok) return [];
     const json = await response.json();
     // Filter to only exact name matches, cap at 20
@@ -86,9 +91,7 @@ export async function fetchAllPokemonPrintings(name: string): Promise<any[]> {
 
 export async function getPokemonCardById(id: string) {
   try {
-    const response = await fetch(`${BASE_URL}/${id}`, {
-      headers: getHeaders(),
-    });
+    const response = await fetch(`${BASE_URL}/${id}`, fetchOpts());
     if (!response.ok) return null;
     const json = await response.json();
     return json.data;

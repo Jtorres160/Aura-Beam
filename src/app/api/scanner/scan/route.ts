@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { dbRetry, prisma } from "@/lib/prisma";
 import { auth } from "@/auth";
+import { messageForStage, runStage, stageOfError, type FailureStage } from "@/lib/scanner/failure";
 import {
   reading,
   reconcileSetCn,
@@ -16,40 +17,61 @@ import { buildScanTelemetry } from "@/lib/scanner/telemetry";
 import { getArchiveContext } from "@/lib/scanner/archive-context";
 import { checkScanBurst, SCAN_DAILY_LIMIT, startOfUtcDay } from "@/lib/rate-limit";
 
+// Two OCR passes + a possible vision comparison + card-DB fetches can
+// legitimately take a while; without this, a slow upstream hits the platform
+// default and dies as an unclassifiable infra error.
+export const maxDuration = 60;
+
 export async function POST(req: NextRequest) {
   const startedAt = Date.now();
+  // Hoisted for the catch-all: persisting a failed attempt needs the user, and
+  // stage timings should survive a mid-pipeline throw.
+  let userId: string | null = null;
+  const timings: Record<string, number> = {};
+  const timed = async <T,>(key: string, fn: () => Promise<T>): Promise<T> => {
+    const t0 = Date.now();
+    try {
+      return await fn();
+    } finally {
+      timings[key] = Date.now() - t0;
+    }
+  };
+
   try {
     const session = await auth();
     if (!session?.user?.id) {
       return NextResponse.json({ success: false, message: "Unauthorized" }, { status: 401 });
     }
+    userId = session.user.id;
 
     // ─── Rate limits — every scan costs 2–3 vision-model calls ─────────
     const burst = checkScanBurst(session.user.id);
     if (!burst.ok) {
       return NextResponse.json(
-        { success: false, message: `You're scanning too fast — try again in ${burst.retryAfterSeconds}s.` },
+        { success: false, stage: "rate-limit", message: `You're scanning too fast — try again in ${burst.retryAfterSeconds}s.` },
         { status: 429, headers: { "Retry-After": String(burst.retryAfterSeconds) } }
       );
     }
     // cardId != null: only SAVED scans count against the daily cap. Telemetry
     // rows for disambiguation/not-found attempts have cardId null and must not
     // tighten the limit (same semantics as before those rows existed).
-    const scansToday = await prisma.scanHistory.count({
-      where: { userId: session.user.id, cardId: { not: null }, createdAt: { gte: startOfUtcDay() } },
-    });
+    const scansToday = await runStage("database", () => dbRetry(() =>
+      prisma.scanHistory.count({
+        where: { userId: session.user.id, cardId: { not: null }, createdAt: { gte: startOfUtcDay() } },
+      })
+    ));
     if (scansToday >= SCAN_DAILY_LIMIT) {
       return NextResponse.json(
-        { success: false, message: "You've reached today's scan limit. It resets at midnight UTC." },
+        { success: false, stage: "rate-limit", message: "You've reached today's scan limit. It resets at midnight UTC." },
         { status: 429 }
       );
     }
 
-    const body = await req.json();
+    const body = await runStage("parse", () => req.json());
     const { image, game, isAutoScan } = body;
 
     if (!image) {
-      return NextResponse.json({ success: false, message: "No image provided from scanner" }, { status: 400 });
+      return NextResponse.json({ success: false, stage: "parse", message: "No image provided from scanner" }, { status: 400 });
     }
 
     if (!process.env.OPENAI_API_KEY) {
@@ -69,9 +91,11 @@ export async function POST(req: NextRequest) {
     // Yugioh its result is simply discarded — that costs a fraction of a
     // cent, versus seconds of added latency on every scan if run serially.
     const stripPromise = extractBottomStrip(imageUrl);
-    const extraction = await extractCardFields(imageUrl);
+    const extraction = await timed("ocrMs", () => extractCardFields(imageUrl));
     if (!extraction.ok) {
-      return NextResponse.json({ success: false, message: extraction.message }, { status: extraction.status });
+      // 404 = OCR worked but saw no card; anything else = the OCR call failed.
+      const stage: FailureStage = extraction.status === 404 ? "no-card" : "ocr";
+      return NextResponse.json({ success: false, stage, message: extraction.message }, { status: extraction.status });
     }
 
     const { identifiedCard, cardName, aiGame, manaCost, typeLine, powerToughness } = extraction.fields;
@@ -110,8 +134,13 @@ export async function POST(req: NextRequest) {
     }
 
     // ─── Step 1b: Check AI Learning Rules for this card ───────────────
+    // Best-effort: a learning rule refines a scan but must never fail one — a
+    // DB hiccup here degrades to "no rule" instead of killing the attempt.
     const learningRule = await prisma.aiLearningRule.findUnique({
       where: { targetName: cardName },
+    }).catch((err) => {
+      console.warn("[Scanner] Learning-rule lookup failed (non-fatal):", err?.message);
+      return null;
     });
 
     if (learningRule) {
@@ -125,21 +154,29 @@ export async function POST(req: NextRequest) {
 
     // ─── Step 2: Fetch all printings of this card ─────────────────────
     console.log(`[Scanner] Step 2: Fetching all printings for "${cardName}"...`);
-    const { printings, fallbackCard, fallbackMethod } = await fetchAllPrintings(cardName, effectiveGame, setCode, collectorNumber, manaCost, typeLine, powerToughness);
+    const { printings, fallbackCard, fallbackMethod } = await runStage("candidates", () =>
+      timed("candidatesMs", () =>
+        fetchAllPrintings(cardName, effectiveGame, setCode, collectorNumber, manaCost, typeLine, powerToughness)
+      )
+    );
 
     // ─── Step 3: Score — the scorer owns the identification verdict ────
     // Models only produced evidence; the scorer (heuristic today, probabilistic
     // once a labeled dataset exists) turns evidence + candidates into a
     // decision. The route never branches on match paths itself.
-    const scored = await scorer.score({
-      cardName,
-      printings,
-      fallbackCard,
-      fallbackMethod,
-      evidence,
-      scannedImageUrl: imageUrl,
-      learningRule,
-    });
+    const scored = await runStage("scoring", () =>
+      timed("scoreMs", () =>
+        scorer.score({
+          cardName,
+          printings,
+          fallbackCard,
+          fallbackMethod,
+          evidence,
+          scannedImageUrl: imageUrl,
+          learningRule,
+        })
+      )
+    );
 
     // ─── Step 4: Gate and respond ──────────────────────────────────────
     // Auto-scan saves without a review screen, so it demands more confidence.
@@ -157,45 +194,80 @@ export async function POST(req: NextRequest) {
       ocr: identifiedCard,
       game: effectiveGame,
       isAutoScan: Boolean(isAutoScan),
+      timings,
     }));
 
     if (decision.action === "accept" && decision.printing) {
-      return await saveAndRespond(decision.printing, session.user.id, identifiedCard, decision, telemetryJson, startedAt);
+      return await runStage("database", () =>
+        saveAndRespond(decision.printing!, session.user.id, identifiedCard, decision, telemetryJson, startedAt)
+      );
     }
 
     if (decision.action === "disambiguate" && decision.candidates && decision.candidates.length > 0) {
       console.log(`[Scanner] Requesting user disambiguation among ${decision.candidates.length} candidate(s).`);
       // cardId stays null until (unless) the user picks — save-selection then
       // updates THIS row, linking the pick (ground truth) to this evidence.
-      const pending = await prisma.scanHistory.create({
+      // Best-effort: if the telemetry row can't be written, the user still gets
+      // their grid (without a scanId to link the pick back to).
+      const pending = await dbRetry(() =>
+        prisma.scanHistory.create({
+          data: {
+            userId: session.user.id,
+            confidence: Math.round(decision.confidence * 100),
+            matchMethod: "disambiguation-pending",
+            ocrText: telemetryJson,
+            processingTime: Date.now() - startedAt,
+          },
+        })
+      ).catch((err) => {
+        console.warn("[Scanner] Could not persist pending disambiguation (non-fatal):", err?.message);
+        return null;
+      });
+      return disambiguationResponse(cardName, decision.candidates, identifiedCard, pending?.id ?? null, decision.bestMatchExternalId);
+    }
+
+    // Not-found is a VERDICT, not an error — persist it best-effort and answer
+    // 404 either way.
+    await dbRetry(() =>
+      prisma.scanHistory.create({
         data: {
           userId: session.user.id,
-          confidence: Math.round(decision.confidence * 100),
-          matchMethod: "disambiguation-pending",
+          confidence: 0,
+          matchMethod: "not-found",
           ocrText: telemetryJson,
           processingTime: Date.now() - startedAt,
         },
-      });
-      return disambiguationResponse(cardName, decision.candidates, identifiedCard, pending.id, decision.bestMatchExternalId);
-    }
-
-    await prisma.scanHistory.create({
-      data: {
-        userId: session.user.id,
-        confidence: 0,
-        matchMethod: "not-found",
-        ocrText: telemetryJson,
-        processingTime: Date.now() - startedAt,
-      },
-    });
+      })
+    ).catch((err) => console.warn("[Scanner] Could not persist not-found attempt (non-fatal):", err?.message));
     return NextResponse.json({
       success: false,
+      stage: "not-found",
       message: `AI identified "${cardName}" but no match was found in any card database. Try scanning again with better lighting.`
     }, { status: 404 });
 
   } catch (error: any) {
-    console.error("[Scanner] Pipeline Error:", error?.message || error);
-    return NextResponse.json({ success: false, message: "Failed to process card image." }, { status: 500 });
+    // ─── Stage-classified failure (Phase 5.2.5) ─────────────────────────
+    // Name WHERE the pipeline failed, persist the attempt so failures are
+    // measurable, and never blame the image for an infrastructure error.
+    const stage = stageOfError(error);
+    const causeMessage: string = error?.cause_?.message || error?.message || String(error);
+    console.error(`[Scanner] Pipeline error at stage "${stage}" after ${Date.now() - startedAt}ms:`, causeMessage, "timings:", JSON.stringify(timings));
+
+    if (userId) {
+      // Best-effort black-box record — matchMethod "error:<stage>" makes
+      // failure rates per stage queryable straight from ScanHistory.
+      await prisma.scanHistory.create({
+        data: {
+          userId,
+          confidence: 0,
+          matchMethod: `error:${stage}`,
+          ocrText: JSON.stringify({ v: 1, error: { stage, message: causeMessage }, timings }),
+          processingTime: Date.now() - startedAt,
+        },
+      }).catch(() => { /* the DB may be the failing stage */ });
+    }
+
+    return NextResponse.json({ success: false, stage, message: messageForStage(stage) }, { status: 500 });
   }
 }
 
@@ -212,7 +284,8 @@ function usesSetCnEvidence(game: string): boolean {
 // ─── Disambiguation response ────────────────────────────────────────────────
 // scanId identifies the pending ScanHistory row for this attempt; the client
 // echoes it to save-selection so the user's pick lands on the same record.
-function disambiguationResponse(cardName: string, candidates: CandidatePrinting[], ocrData: any, scanId: string, bestMatchExternalId?: string) {
+// null when the telemetry row couldn't be written (non-fatal).
+function disambiguationResponse(cardName: string, candidates: CandidatePrinting[], ocrData: any, scanId: string | null, bestMatchExternalId?: string) {
   const withImages = candidates.filter((c) => c.thumbnailUrl);
   const list = (withImages.length > 0 ? withImages : candidates).map((c) => ({
     externalId: c.externalId,
@@ -256,7 +329,7 @@ async function saveAndRespond(matchedCard: CandidatePrinting, userId: string, oc
     imageUrl: matchedCard.imageUrl,
     thumbnailUrl: matchedCard.thumbnailUrl,
   };
-  const localCard = await prisma.card.upsert({
+  const localCard = await dbRetry(() => prisma.card.upsert({
     where: { externalId: matchedCard.externalId },
     update: cardData,
     create: {
@@ -264,11 +337,11 @@ async function saveAndRespond(matchedCard: CandidatePrinting, userId: string, oc
       game: matchedCard.game,
       ...cardData,
     },
-  });
+  }));
 
   // Always refresh the stored price with what the card database returned just
   // now — a card first scanned months ago must not keep its stale price.
-  await prisma.cardPrice.upsert({
+  await dbRetry(() => prisma.cardPrice.upsert({
     where: { cardId: localCard.id },
     update: {
       marketPrice: matchedCard.price?.marketPrice || 0,
@@ -284,9 +357,9 @@ async function saveAndRespond(matchedCard: CandidatePrinting, userId: string, oc
       midPrice: matchedCard.price?.midPrice || null,
       highPrice: matchedCard.price?.highPrice || null,
     },
-  });
+  }));
 
-  const history = await prisma.scanHistory.create({
+  const history = await dbRetry(() => prisma.scanHistory.create({
     data: {
       userId,
       cardId: localCard.id,
@@ -296,7 +369,7 @@ async function saveAndRespond(matchedCard: CandidatePrinting, userId: string, oc
       ocrText: telemetryJson,
       processingTime: Date.now() - startedAt,
     },
-  });
+  }));
 
   console.log(`[Scanner] ✅ Saved: "${localCard.name}" from "${localCard.setName}" (method: ${decision.method}, confidence: ${confidencePct}%)`);
 

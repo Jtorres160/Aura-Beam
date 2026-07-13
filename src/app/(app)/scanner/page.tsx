@@ -29,6 +29,7 @@ import { smartDiag, isSmartDiagEnabled } from "@/lib/scanner/smart-diagnostics";
 import {
   SmartCaptureMachine,
   computeAverageHash,
+  DUP_HAMMING_MAX,
   SMART_TICK_MS,
   SMART_STALE_MS,
   STABILITY_DWELL_MS,
@@ -111,6 +112,9 @@ export default function ScannerPage() {
   const [state, setState] = useState<ScanState>("idle");
   const [scanResult, setScanResult] = useState<any>(null);
   const [errorMessage, setErrorMessage] = useState("");
+  // Pipeline stage the server blamed for a failed scan (Phase 5.2.5) — shown
+  // as a small caption in the error state so field reports say WHERE it broke.
+  const [errorStage, setErrorStage] = useState<string | null>(null);
   const [isAdding, setIsAdding] = useState(false);
   const [addSuccess, setAddSuccess] = useState(false);
   // Post-add archive totals (Phase 5 · Batch 2) — returned by the add routes.
@@ -129,6 +133,11 @@ export default function ScannerPage() {
   const [bulkQueue, setBulkQueue] = useState<any[]>([]);
 
   const [autoScanBusy, setAutoScanBusy] = useState(false); // only for UI spinner
+  // Why the last auto/bulk attempt didn't queue a card (Phase 5.2.5). Silent
+  // retry loops made bulk look dead; this quiet, auto-fading chip keeps the
+  // instrument honest without interrupting the loop.
+  const [autoSkipNotice, setAutoSkipNotice] = useState<{ message: string; count: number } | null>(null);
+  const autoSkipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isAutoScanningRef = useRef(false); // true lock — prevents overlapping scans
   const lastBulkAddRef = useRef<{ id: string; at: number } | null>(null); // bulk dedup window
   const autoScanIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -178,6 +187,29 @@ export default function ScannerPage() {
   }, [state, setIsActivelyScanningOrProcessing]);
 
   // ─── Camera Management ────────────────────────────────────────────────
+  // Attach the current stream to a <video> and (re)start playback. Shared by
+  // the mount-time callback ref AND mid-session restarts (Phase 5.2.5): the
+  // callback ref only fires on mount, so "Restart Camera" while scanning must
+  // re-attach explicitly or the preview freezes on the stopped old stream with
+  // cameraReady stuck false — a dead scanner until the page was left.
+  const attachStreamToVideo = useCallback((video: HTMLVideoElement) => {
+    if (!streamRef.current) return;
+    video.srcObject = streamRef.current;
+
+    const playVideo = () => {
+      video.play()
+        .then(() => {
+          console.log("[Scanner] Camera stream playing");
+        })
+        .catch((err) => {
+          console.warn("[Scanner] Failed to autoplay, retrying:", err);
+          setTimeout(playVideo, 300);
+        });
+    };
+
+    playVideo();
+  }, []);
+
   const startCamera = useCallback(async () => {
     // Pre-flight: getUserMedia only exists in a secure context (HTTPS or
     // localhost). Opening the dev server's Network URL (http://192.168.x.x)
@@ -209,6 +241,10 @@ export default function ScannerPage() {
       const mediaStream = await acquireCameraStream();
       streamRef.current = mediaStream;
       setCameraReady(false);
+      // Mid-session restart: the <video> is already mounted, so the callback
+      // ref won't fire — attach the fresh stream here. onCanPlay then re-fires
+      // and restores cameraReady.
+      if (videoRef.current) attachStreamToVideo(videoRef.current);
       setState("scanning");
     } catch (err) {
       // Surface the ACTUAL failure — a single generic message hides whether
@@ -240,7 +276,7 @@ export default function ScannerPage() {
       }
       alert(message);
     }
-  }, []);
+  }, [attachStreamToVideo]);
 
   // Callback ref: fires the instant the <video> element mounts into the DOM.
   // This avoids the race condition where AnimatePresence mode="wait" delays
@@ -249,26 +285,11 @@ export default function ScannerPage() {
     (video: HTMLVideoElement | null) => {
       // Store in the persistent ref so other code (canvas capture) can use it
       videoRef.current = video;
-
-      if (!video || !streamRef.current) return;
-
+      if (!video) return;
       // Attach the live stream to the freshly-mounted video element
-      video.srcObject = streamRef.current;
-
-      const playVideo = () => {
-        video.play()
-          .then(() => {
-            console.log("[Scanner] Camera stream playing");
-          })
-          .catch((err) => {
-            console.warn("[Scanner] Failed to autoplay, retrying:", err);
-            setTimeout(playVideo, 300);
-          });
-      };
-
-      playVideo();
+      attachStreamToVideo(video);
     },
-    [] // streamRef is a ref — stable across renders, no dependency needed
+    [attachStreamToVideo]
   );
 
   const stopCamera = useCallback(() => {
@@ -350,8 +371,23 @@ export default function ScannerPage() {
     [computeRoiForCapture]
   );
 
+  // Surface (and coalesce) one skip reason at a time; fades after a beat.
+  const reportAutoSkip = useCallback((message: string) => {
+    setAutoSkipNotice((prev) =>
+      prev && prev.message === message ? { message, count: prev.count + 1 } : { message, count: 1 }
+    );
+    if (autoSkipTimerRef.current) clearTimeout(autoSkipTimerRef.current);
+    autoSkipTimerRef.current = setTimeout(() => setAutoSkipNotice(null), 4000);
+  }, []);
+
   // ─── Scan Request ─────────────────────────────────────────────────────
-  const processScanRequest = useCallback(async (base64Image: string, isBackground: boolean = false) => {
+  // Returns true when the server actually identified a card (saved, queued,
+  // recognized-but-still-in-frame, or sent to disambiguation) and false on any
+  // failure. Smart capture commits its dedup hash only on true — a failed
+  // attempt must stay retryable (Phase 5.2.5 bulk dead-stall fix).
+  const processScanRequest = useCallback(async (base64Image: string, isBackground: boolean = false): Promise<boolean> => {
+    const requestedAt = performance.now();
+    const diagMode = isBackground ? (isBulkMode ? "bulk" : "auto") : "manual";
     try {
       const res = await fetch(`/api/scanner/scan`, {
         method: "POST",
@@ -368,14 +404,36 @@ export default function ScannerPage() {
       if (!res.ok) {
         const errJson = await res.json().catch(() => null);
         const msg = errJson?.message || "Failed to identify card.";
-        if (isBackground) {
-          console.log("[AutoScan] Background scan failed:", msg);
-          return; // silently continue auto-scanning
+        const stage = errJson?.stage || "unknown";
+        if (smartDiagEnabled) {
+          smartDiag.record({
+            event: "scan_response",
+            mode: diagMode,
+            reason: stage,
+            detail: `http ${res.status} · ${Math.round(performance.now() - requestedAt)}ms · ${msg}`,
+          });
         }
-        throw new Error(msg);
+        if (isBackground) {
+          console.log(`[AutoScan] Background scan failed [${stage}]:`, msg);
+          reportAutoSkip(msg);
+          return false; // continue auto-scanning; dedup hash must NOT commit
+        }
+        const err = new Error(msg) as Error & { stage?: string };
+        err.stage = stage;
+        throw err;
       }
-      
+
       const json = await res.json();
+
+      if (smartDiagEnabled) {
+        smartDiag.record({
+          event: "scan_response",
+          mode: diagMode,
+          detail: `http 200 · ${Math.round(performance.now() - requestedAt)}ms · ${
+            json.requiresDisambiguation ? `disambiguation (${json.candidates?.length ?? 0} candidates)` : `accepted: ${json.data?.name ?? "?"}`
+          }`,
+        });
+      }
 
       // Log exactly what the AI OCR read for debugging purposes
       if (json.ocrData) {
@@ -397,7 +455,7 @@ export default function ScannerPage() {
         }
         isAutoScanningRef.current = false;
         setState("disambiguation");
-        return;
+        return true;
       }
 
       const card = json.data;
@@ -427,15 +485,18 @@ export default function ScannerPage() {
         setScanResult(card);
         setState("result");
       }
+      return true;
 
     } catch (error: any) {
       if (!isBackground) {
         // Just set the error state, no need to print scary red console errors
         setErrorMessage(error.message || "Failed to identify card.");
+        setErrorStage(error.stage ?? null);
         setState("error");
       }
+      return false;
     }
-  }, [selectedGame, isBulkMode]);
+  }, [selectedGame, isBulkMode, reportAutoSkip, smartDiagEnabled]);
 
   // ─── Manual Scan ──────────────────────────────────────────────────────
   const captureCard = useCallback(async () => {
@@ -447,6 +508,8 @@ export default function ScannerPage() {
     const capture = await captureBestFrame(MANUAL_FRAME_COUNT, "manual");
     if (!capture.ok) {
       setErrorMessage(capture.message);
+      // Client-side stage: the frame never left the device.
+      setErrorStage(`capture:${capture.reason}`);
       setState("error");
       return;
     }
@@ -464,9 +527,11 @@ export default function ScannerPage() {
     const video = videoRef.current;
     if (!video) return;
     const engine = (liveMetricsRef.current ??= new LiveMetricsController());
-    engine.start(video);
+    // Analyse the guide-box ROI (Phase 5.2.5) so readiness judges the same
+    // pixels the capture gate will — full frame only when ROI is unavailable.
+    engine.start(video, computeRoiForCapture);
     return () => engine.stop();
-  }, [state, cameraReady]);
+  }, [state, cameraReady, computeRoiForCapture]);
 
   // ─── ROI Capture Toggle (Phase 4.5 · Commit 2, dev calibration) ───────
   // Load any persisted preference once, then mirror state → ref so capture
@@ -568,6 +633,11 @@ export default function ScannerPage() {
 
     const runCapture = async (decisionHash: AHash | null) => {
       setAutoScanBusy(true);
+      // Whether this attempt actually identified a card. Drives the dedup-hash
+      // commit in settle(): a failed attempt (rejected frame, server error, no
+      // card found) leaves dedup memory untouched so the SAME scene can retry —
+      // committing on failure was the bulk-mode dead stall (Phase 5.2.5).
+      let identified = false;
       try {
         if (SMART_DIAG) {
           console.log("[SmartCapture] → captureBestFrame() called");
@@ -587,14 +657,17 @@ export default function ScannerPage() {
         }
         if (capture.ok) {
           if (SMART_DIAG) rec("ocr_dispatch", { detail: "processScanRequest reached" });
-          await processScanRequest(capture.dataUrl, true);
+          identified = await processScanRequest(capture.dataUrl, true);
+        } else {
+          reportAutoSkip(capture.message);
         }
+        if (SMART_DIAG) rec("attempt_outcome", { detail: identified ? "identified" : "not-identified" });
       } finally {
         // Release the persistent lock BEFORE settling so a re-subscribed loop
         // can resume cleanly.
         isAutoScanningRef.current = false;
         setAutoScanBusy(false);
-        machine.settle(performance.now(), decisionHash);
+        machine.settle(performance.now(), decisionHash, identified);
       }
     };
 
@@ -616,9 +689,20 @@ export default function ScannerPage() {
       // Widened to string so the diag transition compare below isn't narrowed
       // away by the "capturing" guard above (machine.step may advance state).
       const before: string = machine.state;
+      // Hash the guide-box ROI, not the full frame — the static background
+      // otherwise dominates the 64 cells and different cards hash near-alike.
       const result = machine.step(now, ready, () =>
-        videoRef.current ? computeAverageHash(videoRef.current, hashCanvas) : null
+        videoRef.current
+          ? computeAverageHash(videoRef.current, hashCanvas, computeRoiForCapture())
+          : null
       );
+
+      // Duplicate gate fired: same card judged still in frame, capture skipped.
+      // Made visible regardless of the diag flag — silence here is what used to
+      // read as "bulk scanner died".
+      if (before === "candidate" && machine.state === "cooldown") {
+        reportAutoSkip("Card already scanned — swap in the next card");
+      }
 
       // TEMP DIAG — narrate readiness, the stability dwell, and transitions.
       if (SMART_DIAG) {
@@ -676,7 +760,10 @@ export default function ScannerPage() {
             metrics: metricsObj,
             dwellMs: before === "candidate" ? elapsed : undefined,
             requiredDwellMs: STABILITY_DWELL_MS,
-            detail: `${before} -> ${after}`,
+            detail:
+              transitionEvent === "duplicate_blocked"
+                ? `${before} -> ${after} · hamming=${machine.lastDuplicateDistance ?? "?"} (max ${DUP_HAMMING_MAX})`
+                : `${before} -> ${after}`,
           });
         }
         // (3) Dwell progress while waiting out the stability timer (~8Hz).
@@ -721,7 +808,7 @@ export default function ScannerPage() {
     };
     // smartDiagEnabled resolves once right after mount (while the scanner is
     // still idle), so including it never re-subscribes a live scanning loop.
-  }, [state, isAutoScan, cameraReady, legacyTimedAuto, smartDiagEnabled, captureBestFrame, processScanRequest]);
+  }, [state, isAutoScan, cameraReady, legacyTimedAuto, smartDiagEnabled, captureBestFrame, processScanRequest, computeRoiForCapture, reportAutoSkip, isBulkMode]);
 
   // ─── Legacy Timed Auto Scan Loop (dev A/B only) ───────────────────────
   // The original fixed-4s auto-scan. Kept behind the dev `legacyTimedAuto` flag
@@ -778,6 +865,7 @@ export default function ScannerPage() {
   const resetScan = useCallback(() => {
     setScanResult(null);
     setErrorMessage("");
+    setErrorStage(null);
     setAddSuccess(false);
     setPostAddArchive(null);
     setBulkQueue([]);
@@ -875,11 +963,17 @@ export default function ScannerPage() {
     }
   };
 
+  // Skip notices only make sense over a live viewfinder.
+  useEffect(() => {
+    if (state !== "scanning") setAutoSkipNotice(null);
+  }, [state]);
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
       streamRef.current?.getTracks().forEach((t) => t.stop());
       if (autoScanIntervalRef.current) clearInterval(autoScanIntervalRef.current);
+      if (autoSkipTimerRef.current) clearTimeout(autoSkipTimerRef.current);
     };
   }, []);
 
@@ -987,6 +1081,19 @@ export default function ScannerPage() {
                   {/* Live capture guidance (Phase 4.5 · Commit 3) — one chip,
                       isolated so live updates don't re-render this page. */}
                   <CaptureGuidance controllerRef={liveMetricsRef} />
+
+                  {/* Skip notice (Phase 5.2.5) — why the last auto/bulk attempt
+                      didn't queue a card. Quiet and self-fading; the loop keeps
+                      running. Auto modes only — manual failures use the full
+                      error state. */}
+                  {isAutoScan && autoSkipNotice && (
+                    <div className="pointer-events-none absolute left-1/2 top-14 z-10 -translate-x-1/2">
+                      <div className="flex items-center gap-1.5 rounded-full border border-white/15 bg-black/70 px-3 py-1 text-[11px] font-medium text-amber-200/90 shadow-lg backdrop-blur-sm">
+                        {autoSkipNotice.message}
+                        {autoSkipNotice.count > 1 && <span className="font-mono text-amber-200/60">×{autoSkipNotice.count}</span>}
+                      </div>
+                    </div>
+                  )}
 
                   {/* TEMPORARY dev-only live-metrics HUD (Phase 4.5 calibration). */}
                   {process.env.NODE_ENV === "development" && (
@@ -1189,7 +1296,15 @@ export default function ScannerPage() {
                   <AlertCircle className="h-8 w-8 text-destructive" />
                 </div>
                 <h2 className="font-serif text-2xl mb-2">Scan failed</h2>
-                <p className="text-sm text-muted-foreground mb-6 max-w-xs text-center">{errorMessage}</p>
+                <p className="text-sm text-muted-foreground mb-2 max-w-xs text-center">{errorMessage}</p>
+                {/* Failure stage (Phase 5.2.5) — names WHERE it failed, so a
+                    field report is actionable instead of "it failed". */}
+                {errorStage && (
+                  <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground/60 mb-6">
+                    stage: {errorStage}
+                  </p>
+                )}
+                {!errorStage && <div className="mb-4" />}
                 <Button variant="outline" className="h-11 px-8 font-medium" onClick={resetScan}>
                   <RotateCcw className="h-4 w-4 mr-2" /> Try Again
                 </Button>

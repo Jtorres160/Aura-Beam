@@ -9,21 +9,25 @@
 //   • ~8–10 Hz while scanning; nothing when the tab is hidden or scanning stops.
 //   • Reuse the analysis canvas + grayscale buffers across frames. The ONLY
 //     per-frame allocation is `getImageData`'s RGBA array — Canvas2D exposes no
-//     read-into-existing-buffer API. It is kept small (≤192px long edge) and
+//     read-into-existing-buffer API. It is kept small (≤256px long edge) and
 //     fixed-size, so GC pressure is negligible and predictable.
-//   • It measures the FULL video frame, not the guide ROI (that arrives in
-//     Commit 2). Thresholds should not be finalized against these numbers yet.
+//   • Phase 5.2.5 gate alignment: it measures the guide-box ROI (when the
+//     caller provides one) at the capture gate's ANALYSIS_DIM — the SAME
+//     content at the SAME scale as assessQuality(). Before this it measured
+//     the full frame at 192px, so a textured background could report "sharp"
+//     while the actual card failed the capture gate — the UI said "Ready to
+//     scan" while every capture was silently rejected as too blurry.
 //
 // This module does NOT touch OCR, capture encoding, or scan behavior.
 
-import { laplacianVariance } from "./capture";
+import { ANALYSIS_DIM, laplacianVariance, type CaptureRegion } from "./capture";
 
 // ─── Tunables ─────────────────────────────────────────────────────────────
 
-/** Long edge of the grayscale buffer the live loop analyses. Smaller than the
- *  one-shot capture gate's 256px because this runs continuously. Its sharpness
- *  magnitude is therefore NOT comparable to `MIN_SHARPNESS` in capture.ts. */
-export const LIVE_ANALYSIS_DIM = 192;
+/** Long edge of the grayscale buffer the live loop analyses. Matches the
+ *  one-shot capture gate's ANALYSIS_DIM so live sharpness IS comparable to
+ *  `MIN_SHARPNESS` in capture.ts (one scale, one truth). */
+export const LIVE_ANALYSIS_DIM = ANALYSIS_DIM;
 
 /** Target sample rate. Hand-steadiness doesn't need 60fps; ~10Hz is plenty and
  *  keeps mobile CPU/battery cost near zero. */
@@ -87,6 +91,9 @@ export class LiveMetricsController {
   private hasPrev = false;
 
   private video: HTMLVideoElement | null = null;
+  /** Supplies the source-pixel region to analyse (the guide-box card area).
+   *  null/undefined result → full frame, matching capture's ROI fallback. */
+  private getRoi: (() => CaptureRegion | null) | null = null;
   private running = false;
   private rafId = 0;
   private lastSampleAt = 0;
@@ -104,11 +111,14 @@ export class LiveMetricsController {
   }
 
   /** Begin sampling `video`. Idempotent: a running loop is torn down first, so
-   *  this safely re-binds after a camera restart with a new <video> element. */
-  start(video: HTMLVideoElement): void {
+   *  this safely re-binds after a camera restart with a new <video> element.
+   *  `getRoi` (Phase 5.2.5) scopes analysis to the guide-box card region so
+   *  readiness judges the same pixels the capture gate will. */
+  start(video: HTMLVideoElement, getRoi?: () => CaptureRegion | null): void {
     if (typeof window === "undefined") return; // SSR / non-DOM guard
     this.stop();
     this.video = video;
+    this.getRoi = getRoi ?? null;
     this.running = true;
     this.hasPrev = false; // fresh motion baseline
     this.lastSampleAt = 0;
@@ -128,6 +138,7 @@ export class LiveMetricsController {
       document.removeEventListener("visibilitychange", this.onVisibility);
     }
     this.video = null;
+    this.getRoi = null;
     this.hasPrev = false;
   }
 
@@ -197,14 +208,25 @@ export class LiveMetricsController {
   }
 
   private sample(video: HTMLVideoElement, now: number): void {
-    if (!this.ensureBuffers(video.videoWidth, video.videoHeight)) return;
+    // Analyse the guide-box ROI when available (degenerate regions fall back
+    // to the full frame, mirroring capture's behavior).
+    const roi = this.getRoi?.() ?? null;
+    const useRoi = !!roi && roi.sw >= 10 && roi.sh >= 10;
+    const srcW = useRoi ? roi!.sw : video.videoWidth;
+    const srcH = useRoi ? roi!.sh : video.videoHeight;
+
+    if (!this.ensureBuffers(srcW, srcH)) return;
     const ctx = this.ctx!;
     const w = this.bufW;
     const h = this.bufH;
     const gray = this.gray!;
     const prev = this.prev!;
 
-    ctx.drawImage(video, 0, 0, w, h);
+    if (useRoi) {
+      ctx.drawImage(video, roi!.sx, roi!.sy, roi!.sw, roi!.sh, 0, 0, w, h);
+    } else {
+      ctx.drawImage(video, 0, 0, w, h);
+    }
     // The single unavoidable per-frame allocation (fixed, tiny).
     const { data } = ctx.getImageData(0, 0, w, h);
 

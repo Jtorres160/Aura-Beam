@@ -8,11 +8,15 @@
 // guidance) renders its message, and Commit 4 (smart auto-capture) will gate on
 // the same result — so guidance and auto-capture can never disagree.
 //
-// Thresholds here are DELIBERATELY separate from capture.ts's assessQuality()
-// gate: those run at 256px on the final (possibly ROI-cropped) frame, whereas
-// live metrics run at 192px on the FULL frame — different scales, not
-// interchangeable. Tune these against the dev HUD.
+// Phase 5.2.5 gate alignment: live metrics now measure the guide-box ROI at
+// capture.ts's ANALYSIS_DIM, i.e. the SAME content at the SAME scale as the
+// assessQuality() gate. The sharpness floor below IS the gate's MIN_SHARPNESS
+// (one constant), so "Ready to scan" can no longer coexist with a silent
+// "too-blurry" capture rejection of the same still scene. Brightness stays
+// deliberately STRICTER here than the gate (45–232 vs 32–236): ready implies
+// gate-passable, never the reverse.
 
+import { MIN_SHARPNESS } from "./capture";
 import type { LiveMetrics } from "./live-metrics";
 
 // ─── Thresholds (named + easy to tune) ────────────────────────────────────
@@ -26,10 +30,9 @@ export interface ReadinessThresholds {
   maxGlareFraction: number;
   /** Above this mean-abs-luma-diff (0–255) the camera/card is still moving. */
   maxMotion: number;
-  /** Below this Laplacian variance (192px scale) the frame is grossly blurry.
-   *  Kept LOW on purpose — full-frame sharpness is the weakest signal (a sharp
-   *  background can mask a soft card), so it only flags obvious blur and never
-   *  dominates guidance. */
+  /** Below this Laplacian variance (ROI content @ capture ANALYSIS_DIM) the
+   *  frame would fail the capture gate as blurry. Shares capture.ts's
+   *  MIN_SHARPNESS so guidance and the gate agree by construction. */
   minSharpness: number;
 }
 
@@ -37,21 +40,21 @@ export interface ReadinessThresholds {
 export const LIVE_THRESHOLDS: ReadinessThresholds = {
   minBrightness: 45,
   maxBrightness: 232,
-  maxGlareFraction: 0.06, // ~6% of the frame blown to specular white
-  // Mean |Δluma| (0–255) between consecutive ~10Hz full-frame samples.
-  // Calibrated for HANDHELD scanning, not a stationary card. On detailed card
-  // art, temporal sensor noise alone reads ~1.5–4.5 and natural hand micro-
-  // tremor pushes a "held reasonably still" card to ~3–8, while deliberately
-  // sweeping a card into frame reads ~10–40+. The old 3.5 sat inside the
-  // noise+tremor band, so a steady handheld hold rarely crossed it and the
-  // guidance chip stayed on "Hold steady" — the scanner felt too slow to arm.
-  // 7.0 admits natural tremor while still rejecting real motion. This is SAFE
-  // for quality: readiness only gates the chip and auto-capture ARMING; the
-  // capture pipeline still samples N frames, keeps the sharpest, and rejects a
-  // blurry result (assessQuality) before any OCR — so a slightly-moving frame
-  // that passes here can never degrade the uploaded image or recognition.
-  maxMotion: 7.0,
-  minSharpness: 12,
+  maxGlareFraction: 0.06, // ~6% of the CARD region blown to specular white
+  // Mean |Δluma| (0–255) between consecutive ~10Hz samples of the guide-box
+  // ROI. Calibrated for HANDHELD scanning, not a stationary card. On the old
+  // FULL-frame measurement, sensor noise read ~1.5–4.5 and steady handheld
+  // tremor ~3–8, and 7.0 admitted tremor while rejecting real motion. The ROI
+  // measurement (Phase 5.2.5) removes the static background that previously
+  // DILUTED the diff, so the same physical tremor reads roughly 1.5–2× higher;
+  // 10.0 keeps the identical physical behavior. Validate via ?diag=1 exports.
+  // This is SAFE for quality: readiness only gates the chip and auto-capture
+  // ARMING; the capture pipeline still samples N frames, keeps the sharpest,
+  // and rejects a blurry result (assessQuality) before any OCR.
+  maxMotion: 10.0,
+  // THE capture-gate floor — not a separate live heuristic. Ready ⇒ the same
+  // pixels pass assessQuality's sharpness check.
+  minSharpness: MIN_SHARPNESS,
 };
 
 // ─── Readiness state ──────────────────────────────────────────────────────
