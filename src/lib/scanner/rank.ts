@@ -3,14 +3,14 @@
 // card. Order matters: deterministic evidence (printed set/CN) beats vision, and
 // vision is only consulted where it CAN work — between different illustrations.
 
-import { collectorNumberKey, type CandidatePrinting } from "@/lib/scanner/evidence";
+import { assessArtworkBoundary, collectorNumberKey, type CandidatePrinting } from "@/lib/scanner/evidence";
 import {
   type Decision,
   acceptDecision,
   disambiguateDecision,
   groupByIllustration,
 } from "@/lib/scanner/decision";
-import { type LearningRuleInfo, pickArtGroupByVision } from "@/lib/scanner/visual";
+import { type LearningRuleInfo, pickArtGroupByVision, type VisionResult } from "@/lib/scanner/visual";
 
 // ─── Max candidate images sent to AI for visual comparison ────────────────
 // Max images to send to the vision model (detail: low = 85 tokens each, 150 = ~12,750 tokens, $0.0019)
@@ -28,6 +28,9 @@ export async function decideAmongPrintings(
   ocr: { setCode: string; collectorNumber: string },
   learningRule: LearningRuleInfo | null,
 ): Promise<Decision> {
+  // Assess artwork boundary upfront — a pure property of the game/source.
+  const artworkBoundary = assessArtworkBoundary(printings[0].game);
+
   // Evidence narrowing: an OCR'd set code (plus collector number when read)
   // that pins exactly one printing decides without any artwork comparison.
   if (ocr.setCode) {
@@ -48,7 +51,7 @@ export async function decideAmongPrintings(
       // 0.85 does not). Set code alone (no collector number) is weaker printing
       // evidence and stays "single-art-group".
       const method = cleanCn ? "set-cn-verified" : "single-art-group";
-      return acceptDecision(narrowed[0], method);
+      return { ...acceptDecision(narrowed[0], method), artworkBoundary };
     }
   }
 
@@ -57,14 +60,14 @@ export async function decideAmongPrintings(
   const groups = Array.from(groupByIllustration(printings).values());
   if (groups.length === 1) {
     console.log(`[Scanner] All ${printings.length} printings share one illustration — vision cannot distinguish them.`);
-    return disambiguateDecision(printings);
+    return { ...disambiguateDecision(printings), artworkBoundary };
   }
 
   // Too many distinct artworks for a vision pick to be trustworthy or fast —
   // skip the model call and let the user choose from the grid straight away.
   if (groups.length > VISION_MAX_ART_GROUPS) {
     console.log(`[Scanner] ${groups.length} distinct artworks — beyond reliable vision range; asking the user.`);
-    return disambiguateDecision(printings);
+    return { ...disambiguateDecision(printings), artworkBoundary };
   }
 
   // Vision compares ONE representative image per art group, not every printing.
@@ -75,18 +78,23 @@ export async function decideAmongPrintings(
 
   if (comparable.length < 2) {
     // Not enough candidate images to compare anything
-    return disambiguateDecision(printings);
+    return { ...disambiguateDecision(printings), artworkBoundary };
   }
 
   console.log(`[Scanner] Visual comparison across ${comparable.length} art groups (${printings.length} printings)...`);
-  const pickedIndex = await pickArtGroupByVision(scannedImageUrl, comparable.map((c) => c.rep), learningRule);
+  const visionResult = await pickArtGroupByVision(scannedImageUrl, comparable.map((c) => c.rep), learningRule);
 
-  if (pickedIndex === null) {
+  if (visionResult === null || visionResult.index === -1) {
     console.log(`[Scanner] AI is uncertain — requesting user disambiguation.`);
-    return disambiguateDecision(printings);
+    return { ...disambiguateDecision(printings), artworkBoundary };
   }
 
-  const picked = comparable[pickedIndex];
+  const picked = comparable[visionResult.index];
+
+  // Calculate margin: separation between top and second-best candidate score.
+  // With only one candidate, margin is 1 (no competition).
+  const sortedScores = [...visionResult.scores].sort((a, b) => b - a);
+  const margin = sortedScores.length > 1 ? sortedScores[0] - sortedScores[1] : 1;
 
   // Surface vision's pick first, then every other printing as an alternative,
   // so a below-threshold match never dead-ends on a single un-overridable card.
@@ -98,12 +106,12 @@ export async function decideAmongPrintings(
     // Accept semantics stay (so a high-enough confidence would auto-save), but
     // carry the alternatives + best-match marker for when the gate demotes it.
     const decision = acceptDecision(picked.group[0], "art-group-vision");
-    return { ...decision, candidates: ordered, bestMatchExternalId: picked.group[0].externalId };
+    return { ...decision, candidates: ordered, bestMatchExternalId: picked.group[0].externalId, artworkBoundary, decisionMargin: margin };
   }
 
   // The matched artwork is shared by several printings (e.g. a set card and
   // its promo). Artwork can go no further — the user picks within the group.
   // No single member is "best" (identical art), so we don't mark one.
   console.log(`[Scanner] Visual match is an art group of ${picked.group.length} identical-art printings — user must pick.`);
-  return disambiguateDecision(ordered);
+  return { ...disambiguateDecision(ordered), artworkBoundary, decisionMargin: margin };
 }

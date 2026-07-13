@@ -21,14 +21,20 @@ export interface LearningRuleInfo {
   content: string;
 }
 
+export interface VisionResult {
+  index: number;
+  scores: number[];
+}
+
 // ─── Vision: pick the matching art group ───────────────────────────────────
-// Returns the index of the matching representative, or null when the model is
-// uncertain, answers out of range, or the call fails.
+// Returns the index and confidence scores for each candidate representative.
+// Scores are in [0, 1] and represent match confidence. Returns null when
+// uncertain, out of range, or the call fails.
 export async function pickArtGroupByVision(
   scannedImageUrl: string,
   representatives: CandidatePrinting[],
   learningRule: LearningRuleInfo | null,
-): Promise<number | null> {
+): Promise<VisionResult | null> {
   try {
     const candidateImages = representatives.map((p) => ({
       type: "image_url" as const,
@@ -40,10 +46,20 @@ export async function pickArtGroupByVision(
       messages: [
         {
           role: "system",
-          content: `You are an expert trading card artwork identifier. The user has scanned a physical card (first image). You are given ${representatives.length} candidate card images (images 2 through ${representatives.length + 1}). Compare the artwork, border style, foil pattern, and card layout of the scanned card against each candidate. Respond with ONLY a single integer:
-- The 0-based index of the candidate that CLEARLY AND EXACTLY matches the scanned card.
-- Return -1 if NONE of the candidate images match the scanned card perfectly.
-- Return -1 if you are not confident or if multiple candidates look identical.${
+          content: `You are an expert trading card artwork identifier. The user has scanned a physical card (first image). You are given ${representatives.length} candidate card images (images 2 through ${representatives.length + 1}). Compare the artwork, border style, foil pattern, and card layout of the scanned card against each candidate.
+
+Respond with ONLY valid JSON in this format:
+{"index": <number>, "scores": [<confidence>, <confidence>, ...]}
+
+Where:
+- "index" is the 0-based index of the candidate that BEST matches (or -1 if none match)
+- "scores" is an array with one confidence value [0.0-1.0] per candidate
+- Confidence 1.0 means EXACTLY matches; 0.9+ means very close match
+- Confidence 0.1-0.4 means possible but uncertain match
+- Confidence 0.0-0.1 means does not match
+
+Example for 3 candidates where #0 is the clear winner:
+{"index": 0, "scores": [0.95, 0.25, 0.15]}${
   learningRule?.ruleType === "HINT" ? `\n\nIMPORTANT HINT from past scans: ${learningRule.content}` : ""
 }`
         },
@@ -58,14 +74,22 @@ export async function pickArtGroupByVision(
           ]
         }
       ],
-      max_tokens: 5,
+      max_tokens: 100,
       temperature: 0.0,
     }, { timeout: VISION_TIMEOUT_MS, maxRetries: 1 });
 
-    const raw = (visualResponse.choices[0]?.message?.content || "-1").trim();
-    const parsed = parseInt(raw, 10);
-    if (!isNaN(parsed) && parsed >= 0 && parsed < representatives.length) {
-      return parsed;
+    const raw = (visualResponse.choices[0]?.message?.content || "").trim();
+    const parsed = JSON.parse(raw);
+
+    if (
+      typeof parsed.index === "number" &&
+      Array.isArray(parsed.scores) &&
+      parsed.scores.length === representatives.length &&
+      parsed.scores.every((s: any) => typeof s === "number" && s >= 0 && s <= 1)
+    ) {
+      if (parsed.index === -1 || (parsed.index >= 0 && parsed.index < representatives.length)) {
+        return parsed as VisionResult;
+      }
     }
     return null;
   } catch (visualErr: any) {

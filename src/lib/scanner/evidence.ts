@@ -66,6 +66,61 @@ export function reading<T>(value: T, confidence: Confidence, source: EvidenceSou
   return { value, confidence, source };
 }
 
+// ─── Artwork Boundary (Phase 5.5) ──────────────────────────────────────────
+// A decision constraint, not evidence. Answers: "can the system know artwork
+// deterministically from the data source?" Used by gateDecision to determine
+// whether art-group-vision matches with narrow margins require user selection.
+// Does NOT penalize any game; only gates decisions when artwork identity is
+// unavailable AND margin is narrow.
+
+export type ArtworkIdentitySource = "illustration-id" | "card-image-id" | "none";
+export type ArtworkConfidenceLevel = "deterministic" | "uncertain";
+
+export interface ArtworkBoundary {
+  /** Can this source provide deterministic artwork identity? */
+  hasDeterministicArtworkId: boolean;
+
+  /** Should narrow-margin art-group-vision matches require user selection? */
+  requiresUserSelectionWhenArtworkUncertain: boolean;
+
+  /** Which field/mechanism provides (or lacks) artwork identity. */
+  artworkIdentitySource: ArtworkIdentitySource;
+
+  /** Certainty level of artwork identity for this source. */
+  artworkConfidence: ArtworkConfidenceLevel;
+}
+
+/** Assess artwork boundary for a given game.
+ *  A pure, deterministic function of the game — not dependent on OCR or any
+ *  extracted evidence. Describes what the data source CAN provide. */
+export function assessArtworkBoundary(game: GameId): ArtworkBoundary {
+  switch (game) {
+    case "MTG":
+      return {
+        hasDeterministicArtworkId: true,
+        requiresUserSelectionWhenArtworkUncertain: false,
+        artworkIdentitySource: "illustration-id",
+        artworkConfidence: "deterministic",
+      };
+
+    case "YUGIOH":
+      return {
+        hasDeterministicArtworkId: true,
+        requiresUserSelectionWhenArtworkUncertain: false,
+        artworkIdentitySource: "card-image-id",
+        artworkConfidence: "deterministic",
+      };
+
+    case "POKEMON":
+      return {
+        hasDeterministicArtworkId: false,
+        requiresUserSelectionWhenArtworkUncertain: true,
+        artworkIdentitySource: "none",
+        artworkConfidence: "uncertain",
+      };
+  }
+}
+
 // ─── Set/CN sensor trust (Phase 3) ──────────────────────────────────────────
 // Base belief in each sensor's set-code / collector-number reading, BEFORE the
 // reconciler weighs them. The dedicated strip pass reads that tiny bottom-edge

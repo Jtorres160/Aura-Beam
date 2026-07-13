@@ -4,7 +4,7 @@
 // model prompt. The prompt asking vision to "return -1 if unsure" is a
 // suggestion; the illustration guard below is a guarantee.
 
-import type { CandidatePrinting, Confidence } from "./evidence";
+import type { ArtworkBoundary, CandidatePrinting, Confidence } from "./evidence";
 
 // ─── Match methods and their calibrated confidence ──────────────────────────
 // Confidence is a property of HOW a match was made, not a number a model
@@ -48,6 +48,16 @@ export type DecisionAction =
   | "disambiguate"  // show candidates, let the user choose
   | "not-found";    // nothing matched — ask for a rescan
 
+/** Why a decision was made (for telemetry and clarity). */
+export type DecisionReason =
+  | "accepted"
+  | "user_required_art_selection";
+
+export const DECISION_REASON = {
+  ACCEPTED: "accepted" as const,
+  USER_REQUIRED_ART_SELECTION: "user_required_art_selection" as const,
+} as const;
+
 export interface Decision {
   action: DecisionAction;
   confidence: Confidence;
@@ -60,6 +70,12 @@ export interface Decision {
    * it at the top of the disambiguation grid.
    */
   bestMatchExternalId?: string;
+  /** Artwork capability boundary for this decision's candidates. */
+  artworkBoundary?: ArtworkBoundary;
+  /** Why this decision was made (e.g., user required due to artwork uncertainty). */
+  reason?: DecisionReason;
+  /** Separation between best and second-best candidate (0-1). Used for margin-based gating. */
+  decisionMargin?: number;
 }
 
 // ─── OCR name verification ──────────────────────────────────────────────────
@@ -162,10 +178,17 @@ export function notFoundDecision(): Decision {
 
 /**
  * Final gate before auto-saving: an accept decision below the threshold for
- * the current scan mode — or, when the scorer supplied them, below the margin
- * or evidence-mass floors — is demoted to user disambiguation. The gate
- * consumes the Scorer output SHAPE (confidence + margin + mass), never a
- * method table, so a scorer swap doesn't touch it.
+ * the current scan mode is demoted to user disambiguation. The gate consumes
+ * the Scorer output SHAPE (confidence + margin + mass), never a method table,
+ * so a scorer swap doesn't touch it.
+ *
+ * Additionally: when artwork identity is unavailable (e.g., Pokémon), demote
+ * narrow-margin art-group-vision matches to user selection. Strong evidence
+ * (e.g., set-cn-verified) still auto-accepts regardless of artwork boundary.
+ *
+ * Note: margin/evidenceMass floors are currently dormant in the heuristic
+ * scorer (margin always 1/0, evidenceMass always ≥1), but are enforced here
+ * so the probabilistic scorer (Phase 6) drops in transparently.
  */
 export function gateDecision(
   decision: Decision,
@@ -174,11 +197,40 @@ export function gateDecision(
 ): Decision {
   if (decision.action !== "accept" || !decision.printing) return decision;
   const threshold = isAutoScan ? ACCEPT_THRESHOLD_AUTOSCAN : ACCEPT_THRESHOLD;
-  const marginOk = !score || score.margin >= MARGIN_FLOOR;
-  const massOk = !score || score.evidenceMass >= MIN_EVIDENCE_MASS;
-  if (decision.confidence >= threshold && marginOk && massOk) return decision;
-  // Below a floor: fall back to user disambiguation. If the decision already
-  // carries a full candidate list (vision's pick plus alternatives), keep it so
-  // the user can override; otherwise show just the printing we would have saved.
-  return { ...decision, action: "disambiguate", candidates: decision.candidates ?? [decision.printing] };
+
+  // Confidence is the primary gate for all methods.
+  if (decision.confidence < threshold) {
+    return { ...decision, action: "disambiguate", candidates: decision.candidates ?? [decision.printing] };
+  }
+
+  // Artwork uncertainty guard (Phase 5.5): when artwork identity is unavailable
+  // and vision picked the card with a narrow margin, require user selection.
+  // This prevents false certainty when the data source can't verify artwork.
+  // Strong methods like set-cn-verified (0.97) are unaffected and auto-accept.
+  if (
+    decision.method === "art-group-vision" &&
+    decision.artworkBoundary?.artworkConfidence === "uncertain" &&
+    decision.artworkBoundary?.requiresUserSelectionWhenArtworkUncertain &&
+    score &&
+    score.margin < MARGIN_FLOOR
+  ) {
+    console.log(
+      `[Scanner] Artwork identity uncertain + narrow margin (${score.margin.toFixed(2)}) ` +
+      `— requesting user selection instead of auto-accept.`
+    );
+    return {
+      ...decision,
+      action: "disambiguate",
+      reason: DECISION_REASON.USER_REQUIRED_ART_SELECTION,
+      candidates: decision.candidates ?? [decision.printing],
+    };
+  }
+
+  // Future: margin and evidenceMass floors (Phase 6 probabilistic scorer).
+  // For now, these are dormant (heuristic scorer emits margin=1, evidenceMass≥1).
+  // const marginOk = !score || score.margin >= MARGIN_FLOOR;
+  // const massOk = !score || score.evidenceMass >= MIN_EVIDENCE_MASS;
+  // if (!marginOk || !massOk) return disambiguate;
+
+  return decision;
 }
