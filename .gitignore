@@ -20,6 +20,9 @@
 # production
 /build
 
+# generated tools
+graphify-out/
+
 # misc
 .DS_Store
 *.pem
