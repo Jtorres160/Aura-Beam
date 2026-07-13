@@ -1,7 +1,28 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/auth";
-import { getPokemonCardById, formatPokemonCard } from "@/lib/services/pokemon";
+import { fetchPrintingById } from "@/lib/scanner/candidates";
+import type { CandidatePrinting } from "@/lib/scanner/evidence";
+
+// Games we can authoritatively re-fetch a printing for. Used only as an
+// ordered fallback when the client didn't tell us which game the card is —
+// e.g. a cached client deployed before `game` was sent with the request.
+const SUPPORTED_GAMES = ["MTG", "POKEMON", "YUGIOH"] as const;
+
+// Resolve an external card reference to a normalized printing WITHOUT assuming
+// a game. If the caller named the game we go straight to its source; otherwise
+// we try each source in turn (reusing the same game-aware fetcher the scanner's
+// save-selection path uses — no duplicated per-game fetch logic here).
+async function resolvePrinting(externalId: string, game?: string): Promise<CandidatePrinting | null> {
+  if (game) {
+    return await fetchPrintingById(game, externalId);
+  }
+  for (const g of SUPPORTED_GAMES) {
+    const printing = await fetchPrintingById(g, externalId);
+    if (printing) return printing;
+  }
+  return null;
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -12,7 +33,9 @@ export async function POST(req: NextRequest) {
     const userId = session.user.id;
 
     const body = await req.json();
-    const { cardId } = body;
+    const cardId: string | undefined = body?.cardId;
+    // Optional — lets us skip straight to the right source instead of probing.
+    const game: string | undefined = typeof body?.game === "string" ? body.game : undefined;
 
     if (!cardId) {
       return NextResponse.json({ success: false, message: "Card ID is required" }, { status: 400 });
@@ -32,7 +55,10 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // 2. Verify card exists locally OR fetch and insert from API
+    // 2. Verify card exists locally OR fetch and insert from the card's own
+    // source database. The lookup is game-agnostic (by local id OR externalId);
+    // the external fetch is game-aware via fetchPrintingById, so an MTG or
+    // Yu-Gi-Oh card is never mistakenly looked up against the Pokémon API.
     let card = await prisma.card.findFirst({
       where: {
         OR: [{ id: cardId }, { externalId: cardId }],
@@ -40,23 +66,20 @@ export async function POST(req: NextRequest) {
     });
 
     if (!card) {
-      // It's a live API card, let's fetch it and insert it locally!
-      // (Assume Pokemon for now based on original logic, but ideally we check prefix)
-      const externalCard = await getPokemonCardById(cardId);
-      if (!externalCard) {
+      const printing = await resolvePrinting(cardId, game);
+      if (!printing) {
         return NextResponse.json({ success: false, message: "Card not found in local DB or external API" }, { status: 404 });
       }
 
-      const formatted = formatPokemonCard(externalCard);
       card = await prisma.card.create({
         data: {
-          externalId: formatted.externalId,
-          name: formatted.name,
-          game: formatted.game,
-          setName: formatted.setName,
-          rarity: formatted.rarity,
-          imageUrl: formatted.imageUrl,
-          thumbnailUrl: formatted.thumbnailUrl,
+          externalId: printing.externalId,
+          name: printing.name,
+          game: printing.game,
+          setName: printing.setName,
+          rarity: printing.rarity,
+          imageUrl: printing.imageUrl,
+          thumbnailUrl: printing.thumbnailUrl,
         },
       });
 
@@ -64,7 +87,7 @@ export async function POST(req: NextRequest) {
       await prisma.cardPrice.create({
         data: {
           cardId: card.id,
-          marketPrice: formatted.price.marketPrice,
+          marketPrice: printing.price?.marketPrice ?? 0,
         },
       });
     }
