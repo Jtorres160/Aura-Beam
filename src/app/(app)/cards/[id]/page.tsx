@@ -185,23 +185,13 @@ export default function CardDetailsPage() {
             <h3 className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted-foreground mb-4 flex items-center gap-2">
               <TrendingUp className="h-3.5 w-3.5 text-brass" /> Market value
             </h3>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <div className="p-4 rounded-lg border border-brass/40 bg-card flex flex-col items-center justify-center">
-                <p className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Market</p>
-                <p className="font-mono text-xl">${(prices.marketPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
-              </div>
-              <div className="p-4 rounded-lg border border-border bg-card flex flex-col items-center justify-center">
-                <p className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Low</p>
-                <p className="font-mono text-lg">${(prices.lowPrice ? prices.lowPrice : prices.marketPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
-              </div>
-              <div className="p-4 rounded-lg border border-border bg-card flex flex-col items-center justify-center">
-                <p className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Mid</p>
-                <p className="font-mono text-lg">${(prices.midPrice ? prices.midPrice : prices.marketPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
-              </div>
-              <div className="p-4 rounded-lg border border-border bg-card flex flex-col items-center justify-center">
-                <p className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground mb-1">High</p>
-                <p className="font-mono text-lg">${(prices.highPrice ? prices.highPrice : prices.marketPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
-              </div>
+            {/* Our price sources return a single market value per printing;
+                low/mid/high tiers aren't captured, so showing them would only
+                repeat the market figure four times and imply a precision we
+                don't have. One truthful number instead. */}
+            <div className="p-5 rounded-lg border border-brass/40 bg-card flex items-baseline justify-between gap-3">
+              <p className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground">Market</p>
+              <p className="font-mono text-2xl">${(prices.marketPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
             </div>
           </div>
 

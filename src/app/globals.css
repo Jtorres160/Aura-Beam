@@ -349,6 +349,29 @@
   padding-bottom: max(16px, env(safe-area-inset-bottom));
 }
 
+/* Top safe-area padding for the mobile scroll region. With viewport-fit=cover
+   the app shell extends under the notch / Dynamic Island; this inset keeps the
+   first row of content (page headers, the scanner viewfinder) clear of it.
+   Resolves to 0 on non-notched devices and desktop. */
+.safe-area-top {
+  padding-top: env(safe-area-inset-top);
+}
+
+/* Bottom clearance for the mobile scroll region so its LAST row of content sits
+   fully above the fixed bottom nav. The nav is h-16 (4rem) plus its own
+   safe-area-bottom padding; matching that here (4rem + the home-indicator inset)
+   is what lets long result/detail pages scroll completely into view instead of
+   ending underneath the nav. */
+.pb-mobile-nav {
+  padding-bottom: calc(4rem + env(safe-area-inset-bottom));
+}
+
+/* Home-indicator-only bottom clearance — used while the bottom nav is hidden
+   (active scanning), so the camera controls still clear the gesture bar. */
+.pb-safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
 /* Custom scrollbar */
 .custom-scrollbar::-webkit-scrollbar {
   width: 6px;

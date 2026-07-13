@@ -142,7 +142,17 @@ function AppLayoutInner({ children }: { children: React.ReactNode }) {
 
       {/* Main content */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-        <main className="flex-1 overflow-y-auto custom-scrollbar pb-20 md:pb-0">
+        <main
+          className={cn(
+            // safe-area-top clears the notch / Dynamic Island on iPhone (0 on
+            // desktop). The bottom clearance depends on whether the fixed mobile
+            // nav is showing: full nav height + inset normally so long pages
+            // (scan result, card detail) scroll clear of it; just the
+            // home-indicator inset while scanning, when the nav is hidden.
+            "flex-1 overflow-y-auto custom-scrollbar safe-area-top md:pt-0 md:pb-0",
+            isActivelyScanningOrProcessing ? "pb-safe-bottom" : "pb-mobile-nav"
+          )}
+        >
           {children}
         </main>
 
