@@ -920,9 +920,15 @@ export default function ScannerPage() {
             
             {/* ── IDLE STATE ── */}
             {state === "idle" && (
-              <motion.div key="idle" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }} className="flex flex-col items-center justify-center py-12">
+              <motion.div key="idle" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }} className="flex-1 min-h-0 overflow-y-auto no-scrollbar">
+                {/* min-h-full centers this intro when it fits and lets it scroll
+                    WITHIN this bounded region (which sits above the bottom nav)
+                    on very short viewports — so the "Open Camera" button is
+                    always reachable without dragging the whole page, which also
+                    avoids the mobile-Safari toolbar collapse/relayout on release. */}
+                <div className="min-h-full flex flex-col items-center justify-center py-6">
                 {/* Empty archive slot — the card is the object being captured */}
-                <div className="card-frame w-36 sm:w-40 border border-border bg-card shadow-[0_16px_32px_-24px_rgba(19,18,16,0.5)] mb-6 relative">
+                <div className="card-frame w-32 sm:w-40 border border-border bg-card shadow-[0_16px_32px_-24px_rgba(19,18,16,0.5)] mb-5 relative">
                   <div className="absolute inset-2 rounded-[inherit] border border-dashed border-border flex flex-col items-center justify-center gap-3">
                     <Camera className="h-7 w-7 text-muted-foreground" />
                     <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Empty slot</span>
@@ -930,7 +936,7 @@ export default function ScannerPage() {
                 </div>
                 <h2 className="font-serif text-2xl mb-1">Ready to scan</h2>
                 <p className="text-sm text-muted-foreground">Place a card in the viewfinder to identify it.</p>
-                <div className="flex flex-wrap items-center justify-center gap-2 mb-8 mt-5">
+                <div className="flex flex-wrap items-center justify-center gap-2 mb-6 mt-4">
                   {["All", "Pokemon", "MTG", "Yugioh"].map((g) => {
                     const label = g === "Pokemon" ? "Pokémon" : g === "MTG" ? "Magic (MTG)" : g === "Yugioh" ? "Yu-Gi-Oh!" : g;
                     const isActive = selectedGame === g;
@@ -955,6 +961,7 @@ export default function ScannerPage() {
                 <Button onClick={startCamera} className="h-12 px-8 font-medium text-base w-full max-w-xs">
                   <Camera className="h-5 w-5 mr-2" /> Open Camera
                 </Button>
+                </div>
               </motion.div>
             )}
 

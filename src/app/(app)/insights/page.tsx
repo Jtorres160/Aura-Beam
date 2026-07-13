@@ -22,13 +22,22 @@ function timeAgo(dateString: string) {
 }
 
 export default function InsightsPage() {
-  const { data: session } = useSession();
+  // Key on NextAuth's `status` readiness signal, not the ad-hoc
+  // session.accessToken field (regenerated every session fetch, absent on some
+  // client-side back-navigations) — the old guard skipped this fetch and left
+  // the dashboard showing $0 / 0 cards. The API authenticates via the cookie.
+  const { status } = useSession();
   const [dashboardData, setDashboardData] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    if (!session?.user?.id || !(session as any).accessToken) return;
+    if (status === "loading") return;
+    if (status !== "authenticated") {
+      setIsLoading(false);
+      return;
+    }
 
+    setIsLoading(true);
     fetch(`/api/dashboard`)
       .then((res) => res.json())
       .then((json) => {
@@ -38,7 +47,7 @@ export default function InsightsPage() {
       })
       .catch((err) => console.error("Failed to fetch insights:", err))
       .finally(() => setIsLoading(false));
-  }, [session]);
+  }, [status]);
 
   if (isLoading) {
     return (

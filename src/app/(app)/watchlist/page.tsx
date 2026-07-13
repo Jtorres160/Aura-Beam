@@ -18,14 +18,22 @@ const gameColors: Record<string, string> = {
 };
 
 export default function WatchlistPage() {
-  const { data: session } = useSession();
+  const { data: session, status } = useSession();
   const [watchlist, setWatchlist] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [removingId, setRemovingId] = useState<string | null>(null);
 
+  // Key on NextAuth's `status`, not the ad-hoc session.accessToken field, which
+  // can be absent on a client-side back-navigation and would skip this fetch
+  // (leaving an empty watchlist). The API authenticates via the session cookie.
   useEffect(() => {
-    if (!session?.user?.id || !(session as any).accessToken) return;
-    
+    if (status === "loading") return;
+    if (status !== "authenticated") {
+      setIsLoading(false);
+      return;
+    }
+
+    setIsLoading(true);
     fetch(`/api/watchlist`)
       .then(res => res.json())
       .then(json => {
@@ -35,10 +43,10 @@ export default function WatchlistPage() {
       })
       .catch(err => console.error(err))
       .finally(() => setIsLoading(false));
-  }, [session]);
+  }, [status]);
 
   const handleRemove = async (cardId: string) => {
-    if (!session?.user?.id || !(session as any).accessToken) return;
+    if (!session?.user?.id) return;
     setRemovingId(cardId);
     try {
       const res = await fetch(`/api/watchlist`, {

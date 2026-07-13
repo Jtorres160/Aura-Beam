@@ -32,8 +32,8 @@ export default function SearchPage() {
   const handleAddToWatchlist = async (e: React.MouseEvent, cardId: string) => {
     e.preventDefault();
     e.stopPropagation();
-    if (!session?.user?.id || !(session as any).accessToken) return;
-    
+    if (!session?.user?.id) return;
+
     setAddingToWatchlist(cardId);
     try {
       const res = await fetch(`/api/watchlist/add`, {

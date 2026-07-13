@@ -11,15 +11,26 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export default function CollectionPage() {
-  const { data: session } = useSession();
+  // `status` ("loading" | "authenticated" | "unauthenticated") is NextAuth's
+  // reliable readiness signal. We key on it instead of the ad-hoc
+  // session.accessToken field, which is regenerated on every /api/auth/session
+  // call and can be absent on a client-side back-navigation — the old guard
+  // then skipped the fetch and the page rendered its empty "0 cards" state.
+  // The API authenticates via the server session cookie, so no token is needed.
+  const { status } = useSession();
   const [view, setView] = useState<"grid" | "list">("grid");
   const [search, setSearch] = useState("");
   const [collection, setCollection] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    if (!session?.user?.id || !(session as any).accessToken) return;
-    
+    if (status === "loading") return;
+    if (status !== "authenticated") {
+      setIsLoading(false);
+      return;
+    }
+
+    setIsLoading(true);
     fetch(`/api/collections`)
       .then((res) => res.json())
       .then((json) => {
@@ -42,7 +53,7 @@ export default function CollectionPage() {
       })
       .catch((err) => console.error("Failed to fetch collection:", err))
       .finally(() => setIsLoading(false));
-  }, [session]);
+  }, [status]);
 
   const filtered = collection.filter((c) =>
     c.name.toLowerCase().includes(search.toLowerCase()) ||

@@ -9,28 +9,28 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 export default function NotificationsPage() {
-  const { data: session } = useSession();
+  // Key on NextAuth's `status` readiness signal rather than the ad-hoc
+  // session.accessToken field, which can be absent on a client-side
+  // back-navigation and would skip the fetch. API auth uses the session cookie.
+  const { status } = useSession();
   const [notifications, setNotifications] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    if (!session?.user?.id || !(session as any).accessToken) return;
-    fetchNotifications();
-  }, [session]);
-
-  const fetchNotifications = async () => {
-    try {
-      const res = await fetch("/api/notifications");
-      const json = await res.json();
-      if (json.success) {
-        setNotifications(json.data);
-      }
-    } catch (err) {
-      console.error(err);
-    } finally {
+    if (status === "loading") return;
+    if (status !== "authenticated") {
       setIsLoading(false);
+      return;
     }
-  };
+    setIsLoading(true);
+    fetch("/api/notifications")
+      .then((res) => res.json())
+      .then((json) => {
+        if (json.success) setNotifications(json.data);
+      })
+      .catch((err) => console.error(err))
+      .finally(() => setIsLoading(false));
+  }, [status]);
 
   const markAsRead = async (id?: string) => {
     try {
