@@ -38,6 +38,8 @@ import {
 import { CaptureGuidance } from "./capture-guidance";
 // TEMPORARY dev-only calibration overlay — remove with Phase 4.5 cleanup.
 import { LiveMetricsDebugOverlay } from "./live-metrics-debug-overlay";
+import type { SavedCard, DisambiguationCandidate, PostAddArchive } from "@/types/card";
+import type { ArchiveContext } from "@/types";
 
 type ScanState = "idle" | "scanning" | "processing" | "result" | "bulk-review" | "disambiguation" | "error";
 
@@ -84,7 +86,7 @@ function formatFiledDate(iso: string): string {
 }
 
 /** One quiet line describing what this card means in the user's archive. */
-function archiveCaption(archive: any): string | null {
+function archiveCaption(archive: ArchiveContext | null): string | null {
   if (!archive) return null;
   if (archive.inCollection) {
     const copies = archive.quantity > 1 ? ` · ×${archive.quantity}` : "";
@@ -110,7 +112,7 @@ export default function ScannerPage() {
   const { data: session } = useSession();
   const { setIsActivelyScanningOrProcessing } = useScannerState();
   const [state, setState] = useState<ScanState>("idle");
-  const [scanResult, setScanResult] = useState<any>(null);
+  const [scanResult, setScanResult] = useState<SavedCard | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
   // Pipeline stage the server blamed for a failed scan (Phase 5.2.5) — shown
   // as a small caption in the error state so field reports say WHERE it broke.
@@ -118,10 +120,10 @@ export default function ScannerPage() {
   const [isAdding, setIsAdding] = useState(false);
   const [addSuccess, setAddSuccess] = useState(false);
   // Post-add archive totals (Phase 5 · Batch 2) — returned by the add routes.
-  const [postAddArchive, setPostAddArchive] = useState<any>(null);
+  const [postAddArchive, setPostAddArchive] = useState<PostAddArchive | null>(null);
   const [selectedGame, setSelectedGame] = useState<string>("All");
   const [loadingStatusIndex, setLoadingStatusIndex] = useState(0);
-  const [disambiguationCandidates, setDisambiguationCandidates] = useState<any[]>([]);
+  const [disambiguationCandidates, setDisambiguationCandidates] = useState<DisambiguationCandidate[]>([]);
   const [disambiguationCardName, setDisambiguationCardName] = useState("");
   // ScanHistory row of the attempt that triggered disambiguation — echoed to
   // save-selection so the user's pick lands on that row as ground truth.
@@ -130,7 +132,7 @@ export default function ScannerPage() {
   // Auto-scan feature — use REF not state for the scanning lock to avoid re-render loops
   const [isAutoScan, setIsAutoScan] = useState(false);
   const [isBulkMode, setIsBulkMode] = useState(false);
-  const [bulkQueue, setBulkQueue] = useState<any[]>([]);
+  const [bulkQueue, setBulkQueue] = useState<SavedCard[]>([]);
 
   const [autoScanBusy, setAutoScanBusy] = useState(false); // only for UI spinner
   // Why the last auto/bulk attempt didn't queue a card (Phase 5.2.5). Silent
@@ -445,7 +447,7 @@ export default function ScannerPage() {
 
       // AI is uncertain — show disambiguation grid for user to pick
       if (json.requiresDisambiguation) {
-        setDisambiguationCandidates(json.candidates || []);
+        setDisambiguationCandidates((json.candidates as DisambiguationCandidate[]) || []);
         setDisambiguationCardName(json.cardName || "");
         setDisambiguationScanId(json.scanId || null);
         // Stop auto-scan loop while user picks
@@ -458,8 +460,8 @@ export default function ScannerPage() {
         return true;
       }
 
-      const card = json.data;
-      
+      const card = json.data as SavedCard;
+
       if (isBulkMode) {
         // Bulk Mode logic: Add to queue, do not stop camera.
         // Time-based debounce (not consecutive-id): the same card still in
@@ -881,7 +883,7 @@ export default function ScannerPage() {
   }, [startCamera]);
 
   // ─── Handle user selecting a specific variant from disambiguation ─────
-  const handleSelectCandidate = async (candidate: any) => {
+  const handleSelectCandidate = async (candidate: DisambiguationCandidate) => {
     setIsAdding(true);
     try {
       // Identifiers only — the server re-fetches the card from its source
@@ -897,7 +899,7 @@ export default function ScannerPage() {
       });
       if (!res.ok) throw new Error("Failed to save selection");
       const json = await res.json();
-      const card = json.data;
+      const card = json.data as SavedCard;
 
       if (isBulkMode) {
         setBulkQueue((prev) => {
@@ -1137,7 +1139,7 @@ export default function ScannerPage() {
                             className="w-12 h-16 rounded-md overflow-hidden border border-brass shadow-md bg-black/50"
                           >
                             {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img src={card.thumbnailUrl || card.imageUrl} alt="Card" className="w-full h-full object-cover" />
+                            <img src={card.thumbnailUrl || card.imageUrl || undefined} alt="Card" className="w-full h-full object-cover" />
                           </motion.div>
                         ))}
                       </AnimatePresence>
@@ -1369,7 +1371,7 @@ export default function ScannerPage() {
                         {candidate.thumbnailUrl || candidate.imageUrl ? (
                           // eslint-disable-next-line @next/next/no-img-element
                           <img
-                            src={candidate.thumbnailUrl || candidate.imageUrl}
+                            src={candidate.thumbnailUrl || candidate.imageUrl || undefined}
                             alt={candidate.setName}
                             className="w-full h-full object-cover group-hover:scale-[1.03] transition-transform duration-300"
                           />
@@ -1525,7 +1527,7 @@ export default function ScannerPage() {
                       {(card.thumbnailUrl || card.imageUrl) ? (
                         <div className="w-11 shrink-0 card-frame border border-border">
                           {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img src={card.thumbnailUrl || card.imageUrl} alt={card.name} className="w-full h-full object-cover" />
+                          <img src={card.thumbnailUrl || card.imageUrl || undefined} alt={card.name} className="w-full h-full object-cover" />
                         </div>
                       ) : (
                         <div className="w-11 shrink-0 card-frame border border-border bg-muted flex items-center justify-center">

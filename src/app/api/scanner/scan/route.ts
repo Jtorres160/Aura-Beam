@@ -17,6 +17,7 @@ import { buildScanTelemetry } from "@/lib/scanner/telemetry";
 import { getArchiveContext } from "@/lib/scanner/archive-context";
 import { persistPrinting } from "@/lib/cards/persist-printing";
 import { serializeSavedCard } from "@/lib/cards/serialize-card";
+import type { DisambiguationCandidate } from "@/types/card";
 import { checkScanBurst, SCAN_DAILY_LIMIT, startOfUtcDay } from "@/lib/rate-limit";
 
 // Two OCR passes + a possible vision comparison + card-DB fetches can
@@ -296,7 +297,7 @@ function usesSetCnEvidence(game: string): boolean {
 // null when the telemetry row couldn't be written (non-fatal).
 function disambiguationResponse(cardName: string, candidates: CandidatePrinting[], ocrData: any, scanId: string | null, bestMatchExternalId?: string) {
   const withImages = candidates.filter((c) => c.thumbnailUrl);
-  const list = (withImages.length > 0 ? withImages : candidates).map((c) => ({
+  const list: DisambiguationCandidate[] = (withImages.length > 0 ? withImages : candidates).map((c) => ({
     externalId: c.externalId,
     name: c.name,
     game: c.game,

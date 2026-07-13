@@ -1,6 +1,7 @@
 import type { Card } from "@prisma/client";
 import type { CandidatePrinting } from "@/lib/scanner/evidence";
 import type { ArchiveContext } from "@/lib/scanner/archive-context";
+import type { SavedCard } from "@/types/card";
 
 // ─── Shared saved-card serialization (Phase 2 · C4) ─────────────────────────
 // Builds the `data` payload both save paths return, so a response-field
@@ -18,7 +19,7 @@ export interface SerializeSavedCardInput {
   method?: string | null;
 }
 
-export function serializeSavedCard(input: SerializeSavedCardInput) {
+export function serializeSavedCard(input: SerializeSavedCardInput): SavedCard {
   const { localCard, printing, archive, confidence, historyId } = input;
   return {
     id: localCard.id,
