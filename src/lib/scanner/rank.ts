@@ -39,7 +39,16 @@ export async function decideAmongPrintings(
     });
     if (narrowed.length === 1) {
       console.log(`[Scanner] OCR set/CN evidence narrowed to one printing: ${narrowed[0].setName}`);
-      return acceptDecision(narrowed[0], "single-art-group");
+      // When BOTH set code and collector number pinned this single printing,
+      // that is the same verified evidence as the direct set+CN database lookup
+      // in candidates.ts — so it must earn the SAME classification,
+      // "set-cn-verified" (0.97), not the weaker "single-art-group" (0.85).
+      // Emitting different methods for identical evidence was a bug: the ranked
+      // path could never auto-accept in bulk (0.97 clears the auto-scan gate,
+      // 0.85 does not). Set code alone (no collector number) is weaker printing
+      // evidence and stays "single-art-group".
+      const method = cleanCn ? "set-cn-verified" : "single-art-group";
+      return acceptDecision(narrowed[0], method);
     }
   }
 
