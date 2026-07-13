@@ -5,6 +5,7 @@
 
 import OpenAI from "openai";
 import { reading, SET_CN_CONFIDENCE, type FieldReading } from "@/lib/scanner/evidence";
+import { throttleVision } from "@/lib/scanner/vision-throttle";
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY || "dummy_build_key",
@@ -12,10 +13,14 @@ const openai = new OpenAI({
 
 // Per-call ceilings (Phase 5.2.5): a hung vision call must fail fast into a
 // classified error, not spin until the platform kills the whole function.
-// One SDK-level retry keeps transient blips invisible; 20s × 2 attempts stays
-// well inside the route's 60s maxDuration.
-const OCR_TIMEOUT_MS = 20_000;
-const OCR_MAX_RETRIES = 1;
+// SDK-level retries keep transient blips (incl. residual 429s) invisible; they
+// already honor the server's retry-after timing. With throttleVision() pacing
+// the call STARTS, a 429 is now rare, so 2 retries is a safety margin, not a
+// blind hammer. The 15s ceiling bounds the worst case (3 attempts = 45s) with
+// ~15s of the route's 60s maxDuration left for candidates + scoring + DB save;
+// retries only fire on failure, never serially on the happy path.
+const OCR_TIMEOUT_MS = 15_000;
+const OCR_MAX_RETRIES = 2;
 
 /** The fields OCR reads off a card, trimmed and normalized to strings. */
 export interface OcrFields {
@@ -39,7 +44,7 @@ export async function extractCardFields(imageUrl: string): Promise<ExtractResult
   let identifiedCard: any;
   try {
     console.log("[Scanner] Step 1: OCR — identifying card name...");
-    const aiResponse = await openai.chat.completions.create({
+    const aiResponse = await throttleVision(() => openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
         {
@@ -61,7 +66,7 @@ Return ONLY raw JSON. No markdown. No explanation.`
       ],
       max_tokens: 80,
       temperature: 0.1,
-    }, { timeout: OCR_TIMEOUT_MS, maxRetries: OCR_MAX_RETRIES });
+    }, { timeout: OCR_TIMEOUT_MS, maxRetries: OCR_MAX_RETRIES }));
 
     const aiMessage = aiResponse.choices[0]?.message?.content || "{}";
     console.log("[Scanner] OCR response:", aiMessage);
@@ -117,7 +122,7 @@ export interface StripReadings {
 export async function extractBottomStrip(imageUrl: string): Promise<StripReadings> {
   try {
     console.log("[Scanner] Step 1c: Strip OCR — reading the set/collector strip...");
-    const aiResponse = await openai.chat.completions.create({
+    const aiResponse = await throttleVision(() => openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
         {
@@ -136,7 +141,7 @@ If the bottom strip is not legible, return every value as "". Return ONLY raw JS
       ],
       max_tokens: 80,
       temperature: 0.0,
-    }, { timeout: OCR_TIMEOUT_MS, maxRetries: OCR_MAX_RETRIES });
+    }, { timeout: OCR_TIMEOUT_MS, maxRetries: OCR_MAX_RETRIES }));
 
     const raw = aiResponse.choices[0]?.message?.content || "{}";
     console.log("[Scanner] Strip OCR response:", raw);

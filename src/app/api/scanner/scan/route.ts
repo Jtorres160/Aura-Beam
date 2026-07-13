@@ -85,13 +85,20 @@ export async function POST(req: NextRequest) {
     }
 
     // ─── Step 1: OCR — two passes over the same image, in PARALLEL ──────
-    // The strip pass only depends on the image, not on the full pass, so
-    // firing it now hides its entire round-trip behind the full pass instead
-    // of adding one. When the full pass fails or the game turns out to be
-    // Yugioh its result is simply discarded — that costs a fraction of a
-    // cent, versus seconds of added latency on every scan if run serially.
+    // Both depend only on the image, not on each other, so they run together
+    // and the strip pass's round-trip hides behind the full pass rather than
+    // adding one. When the full pass fails or the game turns out to be Yugioh
+    // the strip result is simply discarded — a fraction of a cent, versus
+    // seconds of added latency on every scan if run serially.
+    //
+    // Order matters now that throttleVision() paces call STARTS (see
+    // vision-throttle.ts): the SECOND vision call to acquire absorbs the pacing
+    // gap. Start the full pass FIRST so that gap lands on the non-critical
+    // strip pass (whose result isn't awaited until after the candidate fetch),
+    // keeping the critical-path full pass — and single-scan latency — untouched.
+    const extractionPromise = extractCardFields(imageUrl);
     const stripPromise = extractBottomStrip(imageUrl);
-    const extraction = await timed("ocrMs", () => extractCardFields(imageUrl));
+    const extraction = await timed("ocrMs", () => extractionPromise);
     if (!extraction.ok) {
       // 404 = OCR worked but saw no card; anything else = the OCR call failed.
       const stage: FailureStage = extraction.status === 404 ? "no-card" : "ocr";
