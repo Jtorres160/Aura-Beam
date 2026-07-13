@@ -28,8 +28,14 @@ export interface ReadinessThresholds {
   maxBrightness: number;
   /** Above this fraction (0–1) of specular pixels, glare is a problem. */
   maxGlareFraction: number;
-  /** Above this mean-abs-luma-diff (0–255) the camera/card is still moving. */
+  /** ENTER threshold: above this mean-abs-luma-diff (0–255) a NOT-yet-ready
+   *  frame stays "hold steady". Crossing below it is what first arms a dwell. */
   maxMotion: number;
+  /** EXIT threshold (hysteresis): once a dwell is already in progress, motion
+   *  must exceed THIS (higher) value before we call it real movement and reset.
+   *  The band between maxMotion and maxMotionExit is where handheld-webcam
+   *  jitter lives — see the rationale on LIVE_THRESHOLDS.maxMotionExit. */
+  maxMotionExit: number;
   /** Below this Laplacian variance (ROI content @ capture ANALYSIS_DIM) the
    *  frame would fail the capture gate as blurry. Shares capture.ts's
    *  MIN_SHARPNESS so guidance and the gate agree by construction. */
@@ -52,6 +58,19 @@ export const LIVE_THRESHOLDS: ReadinessThresholds = {
   // ARMING; the capture pipeline still samples N frames, keeps the sharpest,
   // and rejects a blurry result (assessQuality) before any OCR.
   maxMotion: 10.0,
+  // Hysteresis exit ceiling. SmartCapture diagnostics of handheld WEBCAM bulk
+  // scanning showed the motion metric flapping across a single 10.0 threshold
+  // (spikes of 10.0–12.7 landing right on the line) and resetting the dwell
+  // over and over — long candidate→reset loops even while sharpness was
+  // excellent (600–900), so a perfectly good, near-still frame never got the
+  // 500ms it needed to capture. A single threshold can't tell "still-holding
+  // with sensor/tremor jitter" from "actively moving". Two thresholds can:
+  // arm the dwell at 10.0, but only ABANDON an in-progress dwell once motion
+  // clearly exceeds 16.0. The 10–16 band is exactly the jitter envelope the
+  // diagnostics revealed; a genuine hand movement reads well above 16 and still
+  // resets promptly. A braced phone sits far below 10 and never engages the
+  // band, so this only helps the noisy webcam path. Validate via ?diag=1.
+  maxMotionExit: 16.0,
   // THE capture-gate floor — not a separate live heuristic. Ready ⇒ the same
   // pixels pass assessQuality's sharpness check.
   minSharpness: MIN_SHARPNESS,
@@ -96,10 +115,19 @@ const MESSAGES: Record<GuidanceCode, string> = {
  * (it lets autofocus lock).
  *
  * Pure: no side effects, no allocation beyond the returned object.
+ *
+ * `holding` applies motion HYSTERESIS. It is the caller's read of "am I already
+ * in an armed dwell?" (e.g. SmartCaptureMachine.state === "candidate"). When
+ * false (the default — fresh arming, and the guidance chip) motion is judged
+ * against the ENTER threshold; when true, against the higher EXIT threshold, so
+ * webcam jitter in the 10–16 band can't reset a dwell that's already counting
+ * down. The flag stays a parameter so this function remains pure and the two
+ * independent loops (auto-capture + chip) never share hidden state.
  */
 export function evaluateReadiness(
   m: LiveMetrics,
-  t: ReadinessThresholds = LIVE_THRESHOLDS
+  t: ReadinessThresholds = LIVE_THRESHOLDS,
+  holding: boolean = false
 ): Readiness {
   const make = (
     code: GuidanceCode,
@@ -123,8 +151,11 @@ export function evaluateReadiness(
     return make("glare", "glare", m.glare, t.maxGlareFraction);
   }
   // Motion first (more actionable), then sharpness — both surface "Hold steady".
-  if (m.motion > t.maxMotion) {
-    return make("hold-steady", "motion", m.motion, t.maxMotion);
+  // Hysteresis: an in-progress dwell (holding) tolerates jitter up to the EXIT
+  // ceiling; a not-yet-armed frame must clear the tighter ENTER threshold.
+  const motionCeiling = holding ? t.maxMotionExit : t.maxMotion;
+  if (m.motion > motionCeiling) {
+    return make("hold-steady", "motion", m.motion, motionCeiling);
   }
   if (m.sharpness < t.minSharpness) {
     return make("hold-steady", "sharpness", m.sharpness, t.minSharpness);
