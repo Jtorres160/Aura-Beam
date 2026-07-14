@@ -12,7 +12,13 @@
 // and evidenceMass exist on the output NOW so gating and telemetry don't need
 // to change shape when that swap happens.
 
-import type { CandidatePrinting, ScanEvidence } from "@/lib/scanner/evidence";
+import {
+  assessIdentitySignals,
+  calculateEvidenceMass,
+  normalizeRarity,
+  type CandidatePrinting,
+  type ScanEvidence,
+} from "@/lib/scanner/evidence";
 import {
   type Decision,
   type MatchMethod,
@@ -59,18 +65,6 @@ export interface Scorer {
 
 const RARITY_GUARDED_METHODS: ReadonlyArray<MatchMethod> = ["single-printing", "art-group-vision"];
 
-/** Map the many printed/database rarity spellings onto one comparable token.
- *  Unknown spellings return null and the guard stands down — conservative. */
-function normalizeRarity(raw: string): string | null {
-  const map: Record<string, string> = {
-    c: "common", common: "common",
-    u: "uncommon", uncommon: "uncommon",
-    r: "rare", rare: "rare",
-    m: "mythic", mythic: "mythic", "mythic rare": "mythic",
-  };
-  return map[raw.trim().toLowerCase()] ?? null;
-}
-
 function rarityContradicts(evidence: ScanEvidence, printing: CandidatePrinting): boolean {
   const read = evidence.printing.rarity?.value;
   if (!read || !printing.rarity) return false;
@@ -80,17 +74,6 @@ function rarityContradicts(evidence: ScanEvidence, printing: CandidatePrinting):
 }
 
 // ─── Heuristic scorer ───────────────────────────────────────────────────────
-
-/** Count the evidence fields that actually carried a reading into this scan. */
-function countEvidenceMass(evidence: ScanEvidence): number {
-  const fields = [
-    evidence.identity.name,
-    evidence.printing.setCode,
-    evidence.printing.collectorNumber,
-    evidence.printing.rarity,
-  ];
-  return fields.filter((f) => f && f.value !== "").length;
-}
 
 export class HeuristicScorer implements Scorer {
   async score(input: ScoreInput): Promise<ScoreOutput> {
@@ -146,11 +129,25 @@ export class HeuristicScorer implements Scorer {
     // Use calculated margin from vision comparison if available; otherwise use heuristic.
     const margin = decision.decisionMargin ?? (decision.action === "accept" ? 1 : 0);
 
+    // EvidenceMass: net independent identity confirmation for the chosen printing
+    // (Phase 5.5, Batch 3). Signals are assessed against the SPECIFIC candidate we
+    // landed on — how much deterministic proof backs THIS card — never against
+    // vision confidence. When nothing was chosen (disambiguate/not-found) there is
+    // no candidate to confirm, so mass is 0.
+    const signals = decision.printing ? assessIdentitySignals(evidence, decision.printing) : [];
+    const evidenceMass = calculateEvidenceMass(signals);
+    if (decision.printing) {
+      console.log(
+        `[Scanner] EvidenceMass ${evidenceMass.toFixed(1)} — ` +
+        signals.map((s) => `${s.type}:${s.state}`).join(", ")
+      );
+    }
+
     return {
       decision,
       confidence: decision.confidence,
       margin,
-      evidenceMass: countEvidenceMass(evidence),
+      evidenceMass,
       methodLabel: decision.method ?? decision.action,
     };
   }
