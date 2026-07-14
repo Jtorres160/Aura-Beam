@@ -17,6 +17,7 @@ import {
   calculateEvidenceMass,
   normalizeRarity,
   type CandidatePrinting,
+  type EvidenceSignal,
   type ScanEvidence,
 } from "@/lib/scanner/evidence";
 import {
@@ -49,6 +50,11 @@ export interface ScoreOutput {
   margin: number;
   /** How many independent evidence fields contributed to the decision. */
   evidenceMass: number;
+  /** The per-signal breakdown that produced `evidenceMass`, in stable order.
+   *  Observational only — carried through to telemetry so future calibration
+   *  can weigh each signal against ground truth. Empty when no printing was
+   *  chosen (disambiguate/not-found). Never an input to gating or ranking. */
+  evidenceSignals: EvidenceSignal[];
   /** Which path produced the verdict — telemetry, not a confidence source. */
   methodLabel: string;
 }
@@ -148,6 +154,7 @@ export class HeuristicScorer implements Scorer {
       confidence: decision.confidence,
       margin,
       evidenceMass,
+      evidenceSignals: signals,
       methodLabel: decision.method ?? decision.action,
     };
   }
