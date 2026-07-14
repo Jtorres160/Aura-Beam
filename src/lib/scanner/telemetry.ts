@@ -10,7 +10,7 @@
 // appended to the SAME row via withSelection() — the user looked at the
 // physical card, so their pick is ground truth for that scan's image evidence.
 
-import type { ScanEvidence } from "./evidence";
+import type { EvidenceSignal, ScanEvidence } from "./evidence";
 import type { Decision } from "./decision";
 import type { ScoreOutput } from "./score";
 
@@ -34,6 +34,15 @@ export interface ScanTelemetryV1 {
     margin: number;
     evidenceMass: number;
   };
+  /** The per-signal evidence breakdown that summed to `decision.evidenceMass`,
+   *  captured verbatim from assessIdentitySignals() — NOT recomputed here.
+   *  Purely observational: it records which independent identity signals were
+   *  present (type/state/weight) so EvidenceMass weights can be calibrated from
+   *  real scans later. No derived or "winning signal" fields — that analysis is
+   *  downstream. Optional and additive: older records simply omit it, and older
+   *  consumers ignore it, so v stays 1 (no breaking change). Empty/absent when
+   *  no printing was chosen (disambiguate/not-found). */
+  evidenceSignals?: EvidenceSignal[];
   /** Size of the candidate pool the scorer chose among. */
   printingsCount: number;
   /** Candidates actually surfaced (grid size, or 1 for an accept). */
@@ -70,6 +79,7 @@ export function buildScanTelemetry(input: {
       margin: scored.margin,
       evidenceMass: scored.evidenceMass,
     },
+    evidenceSignals: scored.evidenceSignals,
     printingsCount,
     presentedCount: decision.candidates?.length ?? (decision.printing ? 1 : 0),
     ocr,
