@@ -18,7 +18,9 @@ import {
 import { EVIDENCE_WEIGHTS, type EvidenceSignal, type EvidenceState } from "@/lib/scanner/evidence";
 
 function sig(type: EvidenceSignal["type"], state: EvidenceState): EvidenceSignal {
-  return { type, state, weight: EVIDENCE_WEIGHTS[type] };
+  // availability is irrelevant to rendering; these hand-built signals only
+  // exercise the formatter, which reads type/state/weight (Phase 5.10).
+  return { type, state, weight: EVIDENCE_WEIGHTS[type], availability: "supported" };
 }
 
 describe("signalContribution", () => {
