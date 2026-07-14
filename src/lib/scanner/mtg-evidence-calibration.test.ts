@@ -1,10 +1,24 @@
-// MTG EvidenceMass calibration fixtures (Phase 5.6).
+// MTG EvidenceMass calibration fixtures (Phase 5.6, expanded in Phase 5.7).
 //
 // PURPOSE: observation, not tuning. This file does NOT change EVIDENCE_WEIGHTS,
 // ranking, decision thresholds, or acceptance rules. It builds a small set of
 // deterministic fixtures from REAL, pinned Magic: The Gathering data and records
 // how the CURRENT evidence model classifies each signal, so that later weight
 // calibration starts from observed behavior rather than intuition.
+//
+// Phase 5.7 expansion adds three signal-isolation cases and renders each through
+// the calibration-report notebook helper:
+//   Case 4 — artwork contradiction under full printing agreement (is artwork,
+//            at weight 2.5, able to sink an otherwise printing-perfect match?).
+//   Case 5 — a special treatment (borderless twin): same IDENTITY, different
+//            PRINTING — recording that only collector number encodes it.
+//   Case 6 — rarity isolated as the sole separator (how much should rarity, at
+//            weight 0.5, matter?).
+// NOTE ON CASE 4 REALISM: MTG collector numbers are unique within a set, so two
+// real rows cannot share name+set+CN yet differ in artwork. The only HONEST way
+// to reach that composition is a wrong `vision-compare` artwork reading against
+// a real, printing-correct candidate — which is exactly the "AI is a sensor,
+// not the judge" question. Case 4 is built that way; the candidate data is real.
 //
 // Assertions here verify OBSERVATIONS about the signal composition (which fields
 // match / mismatch / stay unknown, and their relative ordering) — never final
@@ -39,6 +53,7 @@ import {
   type EvidenceSignalType,
   type ScanEvidence,
 } from "@/lib/scanner/evidence";
+import { formatCalibrationReport } from "@/lib/scanner/calibration-report";
 
 // ─── Pinned illustration identities ──────────────────────────────────────────
 
@@ -101,6 +116,26 @@ function record(label: string, signals: EvidenceSignal[]): void {
   const mass = calculateEvidenceMass(signals);
   // Mirrors the existing "[Scanner] EvidenceMass …" telemetry line style.
   console.log(`[Calibration] ${label} — mass ${mass} — ${composition}`);
+}
+
+/** Full calibration-report block for a fixture (Phase 5.7 notebook tooling). */
+function report(args: {
+  fixture: string;
+  signals: EvidenceSignal[];
+  humanExpectation: string;
+  calibrationNote?: string;
+}): void {
+  console.log(
+    "\n" +
+      formatCalibrationReport({
+        game: "MTG",
+        fixture: args.fixture,
+        signals: args.signals,
+        humanExpectation: args.humanExpectation,
+        calibrationNote: args.calibrationNote,
+      }) +
+      "\n",
+  );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -279,6 +314,207 @@ describe("MTG calibration — Case 3: same set, wrong collector number", () => {
     assert.ok(
       massWrong > 0,
       `under current weights the wrong-CN twin retains positive mass (${massWrong})`,
+    );
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Case 4 — Artwork contradiction under full printing agreement
+// ═══════════════════════════════════════════════════════════════════════════
+// The question: is artwork identity (weight 2.5) strong enough to, by itself,
+// sink a candidate that is otherwise printing-PERFECT?
+//
+// Real MTG collector numbers are unique within a set, so no two real rows share
+// name+set+CN yet differ in artwork. The only honest route to that composition
+// is a WRONG vision reading: the OCR strip correctly reads M10 #146 common, but
+// the `vision-compare` artwork sensor mis-groups the illustration and reports
+// the Fahmi Fauzi id instead of Moeller's. The candidate (M10 #146) is entirely
+// real; only the fallible vision reading is wrong — which is exactly the "AI is
+// a sensor, not the judge" scenario this architecture exists to survive.
+
+describe("MTG calibration — Case 4: artwork contradiction under full printing agreement", () => {
+  const ev = evidence({
+    name: "Lightning Bolt",
+    setCode: "M10",
+    collectorNumber: "146",
+    rarity: "common",
+    illustrationId: ART_FAUZI, // WRONG: vision mis-grouped Moeller art as Fauzi
+  });
+
+  const truePrinting = printing({ externalId: "m10-146" }); // real M10 #146 Moeller
+
+  test("only the (wrong) vision artwork reading contradicts; every deterministic signal agrees", () => {
+    const signals = assessIdentitySignals(ev, truePrinting);
+    record("Case4 M10 #146 (correct card, bad vision art read)", signals);
+    report({
+      fixture: "Lightning Bolt M10 #146 — wrong vision artwork read",
+      signals,
+      humanExpectation:
+        "Keep the printing-verified card. A lone contradicting vision guess must not override deterministic set+CN.",
+      calibrationNote:
+        "artwork (2.5) < name+set+CN combined (5.0), so full printing agreement dominates a single bad vision read.",
+    });
+
+    assert.equal(stateOf(signals, "name"), "match");
+    assert.equal(stateOf(signals, "setCode"), "match");
+    assert.equal(stateOf(signals, "collectorNumber"), "match");
+    assert.equal(stateOf(signals, "rarity"), "match");
+    assert.equal(
+      stateOf(signals, "artwork"),
+      "mismatch",
+      "the wrong vision illustrationId surfaces as an artwork contradiction",
+    );
+  });
+
+  test("a lone artwork contradiction cannot outweigh four agreeing printing signals", () => {
+    // OBSERVATION (current weights, recorded — NOT a target): name+set+CN+rarity
+    // (+5.5) minus artwork (−2.5) stays firmly positive, so the printing-verified
+    // identity holds despite the bad vision read. This is the desired "sensor,
+    // not judge" behavior; weight calibration will confirm the margin is right.
+    const mass = calculateEvidenceMass(assessIdentitySignals(ev, truePrinting));
+    assert.ok(
+      mass > 0,
+      `full printing agreement must survive one contradicting vision read (mass ${mass})`,
+    );
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Case 5 — Special treatment: same identity, different printing
+// ═══════════════════════════════════════════════════════════════════════════
+// Collectors care about treatments (borderless / showcase / extended / promo) as
+// distinct COLLECTIBLES, but they are the same card IDENTITY. Using the real SOS
+// borderless twin (#332, Branwyn art) against a scan of the regular #113, observe
+// how the current model encodes a treatment: every identity signal (name, set,
+// rarity, artwork) matches, and ONLY the collector number separates them. The
+// candidate carries borderColor/frame/promoTypes, but assessIdentitySignals has
+// NO treatment signal — so today a treatment is visible to EvidenceMass solely
+// through its collector number. (Case 3 read this pair as false-positive
+// resistance; here the lens is the missing treatment signal.)
+
+describe("MTG calibration — Case 5: special treatment shares identity, differs only by printing", () => {
+  const DFC_NAME = "Emeritus of Conflict // Lightning Bolt";
+
+  const ev = evidence({
+    name: "Lightning Bolt",
+    setCode: "SOS",
+    collectorNumber: "113",
+    rarity: "mythic",
+    illustrationId: ART_BRANWYN,
+  });
+
+  // Real borderless variant (#332). borderColor is carried on the candidate but
+  // is deliberately UNUSED by the evidence model today — that is the observation.
+  const borderless = printing({
+    externalId: "sos-332",
+    name: DFC_NAME,
+    setName: "Secrets of Strixhaven",
+    setCode: "SOS",
+    collectorNumber: "332",
+    rarity: "mythic",
+    illustrationId: ART_BRANWYN,
+    borderColor: "borderless",
+  });
+
+  test("identity signals all agree; collector number is the ONLY separator", () => {
+    const signals = assessIdentitySignals(ev, borderless);
+    record("Case5 SOS #332 (borderless treatment)", signals);
+    report({
+      fixture: "Lightning Bolt SOS #332 — borderless treatment of scanned #113",
+      signals,
+      humanExpectation:
+        "Same card identity, different collectible printing — offer the borderless as a distinct printing, not a different card.",
+      calibrationNote:
+        "borderColor/frame/promoTypes are carried on the candidate but unscored; only collectorNumber encodes the treatment today.",
+    });
+
+    assert.equal(stateOf(signals, "name"), "match");
+    assert.equal(stateOf(signals, "setCode"), "match");
+    assert.equal(stateOf(signals, "rarity"), "match");
+    assert.equal(stateOf(signals, "artwork"), "match", "borderless shares the illustration → artwork matches");
+    assert.equal(stateOf(signals, "collectorNumber"), "mismatch");
+  });
+
+  test("the evidence model exposes no dedicated treatment signal", () => {
+    const signals = assessIdentitySignals(ev, borderless);
+    const types = signals.map((s) => s.type);
+    // The treatment is real (borderColor === "borderless") but invisible to the
+    // signal set — a concrete input for whether calibration should add one.
+    assert.ok(!types.includes("borderColor" as never), "no borderColor signal exists yet");
+    assert.ok(!types.includes("frame" as never), "no frame signal exists yet");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Case 6 — Rarity isolated as the sole separator
+// ═══════════════════════════════════════════════════════════════════════════
+// How much should rarity (weight 0.5) matter? The Moeller Lightning Bolt is a
+// common in M10 (#146) and an uncommon in A25 (#141) — SAME illustration. To
+// isolate rarity, the scan reads name + rarity + artwork but NOT set/CN (a
+// realistic strip-OCR miss). Then the two real reprints agree on name and
+// artwork and are separated ONLY by rarity, so the mass gap equals exactly the
+// rarity swing (a match vs a mismatch = 2 × 0.5 = 1.0). This records how thin
+// rarity's influence is when it stands alone.
+
+describe("MTG calibration — Case 6: rarity as the sole separator", () => {
+  const ev = evidence({
+    name: "Lightning Bolt",
+    rarity: "common", // scanned card is the M10 common; set/CN unread → unknown
+    illustrationId: ART_MOELLER,
+  });
+
+  const commonM10 = printing({ externalId: "m10-146" }); // common, Moeller
+  const uncommonA25 = printing({
+    externalId: "a25-141",
+    setName: "Masters 25",
+    setCode: "A25",
+    collectorNumber: "141",
+    rarity: "uncommon", // same Moeller illustration, different rarity
+    illustrationId: ART_MOELLER,
+  });
+
+  test("name + artwork match both; rarity alone distinguishes them", () => {
+    const sCommon = assessIdentitySignals(ev, commonM10);
+    const sUncommon = assessIdentitySignals(ev, uncommonA25);
+    record("Case6 M10 #146 (rarity match)", sCommon);
+    record("Case6 A25 #141 (rarity mismatch)", sUncommon);
+    report({
+      fixture: "Lightning Bolt — M10 common vs A25 uncommon (set/CN unread)",
+      signals: sUncommon,
+      humanExpectation:
+        "Prefer the rarity that matches, but weakly — with set/CN unread, rarity is the only evidence in play.",
+      calibrationNote:
+        "rarity=0.5 is a deliberately weak separator; when it stands alone the mass gap is just 1.0.",
+    });
+
+    // Both share name + artwork; set/CN are unknown on both (unread).
+    assert.equal(stateOf(sCommon, "name"), "match");
+    assert.equal(stateOf(sUncommon, "name"), "match");
+    assert.equal(stateOf(sCommon, "artwork"), "match");
+    assert.equal(stateOf(sUncommon, "artwork"), "match");
+    assert.equal(stateOf(sCommon, "setCode"), "unknown");
+    assert.equal(stateOf(sUncommon, "setCode"), "unknown");
+    assert.equal(stateOf(sCommon, "collectorNumber"), "unknown");
+    assert.equal(stateOf(sUncommon, "collectorNumber"), "unknown");
+
+    // Rarity is the only differing signal.
+    assert.equal(stateOf(sCommon, "rarity"), "match");
+    assert.equal(stateOf(sUncommon, "rarity"), "mismatch");
+  });
+
+  test("the rarity-matching reprint out-masses the other by exactly the rarity swing", () => {
+    const massMatch = calculateEvidenceMass(assessIdentitySignals(ev, commonM10));
+    const massMismatch = calculateEvidenceMass(assessIdentitySignals(ev, uncommonA25));
+
+    assert.ok(massMatch > massMismatch, `rarity-match (${massMatch}) should out-mass rarity-mismatch (${massMismatch})`);
+
+    // OBSERVATION (current weight, recorded — NOT a target): the gap is exactly
+    // 2 × rarity weight = 1.0. If real scans show rarity should decide harder or
+    // softer, this is the number calibration will move.
+    assert.equal(
+      massMatch - massMismatch,
+      2 * 0.5,
+      "isolated rarity produces a mass gap of exactly twice its weight",
     );
   });
 });
