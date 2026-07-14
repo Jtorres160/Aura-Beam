@@ -15,8 +15,10 @@
 import {
   assessIdentitySignals,
   calculateEvidenceMass,
+  calculateEvidenceCoverage,
   normalizeRarity,
   type CandidatePrinting,
+  type EvidenceCoverage,
   type EvidenceSignal,
   type ScanEvidence,
 } from "@/lib/scanner/evidence";
@@ -55,6 +57,12 @@ export interface ScoreOutput {
    *  can weigh each signal against ground truth. Empty when no printing was
    *  chosen (disambiguate/not-found). Never an input to gating or ranking. */
   evidenceSignals: EvidenceSignal[];
+  /** Availability breakdown of the same signals (Phase 5.10): how many expected
+   *  sensors fired, how many failed, how many are unavailable for this game.
+   *  Observational CONTEXT for the score — never an input to gating or ranking,
+   *  and it does not change EvidenceMass. Empty coverage when no printing was
+   *  chosen (disambiguate/not-found). */
+  evidenceCoverage: EvidenceCoverage;
   /** Which path produced the verdict — telemetry, not a confidence source. */
   methodLabel: string;
 }
@@ -142,10 +150,18 @@ export class HeuristicScorer implements Scorer {
     // no candidate to confirm, so mass is 0.
     const signals = decision.printing ? assessIdentitySignals(evidence, decision.printing) : [];
     const evidenceMass = calculateEvidenceMass(signals);
+    // Coverage is CONTEXT for the mass, not a term in it (Phase 5.10): how many
+    // of the sensors that could have fired for this game actually did.
+    const evidenceCoverage = calculateEvidenceCoverage(signals);
     if (decision.printing) {
       console.log(
         `[Scanner] EvidenceMass ${evidenceMass.toFixed(1)} — ` +
         signals.map((s) => `${s.type}:${s.state}`).join(", ")
+      );
+      console.log(
+        `[Scanner] Coverage ${evidenceCoverage.present}/${evidenceCoverage.expected} sensors present` +
+        (evidenceCoverage.failed ? `, ${evidenceCoverage.failed} failed` : "") +
+        (evidenceCoverage.unavailable ? `, ${evidenceCoverage.unavailable} unavailable for this game` : "")
       );
     }
 
@@ -155,6 +171,7 @@ export class HeuristicScorer implements Scorer {
       margin,
       evidenceMass,
       evidenceSignals: signals,
+      evidenceCoverage,
       methodLabel: decision.method ?? decision.action,
     };
   }

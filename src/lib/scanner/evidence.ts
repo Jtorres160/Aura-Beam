@@ -318,11 +318,86 @@ export type EvidenceSignalType =
 
 export type EvidenceState = "match" | "unknown" | "mismatch";
 
+// ─── Evidence Coverage Model (Phase 5.10) ────────────────────────────────────
+// A signal's STATE (match/unknown/mismatch) answers "did the reading agree?".
+// Its AVAILABILITY answers a different, orthogonal question: "should this sensor
+// have produced a reading at all?". These are independent axes. Availability
+// exists to resolve the ambiguity calibration surfaced: an `unknown` state can
+// mean two completely different things —
+//
+//   • The data source structurally does NOT provide this signal for this game
+//     (Pokémon artwork identity, Yu-Gi-Oh collector number). Missing information.
+//   • The source DOES provide it, but the sensor produced no reading this scan
+//     (an MTG artwork comparison that should have run but didn't). Bad — or at
+//     least incomplete — information.
+//
+// Both still contribute 0 to EvidenceMass (unknown ≠ mismatch is untouched), but
+// only the SECOND is a coverage gap worth flagging. Availability lets Aura tell
+// "I don't have this sensor" apart from "my sensor failed" WITHOUT changing a
+// single weight, threshold, or ranking rule.
+export type SignalAvailability =
+  | "supported"    // the source provides this signal AND a reading was produced
+  | "unavailable"  // the source does not provide this signal for this game
+  | "failed";      // the source provides it, but no reading was produced this scan
+
 export interface EvidenceSignal {
   type: EvidenceSignalType;
   state: EvidenceState;
   /** Independent strength of this signal when it agrees or contradicts. */
   weight: number;
+  /** Whether this sensor was even expected to produce a reading (Phase 5.10).
+   *  Purely descriptive — it never enters EvidenceMass; unknown stays neutral
+   *  regardless of whether it is `unavailable` or `failed`. */
+  availability: SignalAvailability;
+}
+
+/**
+ * Source capability: for a given game, which identity signals can the card data
+ * source provide AT ALL? This is a pure, declarative statement of capability —
+ * NOT a per-scan reading and NOT a game hack scattered through the comparators.
+ * It mirrors the cross-game evidence map established during calibration:
+ *
+ *   MTG      name ✓  setCode ✓  collectorNumber ✓  rarity ✓  artwork ✓   (5/5)
+ *   Pokémon  name ✓  setCode ✓  collectorNumber ✓  rarity ✓  artwork ✗   (4/5)
+ *   Yu-Gi-Oh name ✓  setCode ✓  collectorNumber ✗  rarity ✓  artwork ✓   (4/5)
+ *
+ * (Pokémon/Yu-Gi-Oh rarity is only PARTIALLY mapped by normalizeRarity today —
+ * calibration recorded that separately — but the source does expose a rarity
+ * field, so the capability is present. Capability is about what the source can
+ * provide, not whether every value maps.)
+ *
+ * A comparator uses this to decide, when it reports `unknown`, whether the miss
+ * is `unavailable` (capability false) or `failed` (capability true). Adding a
+ * game means adding a row here — never an `if (game === …)` in a comparator.
+ */
+export type SourceCapabilities = Record<EvidenceSignalType, boolean>;
+
+export function assessSourceCapabilities(game: GameId): SourceCapabilities {
+  switch (game) {
+    case "MTG":
+      return { name: true, setCode: true, collectorNumber: true, rarity: true, artwork: true };
+    case "POKEMON":
+      // Artwork identity is structurally unavailable (no illustration id source).
+      return { name: true, setCode: true, collectorNumber: true, rarity: true, artwork: false };
+    case "YUGIOH":
+      // Collector number is structurally unavailable (the set code embeds it).
+      return { name: true, setCode: true, collectorNumber: false, rarity: true, artwork: true };
+  }
+}
+
+/**
+ * Resolve a signal's availability from its state and the source's capability.
+ * A produced reading (match/mismatch) is always `supported`. Only an `unknown`
+ * needs disambiguating: the source either cannot provide it (`unavailable`) or
+ * could but didn't this scan (`failed`).
+ */
+function availabilityFor(
+  game: GameId,
+  type: EvidenceSignalType,
+  state: EvidenceState,
+): SignalAvailability {
+  if (state !== "unknown") return "supported";
+  return assessSourceCapabilities(game)[type] ? "failed" : "unavailable";
 }
 
 /**
@@ -340,9 +415,15 @@ export const EVIDENCE_WEIGHTS: Record<EvidenceSignalType, number> = {
   artwork: 2.5,
 };
 
-/** Build one signal, resolving `state` against the shared weight table. */
-function signal(type: EvidenceSignalType, state: EvidenceState): EvidenceSignal {
-  return { type, state, weight: EVIDENCE_WEIGHTS[type] };
+/** Build one signal, resolving `state` against the shared weight table and the
+ *  source's capability for `game` (which fixes availability, Phase 5.10). */
+function signal(type: EvidenceSignalType, state: EvidenceState, game: GameId): EvidenceSignal {
+  return {
+    type,
+    state,
+    weight: EVIDENCE_WEIGHTS[type],
+    availability: availabilityFor(game, type, state),
+  };
 }
 
 // Each comparator is deliberately boring: it reports ONLY match / unknown /
@@ -352,33 +433,38 @@ function signal(type: EvidenceSignalType, state: EvidenceState): EvidenceSignal 
 
 function compareName(evidence: ScanEvidence, candidate: CandidatePrinting): EvidenceSignal {
   const read = evidence.identity.name?.value;
-  if (!read || !candidate.name) return signal("name", "unknown");
-  return signal("name", nameMatchesOcr(read, candidate.name) ? "match" : "mismatch");
+  if (!read || !candidate.name) return signal("name", "unknown", candidate.game);
+  return signal("name", nameMatchesOcr(read, candidate.name) ? "match" : "mismatch", candidate.game);
 }
 
 function compareSetCode(evidence: ScanEvidence, candidate: CandidatePrinting): EvidenceSignal {
   const read = evidence.printing.setCode?.value;
-  if (!read || !candidate.setCode) return signal("setCode", "unknown");
-  return signal("setCode", read.trim().toLowerCase() === candidate.setCode.trim().toLowerCase() ? "match" : "mismatch");
+  if (!read || !candidate.setCode) return signal("setCode", "unknown", candidate.game);
+  return signal(
+    "setCode",
+    read.trim().toLowerCase() === candidate.setCode.trim().toLowerCase() ? "match" : "mismatch",
+    candidate.game,
+  );
 }
 
 function compareCollectorNumber(evidence: ScanEvidence, candidate: CandidatePrinting): EvidenceSignal {
   const read = evidence.printing.collectorNumber?.value;
-  if (!read || !candidate.collectorNumber) return signal("collectorNumber", "unknown");
+  if (!read || !candidate.collectorNumber) return signal("collectorNumber", "unknown", candidate.game);
   return signal(
     "collectorNumber",
     collectorNumberKey(read) === collectorNumberKey(candidate.collectorNumber) ? "match" : "mismatch",
+    candidate.game,
   );
 }
 
 function compareRarity(evidence: ScanEvidence, candidate: CandidatePrinting): EvidenceSignal {
   const read = evidence.printing.rarity?.value;
-  if (!read || !candidate.rarity) return signal("rarity", "unknown");
+  if (!read || !candidate.rarity) return signal("rarity", "unknown", candidate.game);
   const a = normalizeRarity(read);
   const b = normalizeRarity(candidate.rarity);
   // Unmappable spellings on either side → stand down (unknown), never mismatch.
-  if (a === null || b === null) return signal("rarity", "unknown");
-  return signal("rarity", a === b ? "match" : "mismatch");
+  if (a === null || b === null) return signal("rarity", "unknown", candidate.game);
+  return signal("rarity", a === b ? "match" : "mismatch", candidate.game);
 }
 
 function compareArtwork(evidence: ScanEvidence, candidate: CandidatePrinting): EvidenceSignal {
@@ -387,8 +473,8 @@ function compareArtwork(evidence: ScanEvidence, candidate: CandidatePrinting): E
   // comparison, recorded as evidence) AND a deterministic illustrationId on the
   // candidate. Pokémon sources provide none — that is genuine unknown, not a
   // mismatch, so absence never penalizes a candidate.
-  if (!read || !candidate.illustrationId) return signal("artwork", "unknown");
-  return signal("artwork", read === candidate.illustrationId ? "match" : "mismatch");
+  if (!read || !candidate.illustrationId) return signal("artwork", "unknown", candidate.game);
+  return signal("artwork", read === candidate.illustrationId ? "match" : "mismatch", candidate.game);
 }
 
 /**
@@ -422,4 +508,45 @@ export function calculateEvidenceMass(signals: EvidenceSignal[]): number {
     if (s.state === "mismatch") return total - s.weight;
     return total; // unknown → neutral
   }, 0);
+}
+
+// ─── Evidence Coverage (Phase 5.10) ──────────────────────────────────────────
+// Coverage summarizes the AVAILABILITY axis of an assessment: of the sensors
+// that could have fired, how many did? It is OBSERVATIONAL — it answers the
+// calibration questions ("how many expected sensors were available?", "is the
+// EvidenceMass being limited by unavailable data?") without feeding back into
+// mass, ranking, or the decision gate. It is deliberately kept separate from
+// EvidenceMass so score quality and score CONTEXT never get blended.
+
+export interface EvidenceCoverage {
+  /** Sensors the source is expected to provide for this game (present + failed). */
+  expected: number;
+  /** Expected sensors that produced a reading this scan (availability "supported"). */
+  present: number;
+  /** Expected sensors that produced NO reading this scan (availability "failed"). */
+  failed: number;
+  /** Sensors the source cannot provide for this game (availability "unavailable"). */
+  unavailable: number;
+  /** Total signals assessed (present + failed + unavailable). */
+  total: number;
+}
+
+/**
+ * Summarize the coverage of an assessed signal set. Pure and derived — it reads
+ * each signal's `availability` and tallies it. `expected` counts the sensors the
+ * source SHOULD provide (so it is stable even when a supported sensor fails),
+ * while `present` counts those that actually fired. Never an input to any
+ * decision; carried alongside EvidenceMass purely so Aura can report the
+ * confidence CONTEXT behind a score.
+ */
+export function calculateEvidenceCoverage(signals: EvidenceSignal[]): EvidenceCoverage {
+  let present = 0;
+  let failed = 0;
+  let unavailable = 0;
+  for (const s of signals) {
+    if (s.availability === "supported") present++;
+    else if (s.availability === "failed") failed++;
+    else unavailable++;
+  }
+  return { expected: present + failed, present, failed, unavailable, total: signals.length };
 }

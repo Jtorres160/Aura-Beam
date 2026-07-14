@@ -20,6 +20,7 @@ import { buildScanTelemetry, withSelection } from "@/lib/scanner/telemetry";
 import {
   assessIdentitySignals,
   calculateEvidenceMass,
+  calculateEvidenceCoverage,
   reading,
   type CandidatePrinting,
   type ScanEvidence,
@@ -76,6 +77,7 @@ function scored(ev: ScanEvidence, chosen: CandidatePrinting, decision: Decision)
     margin: decision.action === "accept" ? 1 : 0,
     evidenceMass: calculateEvidenceMass(signals),
     evidenceSignals: signals,
+    evidenceCoverage: calculateEvidenceCoverage(signals),
     methodLabel: decision.method ?? decision.action,
   };
 }
@@ -103,7 +105,7 @@ describe("telemetry — EvidenceSignal capture", () => {
     assert.deepEqual(t.evidenceSignals, assessIdentitySignals(ev, chosen));
   });
 
-  test("each signal carries type, state and weight — and nothing derived", () => {
+  test("each signal carries type, state, weight and availability — and nothing derived", () => {
     const chosen = printing({ externalId: "a" });
     const ev = evidence({ name: "Counterspell", setCode: "mh2", collectorNumber: "267", illustrationId: "illo-a" });
     const decision = acceptDecision(chosen, "set-cn-verified");
@@ -112,7 +114,9 @@ describe("telemetry — EvidenceSignal capture", () => {
     const t = buildScanTelemetry({ evidence: ev, scored: out, decision, printingsCount: 3 });
 
     for (const s of t.evidenceSignals ?? []) {
-      assert.deepEqual(Object.keys(s).sort(), ["state", "type", "weight"]);
+      // availability joins the signal shape in Phase 5.10 — it is descriptive
+      // (supported/unavailable/failed), NOT a derived confidence field.
+      assert.deepEqual(Object.keys(s).sort(), ["availability", "state", "type", "weight"]);
     }
     // No derived analysis fields leak in (winningSignal, strongestEvidence, …).
     assert.equal("winningSignal" in t, false);
@@ -145,6 +149,44 @@ describe("telemetry — EvidenceSignal capture", () => {
     assert.equal(byType.collectorNumber, "match");
   });
 
+  test("captures evidenceCoverage verbatim alongside the signals (Phase 5.10)", () => {
+    const chosen = printing({ externalId: "a" }); // MTG candidate (rarity "uncommon")
+    const ev = evidence({
+      name: "Counterspell",
+      setCode: "mh2",
+      collectorNumber: "267",
+      rarity: "uncommon",
+      illustrationId: "illo-a",
+    });
+    const decision = acceptDecision(chosen, "set-cn-verified");
+    const out = scored(ev, chosen, decision);
+
+    const t = buildScanTelemetry({ evidence: ev, scored: out, decision, printingsCount: 3 });
+
+    // Same reference the scorer produced — not recomputed here.
+    assert.equal(t.evidenceCoverage, out.evidenceCoverage);
+    // MTG full-read: five expected sensors, all present.
+    assert.deepEqual(t.evidenceCoverage, { expected: 5, present: 5, failed: 0, unavailable: 0, total: 5 });
+  });
+
+  test("disambiguation omits evidenceCoverage (no chosen printing)", () => {
+    const candidates = [printing({ externalId: "a" }), printing({ externalId: "b", illustrationId: "illo-b" })];
+    const ev = evidence({ name: "Counterspell" });
+    const decision = disambiguateDecision(candidates);
+    const out: ScoreOutput = {
+      decision,
+      confidence: 0,
+      margin: 0,
+      evidenceMass: 0,
+      evidenceSignals: [],
+      evidenceCoverage: calculateEvidenceCoverage([]),
+      methodLabel: "disambiguate",
+    };
+
+    const t = buildScanTelemetry({ evidence: ev, scored: out, decision, printingsCount: 2 });
+    assert.equal(t.evidenceCoverage, undefined, "no printing assessed → no coverage recorded");
+  });
+
   test("disambiguation carries an empty signal array (no chosen printing)", () => {
     const candidates = [printing({ externalId: "a" }), printing({ externalId: "b", illustrationId: "illo-b" })];
     const ev = evidence({ name: "Counterspell" });
@@ -155,6 +197,7 @@ describe("telemetry — EvidenceSignal capture", () => {
       margin: 0,
       evidenceMass: 0,
       evidenceSignals: [],
+      evidenceCoverage: calculateEvidenceCoverage([]),
       methodLabel: "disambiguate",
     };
 

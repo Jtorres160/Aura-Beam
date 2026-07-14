@@ -10,7 +10,7 @@
 // appended to the SAME row via withSelection() — the user looked at the
 // physical card, so their pick is ground truth for that scan's image evidence.
 
-import type { EvidenceSignal, ScanEvidence } from "./evidence";
+import type { EvidenceCoverage, EvidenceSignal, ScanEvidence } from "./evidence";
 import type { Decision } from "./decision";
 import type { ScoreOutput } from "./score";
 
@@ -43,6 +43,13 @@ export interface ScanTelemetryV1 {
    *  consumers ignore it, so v stays 1 (no breaking change). Empty/absent when
    *  no printing was chosen (disambiguate/not-found). */
   evidenceSignals?: EvidenceSignal[];
+  /** Availability summary of `evidenceSignals` (Phase 5.10): how many expected
+   *  sensors fired vs. failed vs. are unavailable for this game. Purely
+   *  observational CONTEXT for the score — captured verbatim from the scorer,
+   *  never recomputed here, and never used to adjust confidence. Optional and
+   *  additive: older records omit it and older consumers ignore it, so v stays 1.
+   *  Absent when no printing was chosen (disambiguate/not-found). */
+  evidenceCoverage?: EvidenceCoverage;
   /** Size of the candidate pool the scorer chose among. */
   printingsCount: number;
   /** Candidates actually surfaced (grid size, or 1 for an accept). */
@@ -80,6 +87,9 @@ export function buildScanTelemetry(input: {
       evidenceMass: scored.evidenceMass,
     },
     evidenceSignals: scored.evidenceSignals,
+    // Only record coverage when a printing was actually assessed — an empty
+    // signal set has no meaningful coverage (disambiguate/not-found).
+    evidenceCoverage: scored.evidenceSignals.length ? scored.evidenceCoverage : undefined,
     printingsCount,
     presentedCount: decision.candidates?.length ?? (decision.printing ? 1 : 0),
     ocr,
