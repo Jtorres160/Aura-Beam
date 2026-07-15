@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { dbRetry, prisma } from "@/lib/prisma";
 import { auth } from "@/auth";
-import { messageForStage, runStage, stageOfError, type FailureStage } from "@/lib/scanner/failure";
+import { messageForStage, messageForUnavailableSources, runStage, stageOfError, type FailureStage } from "@/lib/scanner/failure";
 import {
   reading,
   reconcileSetCn,
@@ -168,11 +168,13 @@ export async function POST(req: NextRequest) {
 
     // ─── Step 2: Fetch all printings of this card ─────────────────────
     console.log(`[Scanner] Step 2: Fetching all printings for "${cardName}"...`);
-    const { printings, fallbackCard, fallbackMethod } = await runStage("candidates", () =>
+    const candidates = await runStage("candidates", () =>
       timed("candidatesMs", () =>
         fetchAllPrintings(cardName, effectiveGame, setCode, collectorNumber, manaCost, typeLine, powerToughness)
       )
     );
+    const { printings, fallbackCard } = candidates;
+    const fallbackMethod = candidates.status === "found" ? candidates.fallbackMethod : undefined;
 
     // Now the rule is genuinely needed — usually already resolved behind the
     // candidate fetch, so this await costs nothing.
@@ -207,6 +209,15 @@ export async function POST(req: NextRequest) {
     // ─── Step 4: Gate and respond ──────────────────────────────────────
     // Auto-scan saves without a review screen, so it demands more confidence.
     const decision: Decision = gateDecision(scored.decision, Boolean(isAutoScan), scored);
+
+    // The failure path has always logged timings; the SUCCESS path only wrote
+    // them to the DB, so a healthy-but-slow scan was invisible in the terminal —
+    // exactly the scan you want to watch. One line, same data as the telemetry.
+    console.log(
+      `[Scanner] ⏱  ${effectiveGame || "unknown"} ${Date.now() - startedAt}ms total | ` +
+      Object.entries(timings).map(([k, v]) => `${k.replace(/Ms$/, "")}=${v}`).join(" ") +
+      ` | printings=${printings.length} → ${decision.action}`
+    );
 
     // ─── Telemetry (pre-Phase 5): every attempt leaves an evidence record ─
     // Evidence + verdict + candidate counts, persisted with the attempt so
@@ -252,8 +263,43 @@ export async function POST(req: NextRequest) {
       return disambiguationResponse(cardName, decision.candidates, identifiedCard, pending?.id ?? null, decision.bestMatchExternalId);
     }
 
-    // Not-found is a VERDICT, not an error — persist it best-effort and answer
-    // 404 either way.
+    // ─── Nothing to show. Which of the two reasons is it? (Phase 5.13B) ──
+    // This is the fork the whole phase exists for. "The databases don't have
+    // this card" and "the databases didn't answer" both arrive here with zero
+    // candidates, and only one of them licenses us to say the card wasn't found.
+    //
+    // Note the ORDER: unavailable is checked FIRST. A source that went quiet
+    // makes the zero uninterpretable, so it outranks the not-found verdict no
+    // matter what else completed.
+    if (candidates.status === "provider_unavailable") {
+      // A verdict of "we don't know" — persisted like any other, so the rate of
+      // unanswerable scans is measurable rather than folded into not-found.
+      await dbRetry(() =>
+        prisma.scanHistory.create({
+          data: {
+            userId: session.user.id,
+            confidence: 0,
+            matchMethod: "provider-unavailable",
+            ocrText: telemetryJson,
+            processingTime: Date.now() - startedAt,
+          },
+        })
+      ).catch((err) => console.warn("[Scanner] Could not persist unavailable attempt (non-fatal):", err?.message));
+
+      console.log(`[Scanner] ⚠ Cannot verify "${cardName}" — unavailable: ${candidates.unavailable.join(", ")}`);
+      // 503, not 404: 404 asserts the card does not exist. It might; we did not
+      // find out. The status code has to mean what it says.
+      return NextResponse.json({
+        success: false,
+        stage: "provider-unavailable",
+        message: messageForUnavailableSources(candidates.unavailable, cardName),
+        unavailableSources: candidates.unavailable,
+        cardName,
+      }, { status: 503 });
+    }
+
+    // Not-found is a VERDICT, not an error — and now an EARNED one: every source
+    // we consulted answered, and none of them had this card.
     await dbRetry(() =>
       prisma.scanHistory.create({
         data: {

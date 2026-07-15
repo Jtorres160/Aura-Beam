@@ -1,45 +1,38 @@
 import type { CandidatePrinting } from "@/lib/scanner/evidence";
+import { fetchProviderJson } from "@/lib/providers/http";
 
 const BASE_URL = "https://db.ygoprodeck.com/api/v7/cardinfo.php";
 
 // Per-request timeout (Phase 5.2.5): a hung upstream must become a classified
-// failure, not an indefinitely spinning scan. Callers already treat throws as
-// "no result", so an AbortError degrades gracefully.
-const FETCH_TIMEOUT_MS = 8_000;
+// failure, not an indefinitely spinning scan.
+//
+// Phase 5.13B: searchYugiohCards throws a classified ProviderError instead of
+// swallowing a failure into []. YGOPRODeck answers 400 for a name that matched
+// nothing, so 400 — and only 400 — is a real zero here.
+//
+// getYugiohCardById() stays lenient for its non-scanner callers.
 const fetchOpts = (): RequestInit => ({
-  signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  signal: AbortSignal.timeout(8_000),
 });
 
 export async function searchYugiohCards(query: string, setCode?: string) {
-  try {
-    // Try exact name first
-    const exactRes = await fetch(`${BASE_URL}?name=${encodeURIComponent(query)}`, fetchOpts());
-    if (exactRes.ok) {
-      const json = await exactRes.json();
-      if (json.data && json.data.length > 0) {
-        console.log(`[Yugioh] Exact match found for "${query}"`);
-        return json.data;
-      }
-    }
-
-    // Fall back to fuzzy name search
-    const fuzzyRes = await fetch(`${BASE_URL}?fname=${encodeURIComponent(query)}`, fetchOpts());
-    
-    if (!fuzzyRes.ok) {
-      if (fuzzyRes.status === 400) {
-        console.log(`[Yugioh] No results for "${query}"`);
-        return [];
-      }
-      throw new Error(`YGOPRODeck API Error: ${fuzzyRes.status}`);
-    }
-
-    const json = await fuzzyRes.json();
-    console.log(`[Yugioh] Fuzzy search found ${json.data?.length || 0} results for "${query}"`);
-    return json.data || [];
-  } catch (error) {
-    console.error(`[Yugioh] Search failed for "${query}":`, error);
-    return [];
+  // Try exact name first. 400 = "no card by that name" — a real answer.
+  const exact = await fetchProviderJson<{ data?: any[] }>(
+    `${BASE_URL}?name=${encodeURIComponent(query)}`,
+    { emptyStatuses: [400] },
+  );
+  if (exact?.data?.length) {
+    console.log(`[Yugioh] Exact match found for "${query}"`);
+    return exact.data;
   }
+
+  // Fall back to fuzzy name search
+  const fuzzy = await fetchProviderJson<{ data?: any[] }>(
+    `${BASE_URL}?fname=${encodeURIComponent(query)}`,
+    { emptyStatuses: [400] },
+  );
+  console.log(`[Yugioh] Fuzzy search found ${fuzzy?.data?.length || 0} results for "${query}"`);
+  return fuzzy?.data ?? [];
 }
 
 export async function getYugiohCardById(id: string) {

@@ -1,4 +1,5 @@
 import type { CandidatePrinting } from "@/lib/scanner/evidence";
+import { fetchProviderJson } from "@/lib/providers/http";
 
 const SEARCH_URL = "https://api.scryfall.com/cards/search";
 const NAMED_URL = "https://api.scryfall.com/cards/named";
@@ -9,12 +10,18 @@ const SCRYFALL_HEADERS = {
 };
 
 // Per-request timeout (Phase 5.2.5): a hung upstream must become a classified
-// "candidates" failure, not an indefinitely spinning scan. Callers already
-// treat throws as "no result", so an AbortError degrades gracefully.
-const FETCH_TIMEOUT_MS = 8_000;
+// "candidates" failure, not an indefinitely spinning scan.
+//
+// Phase 5.13B: the CANDIDATE-generation functions below throw a classified
+// ProviderError rather than swallowing a failure into null/[]. Scryfall answers
+// 404 for a search that genuinely matched nothing, so 404 — and ONLY 404 —
+// resolves to a real zero here.
+//
+// getScryfallCardById() is deliberately left lenient: its callers (the card
+// route, price cron) want a null.
 const fetchOpts = (): RequestInit => ({
   headers: SCRYFALL_HEADERS,
-  signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  signal: AbortSignal.timeout(8_000),
 });
 
 // Scryfall requests 50-100ms delay between requests to avoid blacklisting
@@ -24,34 +31,36 @@ const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
  * Primary search: Uses Scryfall's "named" endpoint for exact/fuzzy single-card lookup.
  */
 export async function searchScryfallCardByName(query: string, setCode?: string) {
-  try {
-    let url = `${NAMED_URL}?exact=${encodeURIComponent(query)}`;
-    if (setCode) url += `&set=${encodeURIComponent(setCode)}`;
+  let url = `${NAMED_URL}?exact=${encodeURIComponent(query)}`;
+  if (setCode) url += `&set=${encodeURIComponent(setCode)}`;
 
-    const exactRes = await fetch(url, fetchOpts());
-    if (exactRes.ok) {
-      const card = await exactRes.json();
-      console.log(`[Scryfall] Exact match found: "${card.name}" (Set: ${setCode || 'any'})`);
-      return card;
-    }
-
-    await delay(100);
-
-    let fuzzyUrl = `${NAMED_URL}?fuzzy=${encodeURIComponent(query)}`;
-    if (setCode) fuzzyUrl += `&set=${encodeURIComponent(setCode)}`;
-    const fuzzyRes = await fetch(fuzzyUrl, fetchOpts());
-    if (fuzzyRes.ok) {
-      const card = await fuzzyRes.json();
-      console.log(`[Scryfall] Fuzzy match found: "${card.name}"`);
-      return card;
-    }
-
-    console.log(`[Scryfall] No named match for "${query}"`);
-    return null;
-  } catch (error) {
-    console.error(`[Scryfall] Named lookup failed for "${query}":`, error);
-    return null;
+  // 404 from /named means "no card by that name" — a real answer.
+  const exact = await fetchProviderJson<any>(url, {
+    headers: SCRYFALL_HEADERS,
+    emptyStatuses: [404],
+  });
+  if (exact) {
+    console.log(`[Scryfall] Exact match found: "${exact.name}" (Set: ${setCode || 'any'})`);
+    return exact;
   }
+
+  await delay(100);
+
+  let fuzzyUrl = `${NAMED_URL}?fuzzy=${encodeURIComponent(query)}`;
+  if (setCode) fuzzyUrl += `&set=${encodeURIComponent(setCode)}`;
+  // 400 too: /named answers 400 when a fuzzy term matches too many cards to
+  // disambiguate. That is an answer ("your term is ambiguous"), not a failure.
+  const fuzzy = await fetchProviderJson<any>(fuzzyUrl, {
+    headers: SCRYFALL_HEADERS,
+    emptyStatuses: [404, 400],
+  });
+  if (fuzzy) {
+    console.log(`[Scryfall] Fuzzy match found: "${fuzzy.name}"`);
+    return fuzzy;
+  }
+
+  console.log(`[Scryfall] No named match for "${query}"`);
+  return null;
 }
 
 /**
@@ -59,22 +68,14 @@ export async function searchScryfallCardByName(query: string, setCode?: string) 
  * This ignores the name entirely, bypassing OCR hallucinations.
  */
 export async function searchScryfallBySetAndCollector(setCode: string, collectorNumber: string) {
-  try {
-    const query = `set:${setCode} cn:${collectorNumber}`;
-    const response = await fetch(`${SEARCH_URL}?q=${encodeURIComponent(query)}`, fetchOpts());
-    
-    if (response.ok) {
-      const json = await response.json();
-      if (json.data && json.data.length > 0) {
-        console.log(`[Scryfall] Found EXACT match via set/collector: ${json.data[0].name}`);
-        return json.data[0];
-      }
-    }
-    return null;
-  } catch (error) {
-    console.error(`[Scryfall] Set/Collector search failed:`, error);
-    return null;
-  }
+  const query = `set:${setCode} cn:${collectorNumber}`;
+  const json = await fetchProviderJson<{ data?: any[] }>(
+    `${SEARCH_URL}?q=${encodeURIComponent(query)}`,
+    { headers: SCRYFALL_HEADERS, emptyStatuses: [404] },
+  );
+  const hit = json?.data?.[0];
+  if (hit) console.log(`[Scryfall] Found EXACT match via set/collector: ${hit.name}`);
+  return hit ?? null;
 }
 
 /**
@@ -88,63 +89,57 @@ export async function searchScryfallDeepFallback(
   powerToughness: string,
   setCode: string
 ) {
-  try {
-    let queryParts = [];
-    
-    // Scryfall's exact text search requires exact words, so if the name is completely 
-    // hallucinated we might still miss. But we try to use the first word if it looks real, 
-    // or just pass the whole partial name in quotes.
-    if (partialName && partialName.length > 2) {
-      // Just use the first longest word to be safe against hallucinations
-      const longestWord = partialName.split(' ').reduce((a, b) => a.length > b.length ? a : b, "");
-      if (longestWord.length >= 3) {
-        queryParts.push(`"${longestWord}"`);
-      } else {
-        queryParts.push(`"${partialName}"`);
-      }
-    }
+  const queryParts = [];
 
-    if (setCode) queryParts.push(`set:${setCode}`);
-    
-    // Type line (e.g. "Creature - Goblin" -> t:Creature t:Goblin)
-    if (typeLine) {
-      const types = typeLine.split(/[\s\-—]+/).filter(t => t.length > 2);
-      for (const t of types) {
-        queryParts.push(`t:"${t}"`);
-      }
+  // Scryfall's exact text search requires exact words, so if the name is completely
+  // hallucinated we might still miss. But we try to use the first word if it looks real,
+  // or just pass the whole partial name in quotes.
+  if (partialName && partialName.length > 2) {
+    // Just use the first longest word to be safe against hallucinations
+    const longestWord = partialName.split(' ').reduce((a, b) => a.length > b.length ? a : b, "");
+    if (longestWord.length >= 3) {
+      queryParts.push(`"${longestWord}"`);
+    } else {
+      queryParts.push(`"${partialName}"`);
     }
-
-    // Mana cost (e.g. "{3}" or "3")
-    if (manaCost) {
-      // Clean it up just in case, but scryfall accepts m:3 or m:{3}
-      const cleanMana = manaCost.replace(/[^0-9WUBRGX\{\}]/gi, '');
-      if (cleanMana) queryParts.push(`m:${cleanMana}`);
-    }
-
-    // Power and Toughness (e.g. "2/2")
-    if (powerToughness && powerToughness.includes('/')) {
-      const [pow, tou] = powerToughness.split('/');
-      if (pow && pow.trim() !== "*") queryParts.push(`pow:${pow.trim()}`);
-      if (tou && tou.trim() !== "*") queryParts.push(`tou:${tou.trim()}`);
-    }
-
-    const query = queryParts.join(' ');
-    console.log(`[Scryfall] Deep Semantic Fallback Query: "${query}"`);
-
-    const response = await fetch(`${SEARCH_URL}?q=${encodeURIComponent(query)}&order=released`, fetchOpts());
-    
-    if (response.ok) {
-      const json = await response.json();
-      if (json.data && json.data.length > 0) {
-        console.log(`[Scryfall] Deep Semantic Fallback matched ${json.data.length} cards, picking: ${json.data[0].name}`);
-        return json.data[0];
-      }
-    }
-    return null;
-  } catch (error) {
-    console.error(`[Scryfall] Deep Semantic search failed:`, error);
-    return null;
   }
+
+  if (setCode) queryParts.push(`set:${setCode}`);
+
+  // Type line (e.g. "Creature - Goblin" -> t:Creature t:Goblin)
+  if (typeLine) {
+    const types = typeLine.split(/[\s\-—]+/).filter(t => t.length > 2);
+    for (const t of types) {
+      queryParts.push(`t:"${t}"`);
+    }
+  }
+
+  // Mana cost (e.g. "{3}" or "3")
+  if (manaCost) {
+    // Clean it up just in case, but scryfall accepts m:3 or m:{3}
+    const cleanMana = manaCost.replace(/[^0-9WUBRGX{}]/gi, '');
+    if (cleanMana) queryParts.push(`m:${cleanMana}`);
+  }
+
+  // Power and Toughness (e.g. "2/2")
+  if (powerToughness && powerToughness.includes('/')) {
+    const [pow, tou] = powerToughness.split('/');
+    if (pow && pow.trim() !== "*") queryParts.push(`pow:${pow.trim()}`);
+    if (tou && tou.trim() !== "*") queryParts.push(`tou:${tou.trim()}`);
+  }
+
+  const query = queryParts.join(' ');
+  console.log(`[Scryfall] Deep Semantic Fallback Query: "${query}"`);
+
+  const json = await fetchProviderJson<{ data?: any[] }>(
+    `${SEARCH_URL}?q=${encodeURIComponent(query)}&order=released`,
+    { headers: SCRYFALL_HEADERS, emptyStatuses: [404] },
+  );
+  const hit = json?.data?.[0];
+  if (hit) {
+    console.log(`[Scryfall] Deep Semantic Fallback matched ${json!.data!.length} cards, picking: ${hit.name}`);
+  }
+  return hit ?? null;
 }
 
 /**
@@ -192,15 +187,12 @@ export async function searchScryfallCards(query: string, setCode?: string, colle
  * Returns printings with their image URLs for the AI to compare.
  */
 export async function fetchAllMTGPrintings(name: string): Promise<any[]> {
-  try {
-    const query = `!"${name}" unique:prints`;
-    const res = await fetch(`${SEARCH_URL}?q=${encodeURIComponent(query)}&order=released&dir=desc`, fetchOpts());
-    if (!res.ok) return [];
-    const json = await res.json();
-    return json.data || [];
-  } catch {
-    return [];
-  }
+  const query = `!"${name}" unique:prints`;
+  const json = await fetchProviderJson<{ data?: any[] }>(
+    `${SEARCH_URL}?q=${encodeURIComponent(query)}&order=released&dir=desc`,
+    { headers: SCRYFALL_HEADERS, emptyStatuses: [404] },
+  );
+  return json?.data ?? [];
 }
 
 export async function getScryfallCardById(id: string) {

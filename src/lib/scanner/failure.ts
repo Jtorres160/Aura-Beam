@@ -12,15 +12,16 @@
 /** Where in the pipeline an attempt failed. Also used as the suffix of the
  *  persisted ScanHistory.matchMethod ("error:<stage>") for failed attempts. */
 export type FailureStage =
-  | "rate-limit"   // burst/daily cap (a refusal, not an error)
-  | "parse"        // request body unreadable / no image
-  | "ocr"          // full-pass OCR call failed
-  | "no-card"      // OCR ran fine but saw no trading card
-  | "candidates"   // card-database candidate fetch threw
-  | "scoring"      // scorer/ranking threw
-  | "not-found"    // pipeline completed; nothing matched (a verdict, not an error)
-  | "database"     // a Prisma/DB operation threw
-  | "unknown";     // anything unattributed
+  | "rate-limit"            // burst/daily cap (a refusal, not an error)
+  | "parse"                 // request body unreadable / no image
+  | "ocr"                   // full-pass OCR call failed
+  | "no-card"               // OCR ran fine but saw no trading card
+  | "candidates"            // card-database candidate fetch threw
+  | "scoring"               // scorer/ranking threw
+  | "not-found"             // pipeline completed; the databases DO NOT have it (a verdict)
+  | "provider-unavailable"  // pipeline completed; we could not ASK (a verdict — 5.13B)
+  | "database"              // a Prisma/DB operation threw
+  | "unknown";              // anything unattributed
 
 /** Wraps a thrown error with the pipeline stage it escaped from. */
 export class StageError extends Error {
@@ -64,4 +65,19 @@ const STAGE_MESSAGES: Partial<Record<FailureStage, string>> = {
 
 export function messageForStage(stage: FailureStage): string {
   return STAGE_MESSAGES[stage] ?? STAGE_MESSAGES.unknown!;
+}
+
+/**
+ * What to tell a collector when the pipeline ran fine but a card database never
+ * answered (Phase 5.13B).
+ *
+ * This is deliberately NOT in STAGE_MESSAGES: it names the sources that went
+ * quiet, so it cannot be a constant. The wording carries the whole point of the
+ * phase — we did not fail to find the card, we failed to LOOK. Saying "no match
+ * was found" here would be asserting a fact we do not have.
+ */
+export function messageForUnavailableSources(sources: string[], cardName?: string): string {
+  const named = sources.length > 0 ? sources.join(" and ") : "The card database";
+  const subject = cardName ? `"${cardName}"` : "this card";
+  return `We read ${subject} from your card, but ${named} didn't respond — so we can't confirm which printing it is. Your image was fine; try again in a moment.`;
 }

@@ -1,8 +1,9 @@
 import type { CandidatePrinting } from "@/lib/scanner/evidence";
+import { fetchProviderJson } from "@/lib/providers/http";
 
 const BASE_URL = "https://api.pokemontcg.io/v2/cards";
 
-function getHeaders(): HeadersInit {
+function getHeaders(): Record<string, string> {
   const apiKey = process.env.POKEMON_TCG_API_KEY;
   const headers: Record<string, string> = {};
   if (apiKey) {
@@ -12,36 +13,44 @@ function getHeaders(): HeadersInit {
 }
 
 // Per-request timeout (Phase 5.2.5): a hung upstream must become a classified
-// failure, not an indefinitely spinning scan. Callers already treat throws as
-// "no result", so an AbortError degrades gracefully.
-const FETCH_TIMEOUT_MS = 8_000;
+// failure, not an indefinitely spinning scan.
+//
+// Phase 5.13B: the CANDIDATE-generation functions below no longer swallow that
+// failure into []. They throw a classified ProviderError, because "the API
+// timed out" and "this card does not exist" are different facts and the caller
+// is the only layer that can tell a collector which one happened. The comment
+// that used to sit here — "callers already treat throws as no result, so an
+// AbortError degrades gracefully" — described the bug: degrading a timeout to
+// "no result" is exactly how a collector got told their card was not real.
+//
+// getPokemonCardById() below is deliberately NOT changed: its callers (the card
+// route, price cron, watchlist) want a lenient null. Their leniency is a
+// separate question from candidate generation's.
 const fetchOpts = (): RequestInit => ({
   headers: getHeaders(),
-  signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  signal: AbortSignal.timeout(8_000),
 });
 
+/** Throws ProviderError when the API does not answer. Never returns [] to mean
+ *  "I broke" — an empty array here is a real "no cards match". */
 export async function searchPokemonCards(query: string, setCode?: string, collectorNumber?: string) {
-  try {
-    let searchQuery = `name:"${encodeURIComponent(query)}"`;
-    if (setCode) {
-      searchQuery += ` (set.id:${encodeURIComponent(setCode)} OR set.ptcgoCode:${encodeURIComponent(setCode)} OR set.name:"*${encodeURIComponent(setCode)}*")`;
-    }
-    if (collectorNumber) {
-      searchQuery += ` number:${encodeURIComponent(collectorNumber)}`;
-    }
-    
-    const response = await fetch(`${BASE_URL}?q=${searchQuery}&pageSize=50`, fetchOpts());
-
-    if (!response.ok) {
-      throw new Error(`Pokemon TCG API Error: ${response.status}`);
-    }
-
-    const json = await response.json();
-    return json.data || [];
-  } catch (error) {
-    console.error(`Failed to fetch from Pokemon TCG API:`, error);
-    return [];
+  let searchQuery = `name:"${query}"`;
+  if (setCode) {
+    searchQuery += ` (set.id:${setCode} OR set.ptcgoCode:${setCode} OR set.name:"*${setCode}*")`;
   }
+  if (collectorNumber) {
+    searchQuery += ` number:${collectorNumber}`;
+  }
+
+  // The whole q value is encoded ONCE, as a single parameter. The old code
+  // encoded the inner text and left the operators raw, which double-encoded any
+  // name with a space ("Mr. Mime" went up as "Mr.%20Mime") and only worked at
+  // all because fetch re-normalized it.
+  const json = await fetchProviderJson<{ data?: any[] }>(
+    `${BASE_URL}?q=${encodeURIComponent(searchQuery)}&pageSize=50`,
+    { headers: getHeaders() },
+  );
+  return json?.data ?? [];
 }
 
 /**
@@ -52,22 +61,15 @@ export async function searchPokemonCards(query: string, setCode?: string, collec
  * both zero-padded and bare collector numbers ("021" vs "21").
  */
 export async function searchPokemonBySetAndNumber(setCode: string, collectorNumber: string) {
-  try {
-    const num = collectorNumber.split("/")[0].trim();
-    const bare = num.replace(/^0+(?=\d)/, "");
-    const numberQuery = bare !== num ? `(number:"${num}" OR number:"${bare}")` : `number:"${num}"`;
-    const setQuery = `(set.ptcgoCode:"${setCode}" OR set.id:"${setCode.toLowerCase()}")`;
-    const response = await fetch(
-      `${BASE_URL}?q=${encodeURIComponent(`${numberQuery} ${setQuery}`)}&pageSize=10`,
-      fetchOpts()
-    );
-    if (!response.ok) return [];
-    const json = await response.json();
-    return json.data || [];
-  } catch (error) {
-    console.error(`[Pokemon] Set/number lookup failed for ${setCode} #${collectorNumber}:`, error);
-    return [];
-  }
+  const num = collectorNumber.split("/")[0].trim();
+  const bare = num.replace(/^0+(?=\d)/, "");
+  const numberQuery = bare !== num ? `(number:"${num}" OR number:"${bare}")` : `number:"${num}"`;
+  const setQuery = `(set.ptcgoCode:"${setCode}" OR set.id:"${setCode.toLowerCase()}")`;
+  const json = await fetchProviderJson<{ data?: any[] }>(
+    `${BASE_URL}?q=${encodeURIComponent(`${numberQuery} ${setQuery}`)}&pageSize=10`,
+    { headers: getHeaders() },
+  );
+  return json?.data ?? [];
 }
 
 /**
@@ -75,18 +77,14 @@ export async function searchPokemonBySetAndNumber(setCode: string, collectorNumb
  * Returns up to 20 printings including small thumbnail images.
  */
 export async function fetchAllPokemonPrintings(name: string): Promise<any[]> {
-  try {
-    // Use exact name match to avoid getting unrelated cards
-    const searchQuery = `name:"${encodeURIComponent(name)}"`;
-    const response = await fetch(`${BASE_URL}?q=${searchQuery}&pageSize=50&orderBy=releaseDate`, fetchOpts());
-    if (!response.ok) return [];
-    const json = await response.json();
-    // Filter to only exact name matches, cap at 20
-    const exact = (json.data || []).filter((c: any) => c.name.toLowerCase() === name.toLowerCase());
-    return exact.slice(0, 20);
-  } catch {
-    return [];
-  }
+  // Use exact name match to avoid getting unrelated cards
+  const json = await fetchProviderJson<{ data?: any[] }>(
+    `${BASE_URL}?q=${encodeURIComponent(`name:"${name}"`)}&pageSize=50&orderBy=releaseDate`,
+    { headers: getHeaders() },
+  );
+  // Filter to only exact name matches, cap at 20
+  const exact = (json?.data ?? []).filter((c: any) => c.name?.toLowerCase() === name.toLowerCase());
+  return exact.slice(0, 20);
 }
 
 export async function getPokemonCardById(id: string) {

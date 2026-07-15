@@ -1302,7 +1302,13 @@ export default function ScannerPage() {
                 <div className="w-20 h-20 rounded-xl bg-destructive/10 flex items-center justify-center mb-8 border border-destructive/20">
                   <AlertCircle className="h-8 w-8 text-destructive" />
                 </div>
-                <h2 className="font-serif text-2xl mb-2">Scan failed</h2>
+                {/* A card database that went quiet is not a failed scan (Phase
+                    5.13B). "Scan failed" over a message that says "your image was
+                    fine" tells the collector they did something wrong, when what
+                    actually happened is that we couldn't reach a source. */}
+                <h2 className="font-serif text-2xl mb-2">
+                  {errorStage === "provider-unavailable" ? "Couldn't verify" : "Scan failed"}
+                </h2>
                 <p className="text-sm text-muted-foreground mb-2 max-w-xs text-center">{errorMessage}</p>
                 {/* Failure stage (Phase 5.2.5) — names WHERE it failed, so a
                     field report is actionable instead of "it failed". */}

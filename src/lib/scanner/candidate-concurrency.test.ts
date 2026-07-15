@@ -107,7 +107,8 @@ describe("fetchAllPrintings — independent lookups run together", () => {
 
     const result = await fetchAllPrintings("Charizard", "POKEMON", "OBF", "006", "", "", "");
 
-    assert.equal(result.fallbackMethod, "set-cn-verified");
+    assert.equal(result.status, "found");
+    assert.equal(result.status === "found" ? result.fallbackMethod : undefined, "set-cn-verified");
     assert.equal(result.fallbackCard?.name, "Charizard");
   });
 
@@ -133,7 +134,8 @@ describe("fetchAllPrintings — independent lookups run together", () => {
     }) as any;
 
     const result = await fetchAllPrintings("Charizard", "POKEMON", "OBF", "006", "", "", "");
-    assert.equal(result.fallbackMethod, "set-cn-verified");
+    assert.equal(result.status, "found");
+    assert.equal(result.status === "found" ? result.fallbackMethod : undefined, "set-cn-verified");
 
     // Let any unhandled rejection surface before the test ends.
     await new Promise((r) => setTimeout(r, 20));
