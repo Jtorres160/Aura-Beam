@@ -22,6 +22,7 @@ import {
   type CaptureRegion,
   type CaptureResult,
 } from "@/lib/scanner/capture";
+import type { CaptureFailureReason } from "@/lib/scanner/capture-rejection";
 import { LiveMetricsController } from "@/lib/scanner/live-metrics";
 import { evaluateReadiness, LIVE_THRESHOLDS } from "@/lib/scanner/readiness";
 // TEMPORARY flag-gated diagnostics collector (Phase 4.5 auto/bulk stall debug).
@@ -363,14 +364,39 @@ export default function ScannerPage() {
     });
   }, []);
 
+  // Report a gate rejection so "capture blocked the scan" is measurable server-
+  // side (Phase 5.14.3). Fire-and-forget by design: this is observation, the
+  // gate has already decided, and the retry must not wait on a telemetry POST.
+  // A failed report is one lost measurement and nothing else — never surfaced to
+  // the user, never retried, never inferred back.
+  const reportCaptureRejection = useCallback((reason: CaptureFailureReason, mode?: string) => {
+    void fetch("/api/scanner/capture-rejected", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        reason,
+        mode,
+        // The active UI filter, not the card's game — no card was read here.
+        game: selectedGame === "All" ? undefined : selectedGame,
+      }),
+      keepalive: true,
+    }).catch(() => {});
+  }, [selectedGame]);
+
+  // The single choke point for all three capture paths (manual, smart, legacy
+  // auto) — reporting here means no path can be added later that silently skips
+  // measurement.
   const captureBestFrame = useCallback(
-    (frameCount: number, debugLabel?: string): Promise<CaptureResult> =>
-      captureSharpestFrame(videoRef.current, canvasRef.current, {
+    async (frameCount: number, debugLabel?: string): Promise<CaptureResult> => {
+      const result = await captureSharpestFrame(videoRef.current, canvasRef.current, {
         frameCount,
         roi: computeRoiForCapture() ?? undefined,
         debugLabel,
-      }),
-    [computeRoiForCapture]
+      });
+      if (!result.ok) reportCaptureRejection(result.reason, debugLabel);
+      return result;
+    },
+    [computeRoiForCapture, reportCaptureRejection]
   );
 
   // Surface (and coalesce) one skip reason at a time; fades after a beat.

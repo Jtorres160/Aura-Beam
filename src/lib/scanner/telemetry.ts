@@ -13,6 +13,7 @@
 import type { EvidenceCoverage, EvidenceSignal, ScanEvidence } from "./evidence";
 import type { CandidateOutcome, CandidateSourceStatus } from "./candidates";
 import type { Decision } from "./decision";
+import type { FailureStage } from "./failure";
 import type { ScoreOutput } from "./score";
 
 /** Ground-truth label: what the user picked from the disambiguation grid. */
@@ -123,6 +124,72 @@ export interface ScanTelemetryV1 {
    *  failures clustered, and on which source?" — unanswerable before 5.13C,
    *  because the failure became a 404 and left no trace at all. */
   selectionAttempts?: SelectionAttemptFailure[];
+}
+
+/**
+ * Telemetry for an attempt that ended BEFORE the scorer ran (Phase 5.14.3).
+ *
+ * These records are structurally different from ScanTelemetryV1 and that is the
+ * point: there is no evidence bundle, no decision and no candidate pool, because
+ * those stages never executed. Emitting a ScanTelemetryV1 here would force
+ * inventing a `decision` and a `printingsCount: 0` for a scorer that was never
+ * called — a fabricated zero standing in for an absent measurement, which is
+ * exactly the error the truth boundary exists to prevent.
+ *
+ * `v: 1` and the `error` shape match what the route's catch-all has always
+ * written, so existing records and readers are unaffected. `failureStage` is
+ * new and additive.
+ *
+ * WHY THIS EXISTS: the extraction branch returned early with NO row at all, so
+ * a failed OCR call and a frame with no card in it left zero trace in the
+ * database. Both are genuinely measured facts about a real scan attempt, and
+ * both were invisible.
+ */
+export interface ScanFailureTelemetryV1 {
+  v: 1;
+  /** Which stage the attempt died at, from the pipeline's one taxonomy. */
+  failureStage: FailureStage;
+  /**
+   * The extraction layer's own verdict, when extraction is what ended the
+   * attempt. The distinction is the whole value of the field and it is a real
+   * one, not a shade of the same thing:
+   *
+   *   "no_card"  the OCR call SUCCEEDED and reported no trading card in frame.
+   *              A measurement of the image.
+   *   "failed"   the OCR call itself errored or timed out. We learned nothing
+   *              about the image at all.
+   *
+   * Collapsing these would blame the collector's photo for our outage.
+   */
+  extractionStatus?: "no_card" | "failed";
+  /** Present when a stage threw. Absent for verdicts like no_card, which are
+   *  outcomes rather than errors. */
+  error?: { stage: FailureStage; message: string };
+  game?: string;
+  isAutoScan?: boolean;
+  /** Per-stage wall-clock timings for the stages that DID run. */
+  timings?: Record<string, number>;
+}
+
+export function buildFailureTelemetry(input: {
+  stage: FailureStage;
+  extractionStatus?: ScanFailureTelemetryV1["extractionStatus"];
+  /** Only for genuine errors — omit for verdicts. */
+  errorMessage?: string;
+  game?: string;
+  isAutoScan?: boolean;
+  timings?: Record<string, number>;
+}): ScanFailureTelemetryV1 {
+  const { stage, extractionStatus, errorMessage, game, isAutoScan, timings } = input;
+  return {
+    v: 1,
+    failureStage: stage,
+    extractionStatus,
+    error: errorMessage === undefined ? undefined : { stage, message: errorMessage },
+    game,
+    isAutoScan,
+    timings,
+  };
 }
 
 export function buildScanTelemetry(input: {

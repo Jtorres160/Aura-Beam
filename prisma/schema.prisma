@@ -37,6 +37,7 @@ model User {
   folders        Folder[]
   decks          Deck[]
   portfolioSnapshots PortfolioSnapshot[]
+  captureRejections  CaptureRejection[]
 
   @@map("users")
 }
@@ -202,6 +203,42 @@ model ScanHistory {
 
   @@index([userId, createdAt])
   @@map("scan_history")
+}
+
+// ─── Capture Rejections ─────────────────────────────────────────────
+// One row per frame the client-side quality gate declined (Phase 5.14.3).
+//
+// A rejected frame is NOT a scan: no image was uploaded, no OCR call was spent,
+// no card database was consulted. It therefore does not belong in ScanHistory —
+// `prisma.scanHistory.count()` backs the admin "Total Scans" tile, and padding a
+// real number with non-scans would fabricate a measurement by contamination.
+// Separate table, separate question: "how often does capture block a scan
+// before the pipeline even starts, and why?"
+//
+// Every column is a direct measurement. `reason` is the gate's own verdict from
+// CAPTURE_FAILURE_REASONS; there is no derived "quality score" and no judgement
+// about the card or the user. Rows are written best-effort by the client — a
+// dropped report is a missing measurement, never an inferred one.
+
+model CaptureRejection {
+  id        String   @id @default(cuid())
+  userId    String
+  // One of CAPTURE_FAILURE_REASONS (capture-rejection.ts) — validated at the
+  // route boundary, so an unknown value is rejected rather than stored.
+  reason    String
+  // One of CAPTURE_MODES: manual | smart | auto. Null when the client didn't
+  // say — unknown, not assumed.
+  mode      String?
+  // The game filter active in the UI, or null for "All". Not the card's game:
+  // no card was ever read, so that is unknowable here.
+  game      String?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([createdAt])
+  @@index([userId, createdAt])
+  @@map("capture_rejections")
 }
 
 // ─── Watchlist ──────────────────────────────────────────────────────

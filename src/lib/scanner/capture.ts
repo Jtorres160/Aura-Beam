@@ -14,6 +14,8 @@
 // This module produces IMAGES only. It knows nothing about card identity — the
 // OCR/decision layers downstream are untouched.
 
+import type { CaptureFailureReason } from "./capture-rejection";
+
 // ─── Tunables ───────────────────────────────────────────────────────────────
 
 /** Preferred camera capture resolution (QHD). Requested as `ideal`, so the
@@ -148,11 +150,10 @@ export interface QualityMetrics {
   brightness: number;
 }
 
-export type CaptureFailureReason =
-  | "not-ready"
-  | "too-dark"
-  | "too-bright"
-  | "too-blurry";
+// The reason vocabulary lives in capture-rejection.ts so the server route that
+// RECORDS a rejection can import it without pulling this DOM-dependent module
+// into the server bundle. Re-exported here so existing callers are unaffected.
+export type { CaptureFailureReason } from "./capture-rejection";
 
 /** TEMPORARY calibration metadata (Phase 4.5) — lets us verify ROI behavior
  *  across devices. Not consumed by OCR/decision logic. */

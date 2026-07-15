@@ -13,7 +13,7 @@ import { type Decision, gateDecision } from "@/lib/scanner/decision";
 import { extractBottomStrip, extractCardFields } from "@/lib/scanner/extract";
 import { fetchAllPrintings } from "@/lib/scanner/candidates";
 import { scorer } from "@/lib/scanner/score";
-import { buildScanTelemetry } from "@/lib/scanner/telemetry";
+import { buildFailureTelemetry, buildScanTelemetry } from "@/lib/scanner/telemetry";
 import { getArchiveContext } from "@/lib/scanner/archive-context";
 import { persistPrinting } from "@/lib/cards/persist-printing";
 import { serializeSavedCard } from "@/lib/cards/serialize-card";
@@ -79,6 +79,17 @@ export async function POST(req: NextRequest) {
     const { image, game, isAutoScan } = body;
 
     if (!image) {
+      // Also unpersisted before 5.14.3. A request that reached us carrying no
+      // image is a real, measured parse failure, and it is worth being able to
+      // see: a client bug that silently stops attaching images would otherwise
+      // look exactly like users simply not scanning.
+      await persistAttempt(session.user.id, "error:parse", JSON.stringify(buildFailureTelemetry({
+        stage: "parse",
+        errorMessage: "No image provided from scanner",
+        game,
+        isAutoScan: Boolean(isAutoScan),
+        timings,
+      })), startedAt);
       return NextResponse.json({ success: false, stage: "parse", message: "No image provided from scanner" }, { status: 400 });
     }
 
@@ -110,6 +121,29 @@ export async function POST(req: NextRequest) {
     if (!extraction.ok) {
       // 404 = OCR worked but saw no card; anything else = the OCR call failed.
       const stage: FailureStage = extraction.status === 404 ? "no-card" : "ocr";
+      // Phase 5.14.3: this branch used to return with NO row written, so every
+      // extraction failure — the single most common way a scan ends without a
+      // card — left no trace in the database at all. "Which stage failed?" was
+      // unanswerable precisely when the answer was "this one".
+      //
+      // The two stages are recorded as different KINDS of record, because they
+      // are different claims: no-card is a VERDICT (the reader worked and saw
+      // no card), ocr is an ERROR (the reader itself broke). Matching the
+      // established matchMethod convention, verdicts are bare and errors carry
+      // the "error:" prefix — the same split as "not-found" vs "error:database".
+      await persistAttempt(session.user.id, stage === "no-card" ? "no-card" : `error:${stage}`, JSON.stringify(buildFailureTelemetry({
+        stage,
+        extractionStatus: stage === "no-card" ? "no_card" : "failed",
+        // The message is the reader's own words on a genuine error only. A
+        // no-card verdict gets none: there is no error to describe.
+        errorMessage: stage === "ocr" ? extraction.message : undefined,
+        // The REQUESTED game filter, not an identified one — extraction is what
+        // failed, so the card's actual game is unknown here and stays unknown.
+        // Undefined when the user scanned with "All" selected.
+        game,
+        isAutoScan: Boolean(isAutoScan),
+        timings,
+      })), startedAt);
       return NextResponse.json({ success: false, stage, message: extraction.message }, { status: extraction.status });
     }
 
@@ -393,6 +427,36 @@ function disambiguationResponse(cardName: string, candidates: CandidatePrinting[
     candidates: list,
     ocrData,
   });
+}
+
+// ─── Attempt Persistence (Phase 5.14.3) ────────────────────────────────────
+// Writes the black-box row for an attempt that ended without a card. Best-
+// effort by contract: telemetry must never break identification, so a failed
+// write is logged and swallowed. The caller has already decided what to tell
+// the user and does not branch on this.
+//
+// confidence 0 is not a claim of low confidence — no scorer ran. It is the
+// column's floor for a row that has no confidence to report, matching the
+// existing not-found / provider-unavailable writes.
+async function persistAttempt(
+  userId: string,
+  matchMethod: string,
+  telemetryJson: string,
+  startedAt: number,
+): Promise<void> {
+  await dbRetry(() =>
+    prisma.scanHistory.create({
+      data: {
+        userId,
+        confidence: 0,
+        matchMethod,
+        ocrText: telemetryJson,
+        processingTime: Date.now() - startedAt,
+      },
+    })
+  ).catch((err) =>
+    console.warn(`[Scanner] Could not persist "${matchMethod}" attempt (non-fatal):`, err?.message)
+  );
 }
 
 // ─── Database Save Helper ──────────────────────────────────────────────────
