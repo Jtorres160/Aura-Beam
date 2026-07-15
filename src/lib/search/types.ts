@@ -83,6 +83,14 @@ export interface CardSetRef {
   name: string;
   /** Printed set code where the source exposes one; null when it does not. */
   code: string | null;
+  /**
+   * Cards printed in this set — the "165" a collector reads in "006/165".
+   *
+   * Null means the source never told us, NOT that the set has no size. Ranking
+   * must treat null as "cannot corroborate" and never as "conflicts". Today only
+   * the Pokémon TCG API exposes this; Scryfall and YGOPRODeck leave it null.
+   */
+  printedSize: number | null;
 }
 
 /**

@@ -214,6 +214,9 @@ export interface CandidatePrinting {
   game: GameId;
   setName: string;
   setCode?: string | null;
+  /** Cards printed in the set — the "165" in "006/165". Null where a source
+   *  does not expose one; absence must never be read as a mismatch. */
+  setPrintedSize?: number | null;
   collectorNumber?: string | null;
   rarity: string;
   imageUrl: string | null;

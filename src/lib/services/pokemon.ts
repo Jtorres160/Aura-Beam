@@ -109,6 +109,12 @@ export function formatPokemonCard(externalCard: any): CandidatePrinting {
     setName: externalCard.set?.name || "Unknown Set",
     // ptcgoCode is what's actually printed on the card (e.g. "SV3")
     setCode: externalCard.set?.ptcgoCode || externalCard.set?.id || null,
+    // printedTotal is what the card itself says ("/165"); total counts secret
+    // rares the printed denominator excludes. Match on what the collector can
+    // read off the card in their hand.
+    setPrintedSize: typeof externalCard.set?.printedTotal === "number"
+      ? externalCard.set.printedTotal
+      : null,
     collectorNumber: externalCard.number || null,
     rarity: externalCard.rarity || "Common",
     imageUrl: externalCard.images?.large || externalCard.images?.small || null,
