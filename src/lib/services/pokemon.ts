@@ -23,13 +23,15 @@ function getHeaders(): Record<string, string> {
 // AbortError degrades gracefully" — described the bug: degrading a timeout to
 // "no result" is exactly how a collector got told their card was not real.
 //
-// getPokemonCardById() below is deliberately NOT changed: its callers (the card
-// route, price cron, watchlist) want a lenient null. Their leniency is a
-// separate question from candidate generation's.
-const fetchOpts = (): RequestInit => ({
-  headers: getHeaders(),
-  signal: AbortSignal.timeout(8_000),
-});
+// Phase 5.13C: the by-id lookup is now truth-aware TOO. fetchPokemonCardById()
+// throws; getPokemonCardById() is the lenient adapter over it, kept for callers
+// that genuinely want a null (the card route, price cron, watchlist — where a
+// dark sensor should degrade quietly rather than fail a background job).
+//
+// The leniency is now an explicit ADAPTER rather than a property of the
+// transport. 5.13B called those callers' leniency "a separate question"; it is,
+// and it still gets the same answer. What changed is that scanner-adjacent
+// callers can now ask a different one.
 
 /** Throws ProviderError when the API does not answer. Never returns [] to mean
  *  "I broke" — an empty array here is a real "no cards match". */
@@ -87,12 +89,29 @@ export async function fetchAllPokemonPrintings(name: string): Promise<any[]> {
   return exact.slice(0, 20);
 }
 
+/**
+ * Authoritative by-id lookup. Throws ProviderError when the API does not answer.
+ *
+ * Note 404 is NOT an empty status here, for the same reason it isn't anywhere
+ * else we touch this API: it answers 404 both for a genuine miss and when it is
+ * simply unwell. That reading is even safer on this path than on the search
+ * path — the id we are asking about came FROM this API minutes ago (the user
+ * picked it off a grid it populated), so a 404 for an id it just issued is far
+ * more likely illness than absence.
+ */
+export async function fetchPokemonCardById(id: string) {
+  const json = await fetchProviderJson<{ data?: any }>(
+    `${BASE_URL}/${encodeURIComponent(id)}`,
+    { headers: getHeaders() },
+  );
+  return json?.data ?? null;
+}
+
+/** Lenient adapter: null on ANY failure. Only for callers that would rather
+ *  skip a card than know why it's missing (price cron, watchlist, card route). */
 export async function getPokemonCardById(id: string) {
   try {
-    const response = await fetch(`${BASE_URL}/${id}`, fetchOpts());
-    if (!response.ok) return null;
-    const json = await response.json();
-    return json.data;
+    return await fetchPokemonCardById(id);
   } catch (error) {
     console.error(`Failed to fetch card by ID ${id}:`, error);
     return null;
