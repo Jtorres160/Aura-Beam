@@ -20,12 +20,12 @@ const SCRYFALL_HEADERS = {
 // Phase 5.13C: the by-id lookup is truth-aware too — fetchScryfallCardById()
 // throws, and getScryfallCardById() is the lenient adapter over it for callers
 // (card route, price cron) that genuinely want a null.
-
-// Only searchScryfallCards() still uses this raw transport.
-const fetchOpts = (): RequestInit => ({
-  headers: SCRYFALL_HEADERS,
-  signal: AbortSignal.timeout(8_000),
-});
+//
+// Every function in this file now goes through fetchProviderJson. The last raw
+// fetch() lived in searchScryfallCards(), which 5.13C deleted: it had no callers
+// and ended in `catch { return [] }` — the precise pattern the truth layer
+// exists to forbid, sitting in the file a future engineer would copy from.
+// Truth layers fail when the old escape hatches are left on the shelf.
 
 // Scryfall requests 50-100ms delay between requests to avoid blacklisting
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -143,46 +143,6 @@ export async function searchScryfallDeepFallback(
     console.log(`[Scryfall] Deep Semantic Fallback matched ${json!.data!.length} cards, picking: ${hit.name}`);
   }
   return hit ?? null;
-}
-
-/**
- * Fallback search: Uses Scryfall's full-text search endpoint.
- */
-export async function searchScryfallCards(query: string, setCode?: string, collectorNumber?: string) {
-  try {
-    let exactQuery = `!"${query}"`;
-    if (setCode) exactQuery += ` set:${setCode}`;
-    if (collectorNumber) exactQuery += ` cn:${collectorNumber}`;
-
-    const response = await fetch(`${SEARCH_URL}?q=${encodeURIComponent(exactQuery)}&order=released&dir=desc`, fetchOpts());
-
-    if (response.ok) {
-      const json = await response.json();
-      if (json.data && json.data.length > 0) {
-        console.log(`[Scryfall] Exact search found ${json.data.length} results for "${exactQuery}"`);
-        return json.data;
-      }
-    }
-
-    await delay(100);
-
-    const broadResponse = await fetch(`${SEARCH_URL}?q=${encodeURIComponent(query)}&order=released&dir=desc`, fetchOpts());
-
-    if (!broadResponse.ok) {
-      if (broadResponse.status === 404) {
-        console.log(`[Scryfall] No results found for "${query}"`);
-        return [];
-      }
-      throw new Error(`Scryfall API Error: ${broadResponse.status}`);
-    }
-
-    const json = await broadResponse.json();
-    console.log(`[Scryfall] Broad search found ${json.data?.length || 0} results for "${query}"`);
-    return json.data || [];
-  } catch (error) {
-    console.error(`[Scryfall] Search failed for "${query}":`, error);
-    return [];
-  }
 }
 
 /**
