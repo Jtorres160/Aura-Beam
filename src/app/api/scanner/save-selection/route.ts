@@ -3,14 +3,39 @@ import { dbRetry, prisma } from "@/lib/prisma";
 import { auth } from "@/auth";
 import { METHOD_CONFIDENCE } from "@/lib/scanner/decision";
 import { fetchPrintingById } from "@/lib/scanner/candidates";
-import { withSelection } from "@/lib/scanner/telemetry";
+import { withSelection, withSelectionAttempt, type SelectionAttemptFailure } from "@/lib/scanner/telemetry";
 import { getArchiveContext } from "@/lib/scanner/archive-context";
 import { persistPrinting } from "@/lib/cards/persist-printing";
 import { serializeSavedCard } from "@/lib/cards/serialize-card";
-import { messageForStage, runStage, stageOfError } from "@/lib/scanner/failure";
+import { messageForStage, messageForUnavailableSelection, runStage, stageOfError } from "@/lib/scanner/failure";
 
 // The user looked at the physical card and picked — that's ground truth.
 const USER_SELECTION_CONFIDENCE = Math.round(METHOD_CONFIDENCE["user-selection"] * 100);
+
+/**
+ * Append a failed save attempt to the originating scan's telemetry (5.13C).
+ *
+ * Best-effort and non-fatal throughout: the collector is already receiving an
+ * honest 503, and a telemetry write must never turn that into a 500. The
+ * ownership filter is the same one the success path uses — one user must not be
+ * able to write onto another user's scan row.
+ */
+async function recordSelectionAttempt(
+  scanId: string,
+  userId: string,
+  attempt: Omit<SelectionAttemptFailure, "at">,
+): Promise<void> {
+  try {
+    const origin = await dbRetry(() => prisma.scanHistory.findFirst({ where: { id: scanId, userId } }));
+    if (!origin) return;
+    await dbRetry(() => prisma.scanHistory.update({
+      where: { id: origin.id },
+      data: { ocrText: withSelectionAttempt(origin.ocrText, attempt) },
+    }));
+  } catch (err) {
+    console.warn("[SaveSelection] Could not record failed attempt (non-fatal):", (err as Error)?.message);
+  }
+}
 
 // ─── POST /api/scanner/save-selection ─────────────────────────────────────
 // Called by the frontend when the user manually selects their card variant
@@ -46,14 +71,54 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, message: "No card selection provided." }, { status: 400 });
     }
 
-    // Authoritative re-fetch — the ONLY source of persisted card data.
-    const card = await fetchPrintingById(game, externalId);
-    if (!card) {
+    // ─── Authoritative re-fetch — the ONLY source of persisted card data ──
+    // Phase 5.13C: this lookup has three outcomes, not two. It used to have two,
+    // because a provider failure was collapsed into null and rendered as
+    // "Could not verify the selected card. Please scan again." — a 404 asserting
+    // the card isn't real, told to someone who just picked it off our own grid.
+    const lookup = await fetchPrintingById(game, externalId);
+
+    if (lookup.status === "provider_unavailable") {
+      // We could not ASK. That is not a verdict about the user's card, so it
+      // must not borrow 404's voice. 503 + the source that went quiet.
+      console.warn(
+        `[SaveSelection] ⚠ Cannot confirm selection ${externalId} (${game}) — ` +
+        `${lookup.label} unavailable (${lookup.reason})`
+      );
+      // Record the failed attempt ON the pending row (best-effort, additive).
+      // NOT as matchMethod: the row is still legitimately "disambiguation-pending"
+      // — the user may retry and succeed, and overwriting the method here would
+      // both destroy that pending state and delete the Phase 6 ground-truth link.
+      // The attempt goes in the telemetry JSON instead, where it makes selection
+      // failures measurable without costing us the label.
+      if (scanId) {
+        await recordSelectionAttempt(scanId, session.user.id, {
+          status: "provider_unavailable",
+          source: lookup.source,
+          reason: lookup.reason,
+        });
+      }
       return NextResponse.json(
-        { success: false, message: "Could not verify the selected card. Please scan again." },
+        {
+          success: false,
+          stage: "selection-provider",
+          message: messageForUnavailableSelection([lookup.label]),
+          unavailableSources: [lookup.label],
+        },
+        { status: 503 }
+      );
+    }
+
+    if (lookup.status === "not_found") {
+      // The source ANSWERED and has no such card — an earned 404. Reachable if
+      // the printing was withdrawn upstream between the grid and the save.
+      return NextResponse.json(
+        { success: false, stage: "not-found", message: "Could not verify the selected card. Please scan again." },
         { status: 404 }
       );
     }
+
+    const card = lookup.card;
     cardName = card.name;
 
     // ─── Persist (Phase 5.2.5 parity) ──────────────────────────────────

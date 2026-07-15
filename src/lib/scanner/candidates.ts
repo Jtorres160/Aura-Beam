@@ -27,9 +27,9 @@
 // the failure travels alongside as CONTEXT, so the route can decline to claim
 // "not found" rather than claim it less loudly.
 
-import { searchPokemonCards, searchPokemonBySetAndNumber, fetchAllPokemonPrintings, formatPokemonCard, getPokemonCardById } from "@/lib/services/pokemon";
-import { searchScryfallCardByName, fetchAllMTGPrintings, formatScryfallCard, searchScryfallBySetAndCollector, searchScryfallDeepFallback, getScryfallCardById } from "@/lib/services/scryfall";
-import { searchYugiohCards, getYugiohPrintings, formatYugiohCard, getYugiohCardById } from "@/lib/services/yugioh";
+import { searchPokemonCards, searchPokemonBySetAndNumber, fetchAllPokemonPrintings, formatPokemonCard, fetchPokemonCardById } from "@/lib/services/pokemon";
+import { searchScryfallCardByName, fetchAllMTGPrintings, formatScryfallCard, searchScryfallBySetAndCollector, searchScryfallDeepFallback, fetchScryfallCardById } from "@/lib/services/scryfall";
+import { searchYugiohCards, getYugiohPrintings, formatYugiohCard, fetchYugiohCardById } from "@/lib/services/yugioh";
 import type { CandidatePrinting } from "@/lib/scanner/evidence";
 import { type MatchMethod, nameMatchesOcr } from "@/lib/scanner/decision";
 import { ProviderError, type ProviderFailureReason } from "@/lib/providers/http";
@@ -165,8 +165,8 @@ class SourceTracker {
   status(): CandidateSourceStatus {
     const base = { source: this.source, label: CANDIDATE_SOURCE_LABELS[this.source] };
     return this.failure
-      ? { ...base, availability: "failed", reason: this.failure }
-      : { ...base, availability: "completed" };
+      ? { ...base, availability: "failed" as const, reason: this.failure }
+      : { ...base, availability: "completed" as const };
   }
 }
 
@@ -215,46 +215,155 @@ export async function fetchAllPrintings(
 // the server-side trust anchor for user selections: the client names a card by
 // (game, externalId) only, and everything persisted about it comes from here —
 // never from the request body.
-export async function fetchPrintingById(game: string, externalId: string): Promise<CandidatePrinting | null> {
+//
+// ─── Phase 5.13C ────────────────────────────────────────────────────────────
+// This function used to be `Promise<CandidatePrinting | null>` with a bare
+// `catch { return null }` around the whole body — the SAME collapse 5.13B
+// removed from fetchAllPrintings, one hop downstream, and worse:
+//
+//     provider timeout → null → 404 "Could not verify the selected card.
+//                                    Please scan again."
+//
+// That sentence is told to a collector who has ALREADY passed capture, OCR,
+// vision and candidate generation, and then confirmed the card by eye on a grid
+// Aura itself drew from that provider's own data. The card's existence is not
+// in question at that point — ours to look it up is. And "scan again" is not
+// just wrong, it is irrational advice: it sends the user back through the whole
+// pipeline to land on the same grid and the same timeout.
+//
+//     Selection failed  ≠  Card does not exist
+//
+// So this returns a truth claim, exactly like CandidateOutcome does one layer up.
+
+/**
+ * The result of an authoritative by-id lookup, as a truth claim rather than a
+ * nullable card. Only `not_found` asserts the source has no such card.
+ */
+export type PrintingLookupResult =
+  | { status: "found"; card: CandidatePrinting }
+  | { status: "not_found" }
+  | {
+      status: "provider_unavailable";
+      source: CandidateSourceId;
+      /** Human-facing name of the source that went quiet. */
+      label: string;
+      reason: ProviderFailureReason;
+    };
+
+/** Which database owns this game's cards, or null if we have no source for it. */
+function sourceForGame(game: string): CandidateSourceId | null {
   const g = game?.toUpperCase?.() || "";
+  if (g.includes("MTG") || g.includes("MAGIC")) return "scryfall";
+  if (g.includes("POKEMON") || g.includes("POKÉMON")) return "pokemon";
+  if (g.includes("YUGIOH") || g.includes("YU-GI-OH")) return "ygoprodeck";
+  return null;
+}
+
+export async function fetchPrintingById(game: string, externalId: string): Promise<PrintingLookupResult> {
+  const source = sourceForGame(game);
+  // No source for this game is an ANSWERED question: we know we cannot hold a
+  // card for it. That is absence of support, not absence of an answer.
+  if (!source) return { status: "not_found" };
+
   try {
-    if (g.includes("MTG") || g.includes("MAGIC")) {
-      const card = await getScryfallCardById(externalId);
-      return card ? formatScryfallCard(card) : null;
-    }
-    if (g.includes("POKEMON") || g.includes("POKÉMON")) {
-      const card = await getPokemonCardById(externalId);
-      return card ? formatPokemonCard(card) : null;
-    }
-    if (g.includes("YUGIOH") || g.includes("YU-GI-OH")) {
-      const card = await getYugiohCardById(externalId);
-      if (!card) return null;
-      // Variant-qualified ids ("cardId:imageId") name one artwork of a
-      // multi-art card. Rebuild that exact variant — same shape as
-      // fetchYugiohPrintings — so the saved row keeps the variant id/images.
-      const imageId = externalId.split(":")[1];
-      if (imageId) {
-        const variant = getYugiohPrintings(card).find((p: any) => p.illustrationId === imageId);
-        if (!variant) return null;
-        return {
-          externalId,
-          name: card.name,
-          game: "YUGIOH",
-          setName: variant.setName,
-          setCode: variant.setCode,
-          rarity: variant.rarity,
-          imageUrl: variant.imageUrl,
-          thumbnailUrl: variant.thumbnailUrl,
-          price: { marketPrice: variant.price },
-          illustrationId: variant.illustrationId,
-        };
-      }
-      return formatYugiohCard(card);
-    }
-    return null;
-  } catch {
-    return null;
+    const card = await lookupBySource(source, externalId);
+    return card ? { status: "found", card } : { status: "not_found" };
+  } catch (err) {
+    const reason: ProviderFailureReason =
+      err instanceof ProviderError ? err.reason : "unexpected";
+    console.warn(
+      `[Scanner] By-id lookup of "${externalId}" from "${source}" failed (${reason}):`,
+      (err as Error)?.message,
+    );
+    return {
+      status: "provider_unavailable",
+      source,
+      label: CANDIDATE_SOURCE_LABELS[source],
+      reason,
+    };
   }
+}
+
+/** Games we can authoritatively re-fetch a printing for, in probe order. */
+const SUPPORTED_GAMES: readonly string[] = ["MTG", "POKEMON", "YUGIOH"];
+
+/**
+ * Resolve a printing by id WITHOUT being told its game — try each source in
+ * turn (Phase 5.13C).
+ *
+ * Lives here, beside fetchAllPrintings' unknown-game path, because it is the
+ * same judgement and must not drift from it: a route is not the layer allowed
+ * to decide what a silent provider means.
+ *
+ * It replaces a loop in collections/add that was the most confident liar in the
+ * codebase. Every lookup returned `Card | null`, so:
+ *
+ *     MTG times out      → null → keep going
+ *     Pokemon times out  → null → keep going
+ *     YGO answers "no"   → null
+ *                        → 404 "Card not found in local DB or external API"
+ *
+ * Three sources, two of which never answered, and it reported the confident
+ * negative anyway. It asked "does this card not exist?" when the only question
+ * it had actually put to anyone was "did the providers answer?".
+ *
+ * Same asymmetry as everywhere else in the truth layer: found outranks a
+ * failure, a failure outranks a zero.
+ */
+export async function fetchPrintingByIdAcrossGames(externalId: string): Promise<PrintingLookupResult> {
+  const attempts: PrintingLookupResult[] = [];
+
+  for (const game of SUPPORTED_GAMES) {
+    const result = await fetchPrintingById(game, externalId);
+    // A card in hand is positive evidence — it ends the probe, and a failure
+    // elsewhere cannot erase it.
+    if (result.status === "found") return result;
+    attempts.push(result);
+  }
+
+  // Zero from a source that never answered is not evidence of absence. If ANY
+  // source went quiet we do not know, and we say so instead of asserting a 404.
+  const unavailable = attempts.find((a) => a.status === "provider_unavailable");
+  if (unavailable) return unavailable;
+
+  // Every source we have answered, and none of them has this id. Earned.
+  return { status: "not_found" };
+}
+
+/** The per-source fetch+format. Throws ProviderError; never swallows. */
+async function lookupBySource(source: CandidateSourceId, externalId: string): Promise<CandidatePrinting | null> {
+  if (source === "scryfall") {
+    const card = await fetchScryfallCardById(externalId);
+    return card ? formatScryfallCard(card) : null;
+  }
+  if (source === "pokemon") {
+    const card = await fetchPokemonCardById(externalId);
+    return card ? formatPokemonCard(card) : null;
+  }
+
+  const card = await fetchYugiohCardById(externalId);
+  if (!card) return null;
+  // Variant-qualified ids ("cardId:imageId") name one artwork of a
+  // multi-art card. Rebuild that exact variant — same shape as
+  // fetchYugiohPrintings — so the saved row keeps the variant id/images.
+  const imageId = externalId.split(":")[1];
+  if (!imageId) return formatYugiohCard(card);
+
+  const variant = getYugiohPrintings(card).find((p: any) => p.illustrationId === imageId);
+  // The card answered and has no such artwork — a real, earned "not found".
+  if (!variant) return null;
+  return {
+    externalId,
+    name: card.name,
+    game: "YUGIOH",
+    setName: variant.setName,
+    setCode: variant.setCode,
+    rarity: variant.rarity,
+    imageUrl: variant.imageUrl,
+    thumbnailUrl: variant.thumbnailUrl,
+    price: { marketPrice: variant.price },
+    illustrationId: variant.illustrationId,
+  };
 }
 
 async function fetchMTGPrintings(cardName: string, setCode: string, collectorNumber: string, manaCost: string, typeLine: string, powerToughness: string): Promise<CandidateOutcome> {

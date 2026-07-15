@@ -20,6 +20,7 @@ export type FailureStage =
   | "scoring"               // scorer/ranking threw
   | "not-found"             // pipeline completed; the databases DO NOT have it (a verdict)
   | "provider-unavailable"  // pipeline completed; we could not ASK (a verdict — 5.13B)
+  | "selection-provider"    // the user PICKED, and the source wouldn't confirm it (5.13C)
   | "database"              // a Prisma/DB operation threw
   | "unknown";              // anything unattributed
 
@@ -80,4 +81,39 @@ export function messageForUnavailableSources(sources: string[], cardName?: strin
   const named = sources.length > 0 ? sources.join(" and ") : "The card database";
   const subject = cardName ? `"${cardName}"` : "this card";
   return `We read ${subject} from your card, but ${named} didn't respond — so we can't confirm which printing it is. Your image was fine; try again in a moment.`;
+}
+
+/**
+ * What to tell a collector when THEY picked a card and the source database
+ * wouldn't confirm it (Phase 5.13C).
+ *
+ * The user is further along here than anywhere else in the pipeline: they have
+ * looked at the physical card AND at our grid and told us which one it is. The
+ * only thing that failed is our re-fetch. So this message must do two things the
+ * old "Could not verify the selected card. Please scan again." did neither of:
+ *
+ *   1. Not question the card or the user's choice — nothing about either is in
+ *      doubt. Name the source that went quiet instead.
+ *   2. Not send them back to the camera. Re-scanning is irrational advice: it
+ *      re-runs capture, OCR and vision to arrive at the same grid and the same
+ *      unavailable source. The retry that can actually succeed is the SAVE.
+ *
+ * Note what it also must not say: that we saved anything. We didn't — the save
+ * is exactly what failed. A reassuring "your choice is saved" would be a fresh
+ * lie told to fix an old one, which is not the trade this phase is making.
+ */
+export function messageForUnavailableSelection(sources: string[], cardName?: string): string {
+  const named = sources.length > 0 ? sources.join(" and ") : "the card database";
+  const subject = cardName ? `"${cardName}"` : "your pick";
+  return `We couldn't reach ${named} to confirm ${subject}, so it isn't saved yet. Your choice was right — try saving again in a moment.`;
+}
+
+/**
+ * What to tell a collector when a card couldn't be added because its source
+ * database never answered (Phase 5.13C). Same rule, different flow: "we didn't
+ * add it" is honest; "card not found" would not be.
+ */
+export function messageForUnavailableAdd(sources: string[]): string {
+  const named = sources.length > 0 ? sources.join(" and ") : "the card database";
+  return `We couldn't reach ${named} to look this card up, so it hasn't been added. Try again in a moment.`;
 }

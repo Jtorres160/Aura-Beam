@@ -897,7 +897,16 @@ export default function ScannerPage() {
           scanId: disambiguationScanId ?? undefined,
         }),
       });
-      if (!res.ok) throw new Error("Failed to save selection");
+      // Phase 5.13C: the server now distinguishes "the source wouldn't confirm
+      // your pick" (503) from "that card isn't there" (404), and says which
+      // source went quiet. This used to throw away the response body and alert a
+      // flat "Failed to save your selection", so even a perfectly honest server
+      // message died here. The grid stays up either way — the retry that can
+      // actually succeed is the save, so leave the user standing on it.
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => null);
+        throw new Error(errJson?.message || "Failed to save your selection. Please try again.");
+      }
       const json = await res.json();
       const card = json.data as SavedCard;
 
@@ -914,7 +923,7 @@ export default function ScannerPage() {
         setState("result");
       }
     } catch (error: any) {
-      alert("Failed to save your selection. Please try again.");
+      alert(error?.message || "Failed to save your selection. Please try again.");
     } finally {
       setIsAdding(false);
     }

@@ -1,27 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/auth";
-import { fetchPrintingById } from "@/lib/scanner/candidates";
-import type { CandidatePrinting } from "@/lib/scanner/evidence";
+import { fetchPrintingById, fetchPrintingByIdAcrossGames } from "@/lib/scanner/candidates";
+import { messageForUnavailableAdd } from "@/lib/scanner/failure";
 
-// Games we can authoritatively re-fetch a printing for. Used only as an
-// ordered fallback when the client didn't tell us which game the card is —
-// e.g. a cached client deployed before `game` was sent with the request.
-const SUPPORTED_GAMES = ["MTG", "POKEMON", "YUGIOH"] as const;
-
-// Resolve an external card reference to a normalized printing WITHOUT assuming
-// a game. If the caller named the game we go straight to its source; otherwise
-// we try each source in turn (reusing the same game-aware fetcher the scanner's
-// save-selection path uses — no duplicated per-game fetch logic here).
-async function resolvePrinting(externalId: string, game?: string): Promise<CandidatePrinting | null> {
-  if (game) {
-    return await fetchPrintingById(game, externalId);
-  }
-  for (const g of SUPPORTED_GAMES) {
-    const printing = await fetchPrintingById(g, externalId);
-    if (printing) return printing;
-  }
-  return null;
+/**
+ * Resolve an external card reference to a normalized printing. If the caller
+ * named the game we go straight to its source; otherwise we probe each in turn.
+ *
+ * Both branches return a truth claim rather than a nullable card (Phase
+ * 5.13C) — the judgement about what a silent provider means belongs to the
+ * candidate layer, not to a route.
+ */
+async function resolvePrinting(externalId: string, game?: string) {
+  return game
+    ? await fetchPrintingById(game, externalId)
+    : await fetchPrintingByIdAcrossGames(externalId);
 }
 
 export async function POST(req: NextRequest) {
@@ -66,10 +60,30 @@ export async function POST(req: NextRequest) {
     });
 
     if (!card) {
-      const printing = await resolvePrinting(cardId, game);
-      if (!printing) {
+      const lookup = await resolvePrinting(cardId, game);
+
+      // Phase 5.13C: a source that went quiet gets a 503, not the 404 that
+      // asserts the card isn't real. We didn't fail to find it; we failed to ask.
+      if (lookup.status === "provider_unavailable") {
+        console.warn(
+          `[Collections] ⚠ Cannot add ${cardId} — ${lookup.label} unavailable (${lookup.reason})`
+        );
+        return NextResponse.json(
+          {
+            success: false,
+            stage: "provider-unavailable",
+            message: messageForUnavailableAdd([lookup.label]),
+            unavailableSources: [lookup.label],
+          },
+          { status: 503 }
+        );
+      }
+
+      if (lookup.status === "not_found") {
         return NextResponse.json({ success: false, message: "Card not found in local DB or external API" }, { status: 404 });
       }
+
+      const printing = lookup.card;
 
       card = await prisma.card.create({
         data: {
