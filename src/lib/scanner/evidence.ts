@@ -235,8 +235,11 @@ export interface CandidatePrinting {
 // decision layer (nameMatchesOcr in candidates.ts) and the scorer (rarity guard)
 // depend DOWNWARD on them. No scoring, ranking, or decision policy here.
 
-/** Collapse a card name to a comparable form: no case, accents or punctuation. */
-function normalizeName(name: string): string {
+/** Collapse a card name to a comparable form: no case, accents or punctuation.
+ *  Exported because the search layer (Phase 5.12A) must fold names EXACTLY as
+ *  the scanner does — two different foldings would make the same two cards
+ *  "equal" in one layer and distinct in the other. */
+export function foldName(name: string): string {
   return name
     .normalize("NFKD")
     .replace(/[̀-ͯ]/g, "")
@@ -272,9 +275,9 @@ function editDistance(a: string, b: string): number {
  * names, where OCR usually reads only the front face.
  */
 export function nameMatchesOcr(ocrName: string, candidateName: string): boolean {
-  const ocr = normalizeName(ocrName);
+  const ocr = foldName(ocrName);
   if (!ocr) return false;
-  const targets = [candidateName, ...candidateName.split("//")].map(normalizeName);
+  const targets = [candidateName, ...candidateName.split("//")].map(foldName);
   for (const target of targets) {
     if (!target) continue;
     if (target === ocr) return true;
