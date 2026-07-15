@@ -22,6 +22,24 @@ export interface SelectionLabel {
   at: string;
 }
 
+/**
+ * A save attempt that did NOT produce a label, because the source database
+ * wouldn't confirm the pick (Phase 5.13C).
+ *
+ * Recorded alongside the pending row rather than as its matchMethod: the row is
+ * still legitimately "disambiguation-pending" (the user can retry and succeed),
+ * and overwriting the method would delete the ground-truth link this row exists
+ * to carry. Appending keeps BOTH facts — what the user chose, and that we
+ * couldn't confirm it — which is the whole point of the truth layer.
+ */
+export interface SelectionAttemptFailure {
+  status: "provider_unavailable";
+  source: string;
+  reason: string;
+  /** ISO timestamp of the attempt. */
+  at: string;
+}
+
 export interface ScanTelemetryV1 {
   v: 1;
   /** Everything the sensors read, with confidence + provenance. */
@@ -63,6 +81,13 @@ export interface ScanTelemetryV1 {
   timings?: Record<string, number>;
   /** Present once the user picked from the disambiguation grid. */
   selection?: SelectionLabel;
+  /** Save attempts that failed because a source wouldn't confirm the pick
+   *  (Phase 5.13C). Appended, never overwritten — several retries against a
+   *  flapping provider all belong to the same scan. Optional and additive:
+   *  older records omit it, so v stays 1. Answers "are selection-time provider
+   *  failures clustered, and on which source?" — unanswerable before 5.13C,
+   *  because the failure became a 404 and left no trace at all. */
+  selectionAttempts?: SelectionAttemptFailure[];
 }
 
 export function buildScanTelemetry(input: {
@@ -119,4 +144,36 @@ export function withSelection(rawJson: string | null | undefined, selection: Omi
     }
   }
   return JSON.stringify({ v: 1, selection: label });
+}
+
+/**
+ * Append a failed save attempt to an existing telemetry JSON string (Phase
+ * 5.13C). Same tolerance contract as withSelection(): a corrupt original never
+ * loses the new record.
+ *
+ * Everything already on the record — the evidence, the decision, an earlier
+ * selection label — is preserved. This is additive by construction: a scan
+ * whose save failed twice and then succeeded ends up with both attempts AND the
+ * label, which is exactly the sequence a provider-reliability query wants.
+ */
+export function withSelectionAttempt(
+  rawJson: string | null | undefined,
+  attempt: Omit<SelectionAttemptFailure, "at">,
+): string {
+  const record: SelectionAttemptFailure = { ...attempt, at: new Date().toISOString() };
+  if (rawJson) {
+    try {
+      const parsed = JSON.parse(rawJson);
+      if (parsed && typeof parsed === "object") {
+        parsed.selectionAttempts = [
+          ...(Array.isArray(parsed.selectionAttempts) ? parsed.selectionAttempts : []),
+          record,
+        ];
+        return JSON.stringify(parsed);
+      }
+    } catch {
+      /* fall through to the minimal record */
+    }
+  }
+  return JSON.stringify({ v: 1, selectionAttempts: [record] });
 }
