@@ -9,7 +9,7 @@
 // This module turns that into structured intent. It PARSES ONLY — it never
 // decides what matches. Retrieval judges matches downstream (see match.ts).
 
-import { foldName } from "@/lib/scanner/evidence";
+import { normalizeCollectorNumber, normalizeSearchKey } from "@/lib/search/query-normalizer";
 
 export interface ParsedQuery {
   /** Exactly what the collector typed, untouched. */
@@ -63,7 +63,7 @@ export function parseSearchQuery(raw: string): ParsedQuery {
   return {
     raw: input,
     name,
-    foldedName: foldName(name),
+    foldedName: normalizeSearchKey(name),
     collectorNumber,
     setSize,
     isNumberOnly: name.length === 0 && collectorNumber !== null,
@@ -79,14 +79,7 @@ export function collectorNumbersMatch(
   a: string | null | undefined,
   b: string | null | undefined,
 ): boolean {
-  const strip = (v: string | null | undefined) => {
-    if (!v) return null;
-    const head = String(v).split("/")[0].trim().toLowerCase();
-    // Keep any non-numeric suffix ("21a"), but drop leading zeros ("006" → "6").
-    const m = head.match(/^0*(\d+)([a-z]*)$/);
-    return m ? m[1] + m[2] : head;
-  };
-  const x = strip(a);
-  const y = strip(b);
+  const x = normalizeCollectorNumber(a);
+  const y = normalizeCollectorNumber(b);
   return x !== null && y !== null && x === y;
 }

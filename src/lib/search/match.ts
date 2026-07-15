@@ -11,8 +11,13 @@
 // No fuzzy scoring model, no AI. Just folding and ordering we can explain to a
 // collector.
 
-import { foldName } from "@/lib/scanner/evidence";
 import { collectorNumbersMatch, type ParsedQuery } from "@/lib/search/query";
+import {
+  normalizeSearchKey,
+  normalizeTokens,
+  setSizesConflict,
+  setSizesMatch,
+} from "@/lib/search/query-normalizer";
 import type { CardSearchResult } from "@/lib/search/types";
 
 /** Why a result is in the list, strongest first. Ordering is explainable. */
@@ -29,13 +34,56 @@ const TIER_RANK: Record<RelevanceTier, number> = {
   tokens: 3,
 };
 
+/**
+ * How strongly the card's PRINTED NUMBER evidence agrees with the query, as an
+ * ordered ladder — lower is stronger. This is the Phase 5.12B addition: "006"
+ * and "006/165" are not the same claim, and the second one is stronger.
+ *
+ * The ordering encodes one rule, twice:
+ *
+ *   corroborated  both the number AND the printed set size agree. The collector
+ *                 read us two facts off the card and both hold. Nothing beats it.
+ *   agrees        the number agrees; set size is unknown on one side. Real
+ *                 evidence, simply not corroborated.
+ *   neutral       one side named no number at all. No claim either way — which
+ *                 must rank ABOVE any form of disagreement, because a source
+ *                 that stayed silent has not told us the card is wrong.
+ *   sizeConflicts the number agrees but the printed set size does not. This is
+ *                 a different printing of the same number — probably not it.
+ *   conflicts     the numbers themselves disagree. Weakest, still not removed.
+ */
+type NumberAgreement = "corroborated" | "agrees" | "neutral" | "sizeConflicts" | "conflicts";
+
+const AGREEMENT_RANK: Record<NumberAgreement, number> = {
+  corroborated: 0,
+  agrees: 1,
+  neutral: 2,
+  sizeConflicts: 3,
+  conflicts: 4,
+};
+
 export interface RankedResult {
   card: CardSearchResult;
   tier: RelevanceTier;
-  /** The query named a collector number and this card carries the same one. */
-  collectorNumberAgrees: boolean;
-  /** Query and card both name a collector number, and they DISAGREE. */
-  collectorNumberConflicts: boolean;
+  agreement: NumberAgreement;
+}
+
+/**
+ * Weigh the query's printed-number evidence against one card.
+ *
+ * Every "unknown" path lands on `neutral` or better — never on a conflict. A
+ * source that omits a collector number or a set size has produced UNAVAILABLE
+ * evidence, and unavailable evidence is not a contradiction (Phase 5.10).
+ */
+function weighNumbers(parsed: ParsedQuery, card: CardSearchResult): NumberAgreement {
+  if (!parsed.collectorNumber || !card.collectorNumber) return "neutral";
+
+  if (!collectorNumbersMatch(parsed.collectorNumber, card.collectorNumber)) return "conflicts";
+
+  // The number agrees. Does the printed set size corroborate or contradict it?
+  if (setSizesMatch(parsed.setSize, card.set.printedSize)) return "corroborated";
+  if (setSizesConflict(parsed.setSize, card.set.printedSize)) return "sizeConflicts";
+  return "agrees";
 }
 
 /**
@@ -44,7 +92,7 @@ export interface RankedResult {
  * failure, so dropping it here is safe.
  */
 function judge(parsed: ParsedQuery, card: CardSearchResult): RankedResult | null {
-  const target = foldName(card.name);
+  const target = normalizeSearchKey(card.name);
   const q = parsed.foldedName;
 
   let tier: RelevanceTier | null = null;
@@ -61,42 +109,55 @@ function judge(parsed: ParsedQuery, card: CardSearchResult): RankedResult | null
   } else {
     // Token subset — "charizard ex" should still find "Charizard ex" even if a
     // source spells it "Charizard-EX". Each query word must appear.
-    const words = parsed.name.split(/\s+/).map(foldName).filter(Boolean);
+    const words = normalizeTokens(parsed.name);
     if (words.length > 0 && words.every((w) => target.includes(w))) tier = "tokens";
   }
 
   if (!tier) return null;
 
-  const bothHaveCn = Boolean(parsed.collectorNumber && card.collectorNumber);
-  const agrees = bothHaveCn && collectorNumbersMatch(parsed.collectorNumber, card.collectorNumber);
-
-  return {
-    card,
-    tier,
-    collectorNumberAgrees: agrees,
-    collectorNumberConflicts: bothHaveCn && !agrees,
-  };
+  return { card, tier, agreement: weighNumbers(parsed, card) };
 }
 
 /**
  * Filter and order results for one query.
  *
- * On collector numbers: a card whose number AGREES is promoted above everything
- * else — that is the collector telling us exactly which printing they hold. A
- * card whose number CONFLICTS is demoted but NOT removed, because a source that
- * omits or misspells a collector number must not cause us to assert the card
- * does not exist. Same principle as the scanner: absence of a signal is not
- * evidence against.
+ * The comparison keys, strongest first — this ordering IS the phase's thesis:
+ *
+ *   1. name tier        exact folded name, then prefix/contains/token. What the
+ *                       collector typed is the primary claim; a number refines
+ *                       WHICH printing, it does not overrule WHICH CARD.
+ *   2. number agreement  the ladder above: corroborated > agrees > neutral >
+ *                       size conflict > number conflict.
+ *   3. artwork present   a result we can actually show the collector, before one
+ *                       we can only name. Presentation completeness, deliberately
+ *                       LAST of the substantive keys — it is not identity.
+ *   4. name length, then alphabetical — a deterministic, explainable tiebreak.
+ *
+ * What is absent from that list is the point: MARKET PRICE IS NOT A KEY. Price
+ * is a fact about a card, never evidence of which card it is. A ranker that
+ * promotes the expensive printing is flattering the collector, not identifying
+ * their card — and Aura would rather be right than exciting.
+ *
+ * Nothing here is ever REMOVED for disagreeing. A conflicting number sinks; it
+ * does not vanish. Only judge() drops a card, and only when the name makes it no
+ * answer at all.
  */
 export function rankResults(parsed: ParsedQuery, cards: CardSearchResult[]): CardSearchResult[] {
   const judged = cards
     .map((c) => judge(parsed, c))
     .filter((r): r is RankedResult => r !== null);
 
+  const hasArtwork = (r: RankedResult) =>
+    Boolean(r.card.artwork.imageUrl || r.card.artwork.thumbnailUrl);
+
   judged.sort((a, b) => {
-    if (a.collectorNumberAgrees !== b.collectorNumberAgrees) return a.collectorNumberAgrees ? -1 : 1;
-    if (a.collectorNumberConflicts !== b.collectorNumberConflicts) return a.collectorNumberConflicts ? 1 : -1;
     if (TIER_RANK[a.tier] !== TIER_RANK[b.tier]) return TIER_RANK[a.tier] - TIER_RANK[b.tier];
+
+    const agreement = AGREEMENT_RANK[a.agreement] - AGREEMENT_RANK[b.agreement];
+    if (agreement !== 0) return agreement;
+
+    if (hasArtwork(a) !== hasArtwork(b)) return hasArtwork(a) ? -1 : 1;
+
     // Stable, explainable tiebreak: shorter names are the plainer printing
     // ("Charizard" before "Charizard & Braixen GX"), then alphabetical.
     if (a.card.name.length !== b.card.name.length) return a.card.name.length - b.card.name.length;

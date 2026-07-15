@@ -34,6 +34,7 @@ export function fromCandidatePrinting(
     set: {
       name: printing.setName || "Unknown Set",
       code: printing.setCode ?? null,
+      printedSize: printing.setPrintedSize ?? null,
     },
     collectorNumber: printing.collectorNumber ?? null,
     rarity: printing.rarity || "Unknown",

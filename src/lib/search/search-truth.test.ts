@@ -36,7 +36,7 @@ function card(over: Partial<CardSearchResult> & { name: string; game: GameId }):
     id: over.id ?? over.name,
     game: over.game,
     name: over.name,
-    set: over.set ?? { name: "Base Set", code: "BS" },
+    set: over.set ?? { name: "Base Set", code: "BS", printedSize: null },
     collectorNumber: over.collectorNumber ?? null,
     rarity: over.rarity ?? "Common",
     artwork: over.artwork ?? { imageUrl: null, thumbnailUrl: null },

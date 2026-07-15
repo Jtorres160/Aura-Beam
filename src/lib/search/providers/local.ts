@@ -71,7 +71,14 @@ export async function searchLocalCards({
         id: row.id,
         game: rowGame,
         name: row.name,
-        set: { name: row.setName || "Unknown Set", code: row.setCode ?? null },
+        set: {
+          name: row.setName || "Unknown Set",
+          code: row.setCode ?? null,
+          // The catalog stores no printed set size (Card has no such column), so
+          // this is null — "we never recorded it", not "this set has none". The
+          // ranker reads that as neutral and will not hold it against the row.
+          printedSize: null,
+        },
         collectorNumber: row.collectorNumber ?? null,
         rarity: row.rarity || "Unknown",
         artwork: {
