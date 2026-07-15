@@ -85,6 +85,7 @@ function source(
     source: id,
     label: CANDIDATE_SOURCE_LABELS[id],
     availability,
+    durationMs: 0,
     ...(availability === "failed" ? { reason: "timeout" as const } : {}),
   };
 }

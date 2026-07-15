@@ -11,6 +11,7 @@
 // physical card, so their pick is ground truth for that scan's image evidence.
 
 import type { EvidenceCoverage, EvidenceSignal, ScanEvidence } from "./evidence";
+import type { CandidateOutcome, CandidateSourceStatus } from "./candidates";
 import type { Decision } from "./decision";
 import type { ScoreOutput } from "./score";
 
@@ -68,6 +69,40 @@ export interface ScanTelemetryV1 {
    *  additive: older records omit it and older consumers ignore it, so v stays 1.
    *  Absent when no printing was chosen (disambiguate/not-found). */
   evidenceCoverage?: EvidenceCoverage;
+  /**
+   * The candidate layer's truth claim for this scan (Phase 5.13C).
+   *
+   * Read this, NOT `decision.action`, to count genuine absences. The two are
+   * different verdicts by different layers and they legitimately disagree:
+   *
+   *   decision.action     the SCORER's verdict. "not-found" here means only
+   *                       "I was handed zero printings to choose among".
+   *   candidateStatus     the ROUTE's verdict, and the one that reached the
+   *                       collector. "no_candidates" is the only value that
+   *                       asserts the databases actually lack this card.
+   *
+   * Before this field, a provider_unavailable scan wrote decision.action
+   * "not-found" into the JSON while the row's matchMethod said
+   * "provider-unavailable" — so the record contradicted itself, and anyone
+   * counting "true no matches" off decision.action silently swept in every
+   * outage. `true no matches` = candidateStatus === "no_candidates".
+   */
+  candidateStatus?: CandidateOutcome["status"];
+  /**
+   * Per-source availability, failure reason and wall-clock latency for the
+   * candidate fetch (Phase 5.13C).
+   *
+   * `timings.candidatesMs` is one number covering up to three providers and
+   * several calls each, so it cannot answer any of the questions a provider
+   * decision actually needs: is one source slow, are failures clustered, how
+   * often do we hit the 8s ceiling, is a scan that SUCCEEDED hiding a partial
+   * outage? That last one was wholly invisible before this field — a scan that
+   * found the card while a source timed out looked identical to a healthy scan.
+   *
+   * Recorded on EVERY outcome including "found", for exactly that reason.
+   * Optional and additive: older records omit it, so v stays 1.
+   */
+  candidateSources?: CandidateSourceStatus[];
   /** Size of the candidate pool the scorer chose among. */
   printingsCount: number;
   /** Candidates actually surfaced (grid size, or 1 for an accept). */
@@ -94,13 +129,15 @@ export function buildScanTelemetry(input: {
   evidence: ScanEvidence;
   scored: ScoreOutput;
   decision: Decision;
+  /** The candidate layer's outcome — its status and per-source readings. */
+  candidates?: Pick<CandidateOutcome, "status" | "sources">;
   printingsCount: number;
   ocr?: unknown;
   game?: string;
   isAutoScan?: boolean;
   timings?: Record<string, number>;
 }): ScanTelemetryV1 {
-  const { evidence, scored, decision, printingsCount, ocr, game, isAutoScan, timings } = input;
+  const { evidence, scored, decision, candidates, printingsCount, ocr, game, isAutoScan, timings } = input;
   return {
     v: 1,
     evidence,
@@ -111,6 +148,8 @@ export function buildScanTelemetry(input: {
       margin: scored.margin,
       evidenceMass: scored.evidenceMass,
     },
+    candidateStatus: candidates?.status,
+    candidateSources: candidates?.sources,
     evidenceSignals: scored.evidenceSignals,
     // Only record coverage when a printing was actually assessed — an empty
     // signal set has no meaningful coverage (disambiguate/not-found).

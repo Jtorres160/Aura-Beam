@@ -16,7 +16,8 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 
-import { buildScanTelemetry, withSelection } from "@/lib/scanner/telemetry";
+import { buildScanTelemetry, withSelection, withSelectionAttempt } from "@/lib/scanner/telemetry";
+import { CANDIDATE_SOURCE_LABELS, type CandidateSourceStatus } from "@/lib/scanner/candidates";
 import {
   assessIdentitySignals,
   calculateEvidenceMass,
@@ -287,5 +288,164 @@ describe("telemetry — observation does not mutate the pipeline", () => {
     assert.equal(JSON.stringify(out.evidenceSignals), signalsBefore);
     // Independent recompute matches — capture didn't alter the signals.
     assert.equal(calculateEvidenceMass(assessIdentitySignals(ev, chosen)), massBefore);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Candidate source state (Phase 5.13C)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Before this, `timings.candidatesMs` was one number covering up to three
+// providers and several calls each. It could not answer WHICH source was slow,
+// how often we hit the 8s ceiling, or whether a SUCCESSFUL scan had quietly run
+// with a source down. That last case left no trace anywhere in the system: a
+// scan that found the card while Pokemon timed out was byte-identical, in
+// telemetry, to a perfectly healthy scan.
+//
+// Measurement precedes optimization, so the measurement has to exist first.
+
+function sourceStatus(over: Partial<CandidateSourceStatus> & { source: CandidateSourceStatus["source"] }): CandidateSourceStatus {
+  return {
+    label: CANDIDATE_SOURCE_LABELS[over.source],
+    availability: "completed",
+    durationMs: 0,
+    ...over,
+  };
+}
+
+describe("telemetry — candidate source state", () => {
+  test("a SUCCESSFUL scan still records a partial provider failure", () => {
+    // The invisible case. The card was found (Scryfall answered), but Pokemon
+    // was dark the whole time. The scan succeeds — and must still say so.
+    const chosen = printing({ externalId: "a" });
+    const ev = evidence({ name: "Counterspell", setCode: "mh2", collectorNumber: "267" });
+    const decision = acceptDecision(chosen, "set-cn-verified");
+    const out = scored(ev, chosen, decision);
+
+    const t = buildScanTelemetry({
+      evidence: ev,
+      scored: out,
+      decision,
+      candidates: {
+        status: "found",
+        sources: [
+          sourceStatus({ source: "scryfall", durationMs: 412 }),
+          sourceStatus({ source: "pokemon", availability: "failed", reason: "timeout", durationMs: 8003 }),
+        ],
+      },
+      printingsCount: 1,
+    });
+
+    assert.equal(t.candidateStatus, "found");
+    assert.equal(t.candidateSources?.length, 2);
+    const pokemon = t.candidateSources?.find((s) => s.source === "pokemon");
+    assert.equal(pokemon?.availability, "failed");
+    assert.equal(pokemon?.reason, "timeout");
+    assert.equal(pokemon?.durationMs, 8003);
+    // And the per-source latency the single candidatesMs number could never show.
+    assert.equal(t.candidateSources?.find((s) => s.source === "scryfall")?.durationMs, 412);
+  });
+
+  test("candidateStatus, not decision.action, is what counts a true no-match", () => {
+    // These two legitimately disagree, and the disagreement used to make the
+    // record self-contradictory: a provider_unavailable scan wrote
+    // decision.action "not-found" into the JSON while the row's matchMethod
+    // said "provider-unavailable". Anyone counting genuine absences off
+    // decision.action swept in every outage.
+    const chosen = printing({ externalId: "a" });
+    const ev = evidence({ name: "Counterspell" });
+    const decision = disambiguateDecision([chosen]);
+    const out = scored(ev, chosen, decision);
+
+    const unavailable = buildScanTelemetry({
+      evidence: ev,
+      scored: { ...out, decision: { action: "not-found", confidence: 0 } },
+      decision: { action: "not-found", confidence: 0 },
+      candidates: {
+        status: "provider_unavailable",
+        sources: [sourceStatus({ source: "pokemon", availability: "failed", reason: "timeout", durationMs: 8001 })],
+      },
+      printingsCount: 0,
+    });
+
+    const genuinelyAbsent = buildScanTelemetry({
+      evidence: ev,
+      scored: { ...out, decision: { action: "not-found", confidence: 0 } },
+      decision: { action: "not-found", confidence: 0 },
+      candidates: {
+        status: "no_candidates",
+        sources: [sourceStatus({ source: "scryfall", durationMs: 51 })],
+      },
+      printingsCount: 0,
+    });
+
+    // The scorer's verdict is identical for both — it was handed zero printings
+    // either way. That is exactly why it cannot be the field you count.
+    assert.equal(unavailable.decision.action, genuinelyAbsent.decision.action);
+    // The route's verdict distinguishes them.
+    assert.notEqual(unavailable.candidateStatus, genuinelyAbsent.candidateStatus);
+    assert.equal(genuinelyAbsent.candidateStatus, "no_candidates");
+    assert.equal(unavailable.candidateStatus, "provider_unavailable");
+  });
+
+  test("omitting candidates keeps the record valid — older shapes still round-trip", () => {
+    const chosen = printing({ externalId: "a" });
+    const ev = evidence({ name: "Counterspell" });
+    const decision = acceptDecision(chosen, "single-printing");
+    const out = scored(ev, chosen, decision);
+
+    const t = buildScanTelemetry({ evidence: ev, scored: out, decision, printingsCount: 1 });
+
+    assert.equal(t.v, 1, "additive fields must not bump the version");
+    assert.equal(t.candidateStatus, undefined);
+    assert.equal(t.candidateSources, undefined);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Failed selection attempts (Phase 5.13C)
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("withSelectionAttempt — a failed save leaves a trace, not a scar", () => {
+  test("records the attempt without touching the pending row's other facts", () => {
+    const original = JSON.stringify({ v: 1, evidence: { identity: {} }, printingsCount: 4 });
+    const after = JSON.parse(withSelectionAttempt(original, {
+      status: "provider_unavailable",
+      source: "pokemon",
+      reason: "timeout",
+    }));
+
+    assert.equal(after.printingsCount, 4, "existing evidence must survive");
+    assert.equal(after.selectionAttempts.length, 1);
+    assert.equal(after.selectionAttempts[0].source, "pokemon");
+    assert.equal(after.selectionAttempts[0].reason, "timeout");
+    assert.ok(after.selectionAttempts[0].at, "must be timestamped");
+  });
+
+  test("attempts accumulate, and a later success still lands its label", () => {
+    // The sequence that matters: the user retries against a flapping provider
+    // and eventually succeeds. Both failures AND the ground-truth label must
+    // survive — the label is what Phase 6 trains on, the failures are what a
+    // provider-reliability query counts.
+    let raw = JSON.stringify({ v: 1, printingsCount: 4 });
+    raw = withSelectionAttempt(raw, { status: "provider_unavailable", source: "pokemon", reason: "timeout" });
+    raw = withSelectionAttempt(raw, { status: "provider_unavailable", source: "pokemon", reason: "http_error" });
+    raw = withSelection(raw, { externalId: "sv3-125", game: "POKEMON" });
+
+    const after = JSON.parse(raw);
+    assert.equal(after.selectionAttempts.length, 2);
+    assert.deepEqual(after.selectionAttempts.map((a: any) => a.reason), ["timeout", "http_error"]);
+    assert.equal(after.selection.externalId, "sv3-125", "the ground-truth label must survive the failures");
+    assert.equal(after.printingsCount, 4);
+  });
+
+  test("a corrupt original never loses the attempt", () => {
+    const after = JSON.parse(withSelectionAttempt("{not json", {
+      status: "provider_unavailable",
+      source: "scryfall",
+      reason: "network",
+    }));
+    assert.equal(after.selectionAttempts.length, 1);
+    assert.equal(after.selectionAttempts[0].source, "scryfall");
   });
 });
