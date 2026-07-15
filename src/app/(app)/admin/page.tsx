@@ -2,12 +2,22 @@
 
 import { motion } from "framer-motion";
 import { Shield, Users, ScanLine, Database, Activity, Server, BarChart3 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 
+interface Stat {
+  label: string;
+  value: string;
+  icon: LucideIcon;
+  change: string;
+  /** Render the value as an absence, not a figure — see the API Requests tile. */
+  muted?: boolean;
+}
+
 // Default fallback stats while loading
-const defaultStats = [
+const defaultStats: Stat[] = [
   { label: "Total Users", value: "...", icon: Users, change: "Loading..." },
   { label: "Total Scans", value: "...", icon: ScanLine, change: "Loading..." },
   { label: "Cards in DB", value: "...", icon: Database, change: "Loading..." },
@@ -45,7 +55,12 @@ export default function AdminPage() {
             { label: "Total Users", value: json.data.totalUsers.toLocaleString(), icon: Users, change: "Registered accounts" },
             { label: "Total Scans", value: json.data.totalScans.toLocaleString(), icon: ScanLine, change: "Cards identified" },
             { label: "Cards in DB", value: json.data.cardsInDb.toLocaleString(), icon: Database, change: "Cached in our system" },
-            { label: "API Requests", value: json.data.apiRequests.toLocaleString(), icon: Activity, change: "Lifetime external hits" },
+            // apiRequests is null until a request log exists — render the
+            // absence rather than a number. `?? null` guards the metric going
+            // absent again later; toLocaleString() on null would throw.
+            json.data.apiRequests == null
+              ? { label: "API Requests", value: "Unavailable", icon: Activity, change: "Telemetry not collected", muted: true }
+              : { label: "API Requests", value: json.data.apiRequests.toLocaleString(), icon: Activity, change: "Lifetime external hits" },
           ]);
         }
       })
@@ -72,7 +87,7 @@ export default function AdminPage() {
                   <p className="text-sm text-muted-foreground font-medium">{stat.label}</p>
                   <stat.icon className="h-4 w-4 text-aura-purple" />
                 </div>
-                <div className="text-2xl font-bold">{stat.value}</div>
+                <div className={stat.muted ? "text-2xl font-medium text-muted-foreground/60" : "text-2xl font-bold"}>{stat.value}</div>
                 <p className="text-xs text-muted-foreground mt-1">{stat.change}</p>
               </CardContent>
             </Card>
