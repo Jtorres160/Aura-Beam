@@ -1,11 +1,11 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { Shield, Users, ScanLine, Database, Activity, Server, BarChart3 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
 
 interface Stat {
   label: string;
@@ -16,7 +16,30 @@ interface Stat {
   muted?: boolean;
 }
 
-// Default fallback stats while loading
+/**
+ * "Reachable" means the dependency answered a probe just now.
+ * "Unreachable" means the probe ran and failed.
+ * "Unknown" means no probe was performed — an unobserved dependency must never
+ * be drawn as either healthy or failed.
+ */
+type HealthStatus = "Reachable" | "Unreachable" | "Unknown";
+
+interface HealthRow {
+  name: string;
+  status: HealthStatus;
+  latencyMs: number | null;
+}
+
+interface ScheduledJob {
+  name: string;
+  path: string;
+  schedule: string;
+  lastExecution: null;
+}
+
+// Values while the request is in flight. Every figure is an ellipsis and every
+// status is a probe that has not reported yet — nothing here can be misread as
+// a measurement.
 const defaultStats: Stat[] = [
   { label: "Total Users", value: "...", icon: Users, change: "Loading..." },
   { label: "Total Scans", value: "...", icon: ScanLine, change: "Loading..." },
@@ -24,47 +47,105 @@ const defaultStats: Stat[] = [
   { label: "API Requests", value: "...", icon: Activity, change: "Loading..." },
 ];
 
-const jobs = [
-  { name: "Price Sync — TCGPlayer", status: "running", lastRun: "2m ago", nextRun: "13m" },
-  { name: "Price Sync — Scryfall", status: "idle", lastRun: "14m ago", nextRun: "1m" },
-  { name: "Price Sync — PokéAPI", status: "idle", lastRun: "12m ago", nextRun: "3m" },
-  { name: "Card DB Update", status: "completed", lastRun: "1h ago", nextRun: "23h" },
-  { name: "Cache Cleanup", status: "completed", lastRun: "30m ago", nextRun: "30m" },
-];
+/** A count we could not read renders as unknown — never as zero. */
+function countStat(
+  label: string,
+  value: number | null | undefined,
+  icon: LucideIcon,
+  change: string
+): Stat {
+  return value == null
+    ? { label, value: "Unknown", icon, change: "Not readable", muted: true }
+    : { label, value: value.toLocaleString(), icon, change };
+}
 
-const statusColors: Record<string, string> = {
-  running: "bg-emerald-400/10 text-emerald-400",
-  idle: "bg-yellow-400/10 text-yellow-400",
-  completed: "bg-blue-400/10 text-blue-400",
-  failed: "bg-red-400/10 text-red-400",
+const statusStyles: Record<HealthStatus, string> = {
+  Reachable: "bg-emerald-400/10 text-emerald-400",
+  Unreachable: "bg-red-400/10 text-red-400",
+  Unknown: "bg-muted text-muted-foreground",
 };
 
 const fadeUp = { initial: { opacity: 0, y: 20 }, animate: { opacity: 1, y: 0 } };
 
-import { useEffect, useState } from "react";
-
 export default function AdminPage() {
   const [stats, setStats] = useState(defaultStats);
+  // Null until the request settles, so the UI can say "checking" rather than
+  // assert a state it has not observed.
+  const [health, setHealth] = useState<HealthRow[] | null>(null);
+  const [jobs, setJobs] = useState<ScheduledJob[] | null>(null);
 
   useEffect(() => {
-    fetch("/api/admin/stats")
-      .then((res) => res.json())
-      .then((json) => {
+    let cancelled = false;
+
+    async function load() {
+      // This request is itself the API Server observation.
+      const startedAt = performance.now();
+      let apiServer: HealthRow;
+
+      try {
+        const res = await fetch("/api/admin/stats");
+        // It answered, so it is reachable — even on a 500. What it answered
+        // with is a separate question, handled below.
+        apiServer = {
+          name: "API Server",
+          status: "Reachable",
+          latencyMs: Math.round(performance.now() - startedAt),
+        };
+
+        const json = await res.json();
+        if (cancelled) return;
+
         if (json.success && json.data) {
+          const data = json.data;
           setStats([
-            { label: "Total Users", value: json.data.totalUsers.toLocaleString(), icon: Users, change: "Registered accounts" },
-            { label: "Total Scans", value: json.data.totalScans.toLocaleString(), icon: ScanLine, change: "Cards identified" },
-            { label: "Cards in DB", value: json.data.cardsInDb.toLocaleString(), icon: Database, change: "Cached in our system" },
+            countStat("Total Users", data.totalUsers, Users, "Registered accounts"),
+            countStat("Total Scans", data.totalScans, ScanLine, "Cards identified"),
+            countStat("Cards in DB", data.cardsInDb, Database, "Cached in our system"),
             // apiRequests is null until a request log exists — render the
-            // absence rather than a number. `?? null` guards the metric going
+            // absence rather than a number. `== null` guards the metric going
             // absent again later; toLocaleString() on null would throw.
-            json.data.apiRequests == null
+            data.apiRequests == null
               ? { label: "API Requests", value: "Unavailable", icon: Activity, change: "Telemetry not collected", muted: true }
-              : { label: "API Requests", value: json.data.apiRequests.toLocaleString(), icon: Activity, change: "Lifetime external hits" },
+              : { label: "API Requests", value: data.apiRequests.toLocaleString(), icon: Activity, change: "Lifetime external hits" },
           ]);
+          setHealth([apiServer, data.health.database]);
+          setJobs(data.jobs);
+          return;
         }
-      })
-      .catch((err) => console.error(err));
+
+        // The server answered but carried no data (401, 500). We observed the
+        // API Server; we observed nothing about the database behind it.
+        setStats([
+          countStat("Total Users", null, Users, ""),
+          countStat("Total Scans", null, ScanLine, ""),
+          countStat("Cards in DB", null, Database, ""),
+          countStat("API Requests", null, Activity, ""),
+        ]);
+        setHealth([apiServer, { name: "Database", status: "Unknown", latencyMs: null }]);
+        setJobs(null);
+      } catch (err) {
+        console.error(err);
+        if (cancelled) return;
+        // No response at all: the API Server probe failed, and the database was
+        // never probed — unknown, not unreachable.
+        setStats([
+          countStat("Total Users", null, Users, ""),
+          countStat("Total Scans", null, ScanLine, ""),
+          countStat("Cards in DB", null, Database, ""),
+          countStat("API Requests", null, Activity, ""),
+        ]);
+        setHealth([
+          { name: "API Server", status: "Unreachable", latencyMs: null },
+          { name: "Database", status: "Unknown", latencyMs: null },
+        ]);
+        setJobs(null);
+      }
+    }
+
+    load();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   return (
@@ -95,61 +176,66 @@ export default function AdminPage() {
         ))}
       </div>
 
-      {/* System health */}
+      {/* System — only dependencies this application actually talks to, each
+          reporting a probe result rather than a percentage of nothing. */}
       <motion.div {...fadeUp} transition={{ duration: 0.4, delay: 0.35 }}>
         <Card className="glass border-border/50">
           <CardHeader>
             <CardTitle className="text-base flex items-center gap-2">
               <Server className="h-4 w-4 text-aura-purple" />
-              System Health
+              System
             </CardTitle>
           </CardHeader>
-          <CardContent className="space-y-4">
-            {[
-              { name: "API Server", value: 98, status: "Healthy" },
-              { name: "Database", value: 72, status: "Normal" },
-              { name: "Redis Cache", value: 45, status: "Normal" },
-              { name: "Meilisearch", value: 89, status: "Healthy" },
-            ].map((s) => (
-              <div key={s.name} className="space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium">{s.name}</span>
-                  <div className="flex items-center gap-2">
-                    <Badge variant="secondary" className="text-xs bg-emerald-400/10 text-emerald-400">{s.status}</Badge>
-                    <span className="text-xs text-muted-foreground">{s.value}%</span>
+          <CardContent className="space-y-3">
+            {health === null ? (
+              <p className="text-sm text-muted-foreground">Checking...</p>
+            ) : (
+              health.map((row) => (
+                <div key={row.name} className="flex items-center justify-between py-2 border-b border-border/50 last:border-0">
+                  <span className="text-sm font-medium">{row.name}</span>
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs text-muted-foreground">
+                      {row.latencyMs == null ? "No latency measured" : `${row.latencyMs} ms`}
+                    </span>
+                    <Badge variant="secondary" className={`text-xs ${statusStyles[row.status]}`}>
+                      {row.status}
+                    </Badge>
                   </div>
                 </div>
-                <Progress value={s.value} className="h-1.5 bg-accent [&>div]:gradient-bg" />
-              </div>
-            ))}
+              ))
+            )}
           </CardContent>
         </Card>
       </motion.div>
 
-      {/* Background Jobs */}
+      {/* Scheduled Jobs — schedules come from vercel.json. No run history is
+          stored, and a run is never inferred from downstream writes. */}
       <motion.div {...fadeUp} transition={{ duration: 0.4, delay: 0.45 }}>
         <Card className="glass border-border/50">
           <CardHeader>
             <CardTitle className="text-base flex items-center gap-2">
               <BarChart3 className="h-4 w-4 text-aura-purple" />
-              Background Jobs
+              Scheduled Jobs
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="space-y-3">
-              {jobs.map((job) => (
-                <div key={job.name} className="flex items-center justify-between py-2 border-b border-border/50 last:border-0">
-                  <div>
-                    <p className="text-sm font-medium">{job.name}</p>
-                    <p className="text-xs text-muted-foreground">Last run: {job.lastRun}</p>
+            {jobs === null ? (
+              <p className="text-sm text-muted-foreground">Schedules unavailable.</p>
+            ) : jobs.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No jobs scheduled.</p>
+            ) : (
+              <div className="space-y-3">
+                {jobs.map((job) => (
+                  <div key={job.path} className="flex items-start justify-between py-2 border-b border-border/50 last:border-0">
+                    <div>
+                      <p className="text-sm font-medium">{job.name}</p>
+                      <p className="text-xs text-muted-foreground">{job.schedule}</p>
+                    </div>
+                    <span className="text-xs text-muted-foreground/60">No execution records stored</span>
                   </div>
-                  <div className="flex items-center gap-3">
-                    <span className="text-xs text-muted-foreground">Next: {job.nextRun}</span>
-                    <Badge variant="secondary" className={`text-xs ${statusColors[job.status]}`}>{job.status}</Badge>
-                  </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
       </motion.div>
