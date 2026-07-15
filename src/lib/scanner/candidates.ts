@@ -2,25 +2,179 @@
 // Step 2 of the scan pipeline: given the OCR'd fields, fetch every printing of
 // the identified card from the game's card database. Produces evidence only —
 // the decision layer decides which printing (if any) to accept.
+//
+// ─── Candidate Truth Layer (Phase 5.13B) ────────────────────────────────────
+// This module used to answer with `{ printings: [], fallbackCard: null }` for
+// BOTH of these:
+//
+//     A. the card database answered, and this card is not in it
+//     B. the card database never answered
+//
+// The route could not tell them apart, so it said the same thing either way:
+// "no match was found in any card database". In case B that is a card database
+// asserting the non-existence of a card it never looked up — the exact lie
+// Phase 5.12A removed from search, still live here.
+//
+// CandidateOutcome is the scanner's SearchOutcome: same rule, same asymmetry,
+// applied to candidate retrieval.
+//
+//     search   classifyOutcome()          → SearchOutcome
+//     scanner  classifyCandidateOutcome() → CandidateOutcome
+//
+// Note what this does NOT do: a provider failure never lowers confidence. That
+// would still be treating absence as evidence, just more quietly. The scorer
+// receives exactly what it always did — the printings we actually have — and
+// the failure travels alongside as CONTEXT, so the route can decline to claim
+// "not found" rather than claim it less loudly.
 
 import { searchPokemonCards, searchPokemonBySetAndNumber, fetchAllPokemonPrintings, formatPokemonCard, getPokemonCardById } from "@/lib/services/pokemon";
 import { searchScryfallCardByName, fetchAllMTGPrintings, formatScryfallCard, searchScryfallBySetAndCollector, searchScryfallDeepFallback, getScryfallCardById } from "@/lib/services/scryfall";
 import { searchYugiohCards, getYugiohPrintings, formatYugiohCard, getYugiohCardById } from "@/lib/services/yugioh";
 import type { CandidatePrinting } from "@/lib/scanner/evidence";
 import { type MatchMethod, nameMatchesOcr } from "@/lib/scanner/decision";
+import { ProviderError, type ProviderFailureReason } from "@/lib/providers/http";
 
-export interface PrintingsResult {
-  printings: CandidatePrinting[];
-  fallbackCard: CandidatePrinting | null;
-  /** HOW fallbackCard was found — decides whether it may be auto-saved. */
-  fallbackMethod?: MatchMethod;
+/** The card databases candidate generation can consult. Deliberately the same
+ *  ids the search layer uses (SearchSourceId minus "local"), so a source is
+ *  named identically wherever a collector meets it. */
+export type CandidateSourceId = "scryfall" | "pokemon" | "ygoprodeck";
+
+/** Human-facing source names. The UI must never invent its own spellings. */
+export const CANDIDATE_SOURCE_LABELS: Record<CandidateSourceId, string> = {
+  scryfall: "Scryfall (MTG)",
+  pokemon: "Pokémon TCG API",
+  ygoprodeck: "YGOPRODeck (Yu-Gi-Oh!)",
+};
+
+export interface CandidateSourceStatus {
+  source: CandidateSourceId;
+  label: string;
+  /** "completed": it answered — a zero from it is a REAL zero.
+   *  "failed":    it did not answer. A zero from it means nothing. */
+  availability: "completed" | "failed";
+  /** Set only when availability is "failed". */
+  reason?: ProviderFailureReason;
+}
+
+/**
+ * The result of candidate generation, as a truth claim rather than a list.
+ *
+ * Only `no_candidates` asserts the card was not found. `provider_unavailable`
+ * asserts that we do not know — and those are different sentences to a
+ * collector holding a real card in their hand.
+ */
+export type CandidateOutcome =
+  | {
+      status: "found";
+      printings: CandidatePrinting[];
+      fallbackCard: CandidatePrinting | null;
+      /** HOW fallbackCard was found — decides whether it may be auto-saved. */
+      fallbackMethod?: MatchMethod;
+      sources: CandidateSourceStatus[];
+    }
+  | {
+      status: "no_candidates";
+      printings: [];
+      fallbackCard: null;
+      sources: CandidateSourceStatus[];
+    }
+  | {
+      status: "provider_unavailable";
+      printings: [];
+      fallbackCard: null;
+      sources: CandidateSourceStatus[];
+      /** Labels of the sources that failed, for a UI that must not guess. */
+      unavailable: string[];
+    };
+
+/**
+ * Turn per-source readings into a truth claim. The single place allowed to
+ * conclude "this card is not in any database".
+ *
+ * The rule, stated exactly — and deliberately identical to classifyOutcome():
+ *
+ *   Candidate generation is "no_candidates" ONLY when every source we consulted
+ *   answered and none of them had the card. If any source failed, we do not know
+ *   whether the card exists, and we must say so.
+ *
+ * Note the asymmetry: cards we HAVE outrank a failure ("found" wins even if a
+ * source failed, with the failure still reported in `sources`), because a card
+ * in hand is positive evidence. Zero cards never outranks a failure, because
+ * zero-from-a-failed-source is not evidence at all.
+ */
+export function classifyCandidateOutcome(
+  printings: CandidatePrinting[],
+  fallbackCard: CandidatePrinting | null,
+  fallbackMethod: MatchMethod | undefined,
+  sources: CandidateSourceStatus[],
+): CandidateOutcome {
+  if (printings.length > 0 || fallbackCard) {
+    return { status: "found", printings, fallbackCard, fallbackMethod, sources };
+  }
+
+  const failed = sources.filter((s) => s.availability === "failed");
+  if (failed.length > 0) {
+    return {
+      status: "provider_unavailable",
+      printings: [],
+      fallbackCard: null,
+      sources,
+      unavailable: failed.map((s) => s.label),
+    };
+  }
+
+  // Every consulted source answered and none had it. Only now may we say so.
+  return { status: "no_candidates", printings: [], fallbackCard: null, sources };
+}
+
+/**
+ * Tracks the availability of ONE source across the several calls a game's
+ * candidate path makes to it.
+ *
+ * A source is "failed" if ANY of its calls failed and we ended up with nothing:
+ * each call asks a different question ("is it at this set/number?", "what is
+ * printed under this name?"), so an unanswered one leaves a hole we cannot
+ * honestly paper over. `run()` never throws — a failure is recorded and the
+ * caller receives the empty value, exactly as before — so no provider hiccup
+ * can kill a scan that another signal could still rescue.
+ */
+class SourceTracker {
+  readonly source: CandidateSourceId;
+  private failure: ProviderFailureReason | null = null;
+
+  constructor(source: CandidateSourceId) {
+    this.source = source;
+  }
+
+  async run<T>(fn: () => Promise<T>, whenUnavailable: T): Promise<T> {
+    try {
+      return await fn();
+    } catch (err) {
+      const reason: ProviderFailureReason =
+        err instanceof ProviderError ? err.reason : "unexpected";
+      // First failure wins: it is the one that opened the hole.
+      this.failure ??= reason;
+      console.warn(
+        `[Scanner] Candidate source "${this.source}" failed (${reason}):`,
+        (err as Error)?.message,
+      );
+      return whenUnavailable;
+    }
+  }
+
+  status(): CandidateSourceStatus {
+    const base = { source: this.source, label: CANDIDATE_SOURCE_LABELS[this.source] };
+    return this.failure
+      ? { ...base, availability: "failed", reason: this.failure }
+      : { ...base, availability: "completed" };
+  }
 }
 
 // ─── Fetch all printings for visual comparison ─────────────────────────────
 export async function fetchAllPrintings(
   cardName: string, game: string, setCode: string, collectorNumber: string,
   manaCost: string, typeLine: string, powerToughness: string
-): Promise<PrintingsResult> {
+): Promise<CandidateOutcome> {
   const normalizedGame = game?.toUpperCase?.() || "";
 
   if (normalizedGame.includes("MTG") || normalizedGame.includes("MAGIC")) {
@@ -33,14 +187,27 @@ export async function fetchAllPrintings(
     return await fetchYugiohPrintings(cardName);
   }
 
-  // Unknown game — try all, return first hit
+  // ─── Unknown game — try all, return the first hit ──────────────────
+  // Every source consulted along the way is carried forward, so a Pokémon
+  // timeout still counts against a final "not in any database" verdict even
+  // though the MTG attempt answered cleanly. Otherwise this path would launder
+  // a failure into a confident zero: "we checked everywhere" is only true if
+  // everywhere answered.
+  const attempts: CandidateOutcome[] = [];
+
   const mtg = await fetchMTGPrintings(cardName, setCode, collectorNumber, manaCost, typeLine, powerToughness);
-  if (mtg.printings.length > 0 || mtg.fallbackCard) return mtg;
+  if (mtg.status === "found") return mtg;
+  attempts.push(mtg);
 
   const pkmn = await fetchPokemonPrintings(cardName, setCode, collectorNumber);
-  if (pkmn.printings.length > 0 || pkmn.fallbackCard) return pkmn;
+  if (pkmn.status === "found") return pkmn;
+  attempts.push(pkmn);
 
-  return await fetchYugiohPrintings(cardName);
+  const ygo = await fetchYugiohPrintings(cardName);
+  if (ygo.status === "found") return ygo;
+  attempts.push(ygo);
+
+  return classifyCandidateOutcome([], null, undefined, attempts.flatMap((a) => a.sources));
 }
 
 // ─── Authoritative lookup by identifier ─────────────────────────────────────
@@ -90,159 +257,159 @@ export async function fetchPrintingById(game: string, externalId: string): Promi
   }
 }
 
-async function fetchMTGPrintings(cardName: string, setCode: string, collectorNumber: string, manaCost: string, typeLine: string, powerToughness: string): Promise<PrintingsResult> {
-  try {
-    // ─── Set+collector lookup — bypasses OCR name hallucinations ────
-    // Only trusted ("set-cn-verified") when the card it returns also bears
-    // the OCR'd name; otherwise the set/CN may itself be the misread field.
-    //
-    // Both lookups read ONLY the OCR fields — neither consumes the other's
-    // result — so they are started together and the direct hit's round trip
-    // hides behind the name search's instead of adding to it (Phase 5.13).
-    const cleanCn = collectorNumber ? collectorNumber.split('/')[0].trim() : "";
-    const directPromise = setCode && cleanCn
-      // e.g. "MH2", "267" or "267/303" -> use just the prefix
-      ? searchScryfallBySetAndCollector(setCode, cleanCn)
-      : Promise.resolve(null);
-    // Floated on purpose: a verified direct hit returns WITHOUT awaiting this,
-    // so it must never surface as an unhandled rejection. [] then flows through
-    // the same "name search found nothing" path it always did.
-    const allPromise = fetchAllMTGPrintings(cardName).catch(() => [] as any[]);
+async function fetchMTGPrintings(cardName: string, setCode: string, collectorNumber: string, manaCost: string, typeLine: string, powerToughness: string): Promise<CandidateOutcome> {
+  const scryfall = new SourceTracker("scryfall");
 
-    let directMatch: CandidatePrinting | null = null;
-    const direct = await directPromise;
-    if (direct) {
-      directMatch = formatScryfallCard(direct);
-      if (nameMatchesOcr(cardName, directMatch.name)) {
-        console.log(`[Scanner] Set/CN match verified by name: "${directMatch.name}" (${setCode} #${cleanCn})`);
-        return { printings: [], fallbackCard: directMatch, fallbackMethod: "set-cn-verified" };
-      }
-      console.log(`[Scanner] Set/CN lookup returned "${directMatch.name}" but OCR read "${cardName}" — holding it as a weak guess.`);
+  // ─── Set+collector lookup — bypasses OCR name hallucinations ────
+  // Only trusted ("set-cn-verified") when the card it returns also bears
+  // the OCR'd name; otherwise the set/CN may itself be the misread field.
+  //
+  // Both lookups read ONLY the OCR fields — neither consumes the other's
+  // result — so they are started together and the direct hit's round trip
+  // hides behind the name search's instead of adding to it (Phase 5.13).
+  const cleanCn = collectorNumber ? collectorNumber.split('/')[0].trim() : "";
+  const directPromise = setCode && cleanCn
+    // e.g. "MH2", "267" or "267/303" -> use just the prefix
+    ? scryfall.run(() => searchScryfallBySetAndCollector(setCode, cleanCn), null)
+    : Promise.resolve(null);
+  // Started before we know whether we'll await it: a verified direct hit returns
+  // without touching this, so run() must absorb any rejection rather than let it
+  // surface unhandled.
+  const allPromise = scryfall.run(() => fetchAllMTGPrintings(cardName), [] as any[]);
+
+  let directMatch: CandidatePrinting | null = null;
+  const direct = await directPromise;
+  if (direct) {
+    directMatch = formatScryfallCard(direct);
+    if (nameMatchesOcr(cardName, directMatch.name)) {
+      console.log(`[Scanner] Set/CN match verified by name: "${directMatch.name}" (${setCode} #${cleanCn})`);
+      return classifyCandidateOutcome([], directMatch, "set-cn-verified", [scryfall.status()]);
     }
-
-    // Get all unique printings
-    const allPrintings = await allPromise;
-    const printings = allPrintings.map(formatScryfallCard);
-
-    if (printings.length > 0) {
-      console.log(`[Scanner] MTG: fetched ${printings.length} printings for "${cardName}"`);
-      return { printings, fallbackCard: null };
-    }
-
-    // Name search failed, so the name was probably the hallucinated field
-    // after all — an unverified set/CN hit is the best remaining guess.
-    if (directMatch) {
-      return { printings: [], fallbackCard: directMatch, fallbackMethod: "fallback-guess" };
-    }
-
-    // ─── Fallback 2: Deep Semantic Search based on physical attributes ──
-    const deepMatch = await searchScryfallDeepFallback(cardName, manaCost, typeLine, powerToughness, setCode);
-    if (deepMatch) {
-      console.log(`[Scanner] Fallback 2 (Deep Semantic) succeeded for: ${deepMatch.name}`);
-      return { printings: [], fallbackCard: formatScryfallCard(deepMatch), fallbackMethod: "fallback-guess" };
-    }
-
-    // Fallback 3: single card exact/fuzzy name lookup
-    const namedResult = await searchScryfallCardByName(cardName);
-    if (namedResult) return { printings: [], fallbackCard: formatScryfallCard(namedResult), fallbackMethod: "fallback-guess" };
-
-    return { printings: [], fallbackCard: null };
-  } catch {
-    return { printings: [], fallbackCard: null };
+    console.log(`[Scanner] Set/CN lookup returned "${directMatch.name}" but OCR read "${cardName}" — holding it as a weak guess.`);
   }
+
+  // Get all unique printings
+  const allPrintings = await allPromise;
+  const printings = allPrintings.map(formatScryfallCard);
+
+  if (printings.length > 0) {
+    console.log(`[Scanner] MTG: fetched ${printings.length} printings for "${cardName}"`);
+    return classifyCandidateOutcome(printings, null, undefined, [scryfall.status()]);
+  }
+
+  // Name search failed, so the name was probably the hallucinated field
+  // after all — an unverified set/CN hit is the best remaining guess.
+  if (directMatch) {
+    return classifyCandidateOutcome([], directMatch, "fallback-guess", [scryfall.status()]);
+  }
+
+  // ─── Fallback 2: Deep Semantic Search based on physical attributes ──
+  const deepMatch = await scryfall.run(
+    () => searchScryfallDeepFallback(cardName, manaCost, typeLine, powerToughness, setCode),
+    null,
+  );
+  if (deepMatch) {
+    console.log(`[Scanner] Fallback 2 (Deep Semantic) succeeded for: ${deepMatch.name}`);
+    return classifyCandidateOutcome([], formatScryfallCard(deepMatch), "fallback-guess", [scryfall.status()]);
+  }
+
+  // Fallback 3: single card exact/fuzzy name lookup
+  const namedResult = await scryfall.run(() => searchScryfallCardByName(cardName), null);
+  if (namedResult) {
+    return classifyCandidateOutcome([], formatScryfallCard(namedResult), "fallback-guess", [scryfall.status()]);
+  }
+
+  return classifyCandidateOutcome([], null, undefined, [scryfall.status()]);
 }
 
-async function fetchPokemonPrintings(cardName: string, setCode?: string, collectorNumber?: string): Promise<PrintingsResult> {
-  try {
-    // ─── Set+number lookup — the Pokemon mirror of the MTG path ─────
-    // Only trusted ("set-cn-verified") when the card it returns also bears
-    // the OCR'd name; otherwise the set/CN may itself be the misread field.
-    //
-    // Both lookups read ONLY the OCR fields — neither consumes the other's
-    // result — so they are started together and the direct hit's round trip
-    // hides behind the name search's instead of adding to it (Phase 5.13).
-    const directPromise = setCode && collectorNumber
-      ? searchPokemonBySetAndNumber(setCode, collectorNumber)
-      : Promise.resolve([] as any[]);
-    // Floated on purpose: a verified direct hit returns WITHOUT awaiting this,
-    // so it must never surface as an unhandled rejection. [] then flows through
-    // the same "name search found nothing" path it always did.
-    const allPromise = fetchAllPokemonPrintings(cardName).catch(() => [] as any[]);
+async function fetchPokemonPrintings(cardName: string, setCode?: string, collectorNumber?: string): Promise<CandidateOutcome> {
+  const pokemon = new SourceTracker("pokemon");
 
-    let directMatch: CandidatePrinting | null = null;
-    const hits = await directPromise;
-    if (hits.length === 1) {
-      directMatch = formatPokemonCard(hits[0]);
-      if (nameMatchesOcr(cardName, directMatch.name)) {
-        console.log(`[Scanner] Pokemon set/number match verified by name: "${directMatch.name}" (${setCode} #${collectorNumber})`);
-        return { printings: [], fallbackCard: directMatch, fallbackMethod: "set-cn-verified" };
-      }
-      console.log(`[Scanner] Pokemon set/number lookup returned "${directMatch.name}" but OCR read "${cardName}" — holding it as a weak guess.`);
+  // ─── Set+number lookup — the Pokemon mirror of the MTG path ─────
+  // Only trusted ("set-cn-verified") when the card it returns also bears
+  // the OCR'd name; otherwise the set/CN may itself be the misread field.
+  //
+  // Both lookups read ONLY the OCR fields — neither consumes the other's
+  // result — so they are started together and the direct hit's round trip
+  // hides behind the name search's instead of adding to it (Phase 5.13).
+  const directPromise = setCode && collectorNumber
+    ? pokemon.run(() => searchPokemonBySetAndNumber(setCode, collectorNumber), [] as any[])
+    : Promise.resolve([] as any[]);
+  // Started before we know whether we'll await it: a verified direct hit returns
+  // without touching this, so run() must absorb any rejection rather than let it
+  // surface unhandled.
+  const allPromise = pokemon.run(() => fetchAllPokemonPrintings(cardName), [] as any[]);
+
+  let directMatch: CandidatePrinting | null = null;
+  const hits = await directPromise;
+  if (hits.length === 1) {
+    directMatch = formatPokemonCard(hits[0]);
+    if (nameMatchesOcr(cardName, directMatch.name)) {
+      console.log(`[Scanner] Pokemon set/number match verified by name: "${directMatch.name}" (${setCode} #${collectorNumber})`);
+      return classifyCandidateOutcome([], directMatch, "set-cn-verified", [pokemon.status()]);
     }
-
-    const allPrintings = await allPromise;
-    const printings = allPrintings.map(formatPokemonCard);
-
-    if (printings.length > 0) {
-      console.log(`[Scanner] Pokemon: fetched ${printings.length} printings for "${cardName}"`);
-      return { printings, fallbackCard: null };
-    }
-
-    // Name search failed, so the name was probably the misread field after
-    // all — an unverified set/number hit is the best remaining guess.
-    if (directMatch) {
-      return { printings: [], fallbackCard: directMatch, fallbackMethod: "fallback-guess" };
-    }
-
-    // Fallback: fuzzy name search
-    const results = await searchPokemonCards(cardName);
-    const exactMatch = results.find((c: any) => c.name.toLowerCase() === cardName.toLowerCase());
-    const card = exactMatch || results[0];
-    if (card) return { printings: [], fallbackCard: formatPokemonCard(card), fallbackMethod: "fallback-guess" };
-
-    return { printings: [], fallbackCard: null };
-  } catch {
-    return { printings: [], fallbackCard: null };
+    console.log(`[Scanner] Pokemon set/number lookup returned "${directMatch.name}" but OCR read "${cardName}" — holding it as a weak guess.`);
   }
+
+  const allPrintings = await allPromise;
+  const printings = allPrintings.map(formatPokemonCard);
+
+  if (printings.length > 0) {
+    console.log(`[Scanner] Pokemon: fetched ${printings.length} printings for "${cardName}"`);
+    return classifyCandidateOutcome(printings, null, undefined, [pokemon.status()]);
+  }
+
+  // Name search failed, so the name was probably the misread field after
+  // all — an unverified set/number hit is the best remaining guess.
+  if (directMatch) {
+    return classifyCandidateOutcome([], directMatch, "fallback-guess", [pokemon.status()]);
+  }
+
+  // Fallback: fuzzy name search
+  const results = await pokemon.run(() => searchPokemonCards(cardName), [] as any[]);
+  const exactMatch = results.find((c: any) => c.name?.toLowerCase() === cardName.toLowerCase());
+  const card = exactMatch || results[0];
+  if (card) {
+    return classifyCandidateOutcome([], formatPokemonCard(card), "fallback-guess", [pokemon.status()]);
+  }
+
+  return classifyCandidateOutcome([], null, undefined, [pokemon.status()]);
 }
 
-async function fetchYugiohPrintings(cardName: string): Promise<PrintingsResult> {
-  try {
-    const results = await searchYugiohCards(cardName);
-    const exactMatch = results.find((c: any) => c.name.toLowerCase() === cardName.toLowerCase()) || results[0];
+async function fetchYugiohPrintings(cardName: string): Promise<CandidateOutcome> {
+  const ygo = new SourceTracker("ygoprodeck");
+  const results = await ygo.run(() => searchYugiohCards(cardName), [] as any[]);
+  const exactMatch = results.find((c: any) => c.name?.toLowerCase() === cardName.toLowerCase()) || results[0];
 
-    if (!exactMatch) return { printings: [], fallbackCard: null };
+  if (!exactMatch) return classifyCandidateOutcome([], null, undefined, [ygo.status()]);
 
-    // Yugioh packs alternate arts into card_images[] — treat each as a separate "printing"
-    const artVariants = getYugiohPrintings(exactMatch);
-    // Alternate arts share one API card id. Left unqualified, every variant would
-    // collide on the same local Card row and a scan of art B could silently save
-    // art A. Qualify the id per artwork when the card has more than one;
-    // getYugiohCardById strips the ":imageId" suffix before hitting the API.
-    const qualifyId = (p: any) =>
-      artVariants.length > 1 ? `${exactMatch.id}:${p.illustrationId}` : exactMatch.id.toString();
-    const imagePrintings: CandidatePrinting[] = artVariants.map((p: any) => ({
-      externalId: qualifyId(p),
-      name: exactMatch.name,
-      game: "YUGIOH",
-      setName: p.setName,
-      setCode: p.setCode,
-      rarity: p.rarity,
-      imageUrl: p.imageUrl,
-      thumbnailUrl: p.thumbnailUrl,
-      price: { marketPrice: p.price },
-      // Distinct per art variant — without it, the shared card id would fold
-      // every variant into one illustration group and block vision comparison.
-      illustrationId: p.illustrationId,
-    }));
+  // Yugioh packs alternate arts into card_images[] — treat each as a separate "printing"
+  const artVariants = getYugiohPrintings(exactMatch);
+  // Alternate arts share one API card id. Left unqualified, every variant would
+  // collide on the same local Card row and a scan of art B could silently save
+  // art A. Qualify the id per artwork when the card has more than one;
+  // getYugiohCardById strips the ":imageId" suffix before hitting the API.
+  const qualifyId = (p: any) =>
+    artVariants.length > 1 ? `${exactMatch.id}:${p.illustrationId}` : exactMatch.id.toString();
+  const imagePrintings: CandidatePrinting[] = artVariants.map((p: any) => ({
+    externalId: qualifyId(p),
+    name: exactMatch.name,
+    game: "YUGIOH",
+    setName: p.setName,
+    setCode: p.setCode,
+    rarity: p.rarity,
+    imageUrl: p.imageUrl,
+    thumbnailUrl: p.thumbnailUrl,
+    price: { marketPrice: p.price },
+    // Distinct per art variant — without it, the shared card id would fold
+    // every variant into one illustration group and block vision comparison.
+    illustrationId: p.illustrationId,
+  }));
 
-    if (imagePrintings.length > 0) {
-      console.log(`[Scanner] Yugioh: fetched ${imagePrintings.length} art variants for "${cardName}"`);
-      return { printings: imagePrintings, fallbackCard: null };
-    }
-
-    return { printings: [], fallbackCard: formatYugiohCard(exactMatch), fallbackMethod: "fallback-guess" };
-  } catch {
-    return { printings: [], fallbackCard: null };
+  if (imagePrintings.length > 0) {
+    console.log(`[Scanner] Yugioh: fetched ${imagePrintings.length} art variants for "${cardName}"`);
+    return classifyCandidateOutcome(imagePrintings, null, undefined, [ygo.status()]);
   }
+
+  return classifyCandidateOutcome([], formatYugiohCard(exactMatch), "fallback-guess", [ygo.status()]);
 }

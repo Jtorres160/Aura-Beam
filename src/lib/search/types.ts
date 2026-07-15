@@ -21,6 +21,7 @@
 // the semantics are identical and intentionally so.
 
 import type { GameId } from "@/lib/scanner/evidence";
+import type { ProviderFailureReason } from "@/lib/providers/http";
 
 // ─── Sources ────────────────────────────────────────────────────────────────
 
@@ -38,14 +39,12 @@ export const SOURCE_LABELS: Record<SearchSourceId, string> = {
 /**
  * Why a source produced no reading. Kept coarse and closed: this is shown to
  * collectors, so it must be truthful and finite — never a raw upstream string.
+ *
+ * Defined by the shared provider transport since 5.13B, so search and the
+ * scanner's candidate layer classify an upstream failure the same way. Aliased
+ * rather than re-declared — two copies would drift.
  */
-export type SourceFailureReason =
-  | "timeout"        // upstream exceeded our per-request ceiling
-  | "rate_limited"   // upstream refused us (429)
-  | "http_error"     // upstream answered, but not with an answer
-  | "network"        // we never reached it
-  | "not_configured" // we lack the credentials to ask
-  | "unexpected";    // anything else — still a failure, never a zero
+export type SourceFailureReason = ProviderFailureReason;
 
 /**
  * Availability of ONE source for ONE query.
