@@ -33,6 +33,7 @@
 export type ProviderFailureReason =
   | "timeout"        // upstream exceeded our per-request ceiling
   | "rate_limited"   // upstream refused us (429)
+  | "bad_query"      // upstream rejected OUR question as malformed (400)
   | "http_error"     // upstream answered, but not with an answer
   | "network"        // we never reached it
   | "not_configured" // we lack the credentials to ask
@@ -103,6 +104,30 @@ export async function fetchProviderJson<T = any>(
 
   if (response.status === 429) {
     throw new ProviderError("rate_limited", "Upstream rate limit reached");
+  }
+  // ─── 400: OUR bug, not theirs (Phase 5.13C) ───────────────────────────────
+  // Several of these queries are built out of raw OCR text — Scryfall syntax
+  // like `set:MH2 cn:267` or `t:"Creature"`. A stray quote or bracket from a
+  // misread strip produces a query the API is right to reject. The source is
+  // healthy; the question was malformed.
+  //
+  // It is still a FAILURE, and deliberately so: a question that was never
+  // validly asked has not established that the card is absent, so this must
+  // never resolve to a zero. Reading it as "no such card" would be a false
+  // negative manufactured out of our own OCR noise — the same lie as a timeout
+  // becoming "not found", just with a more embarrassing cause.
+  //
+  // What the distinct reason buys is TELEMETRY: bad_query separates "we are
+  // generating garbage queries" (an OCR/extraction problem, fixable by us) from
+  // "the provider is down" (not). Folded into http_error, an extraction
+  // regression would read as an upstream outage and be chased in the wrong
+  // codebase entirely.
+  //
+  // Note this is only reached when 400 is NOT in emptyStatuses. Where 400 is a
+  // real answer — YGOPRODeck's "no card by that name", Scryfall /named's "your
+  // fuzzy term is ambiguous" — the caller lists it and it returns null above.
+  if (response.status === 400) {
+    throw new ProviderError("bad_query", "Upstream rejected the query as malformed");
   }
   if (!response.ok) {
     throw new ProviderError("http_error", `Upstream responded ${response.status}`);
