@@ -10,10 +10,9 @@ const BASE_URL = "https://db.ygoprodeck.com/api/v7/cardinfo.php";
 // swallowing a failure into []. YGOPRODeck answers 400 for a name that matched
 // nothing, so 400 — and only 400 — is a real zero here.
 //
-// getYugiohCardById() stays lenient for its non-scanner callers.
-const fetchOpts = (): RequestInit => ({
-  signal: AbortSignal.timeout(8_000),
-});
+// Phase 5.13C: the by-id lookup is truth-aware too — fetchYugiohCardById()
+// throws, and getYugiohCardById() is the lenient adapter over it for callers
+// that genuinely want a null.
 
 export async function searchYugiohCards(query: string, setCode?: string) {
   // Try exact name first. 400 = "no card by that name" — a real answer.
@@ -35,15 +34,27 @@ export async function searchYugiohCards(query: string, setCode?: string) {
   return fuzzy?.data ?? [];
 }
 
+/**
+ * Authoritative by-id lookup. Throws ProviderError when the API does not
+ * answer. YGOPRODeck answers 400 for an id it has no card for — that is a real
+ * answer, so it resolves to null rather than a failure.
+ */
+export async function fetchYugiohCardById(id: string) {
+  // Scanner ids for alternate-art cards are variant-qualified ("cardId:imageId")
+  // so each artwork gets its own local Card row; the API only knows the base id.
+  const baseId = id.split(":")[0];
+  const json = await fetchProviderJson<{ data?: any[] }>(
+    `${BASE_URL}?id=${encodeURIComponent(baseId)}`,
+    { emptyStatuses: [400] },
+  );
+  return json?.data?.[0] ?? null;
+}
+
+/** Lenient adapter: null on ANY failure. Only for callers that would rather
+ *  skip a card than know why it's missing (price cron, card route). */
 export async function getYugiohCardById(id: string) {
   try {
-    // Scanner ids for alternate-art cards are variant-qualified ("cardId:imageId")
-    // so each artwork gets its own local Card row; the API only knows the base id.
-    const baseId = id.split(":")[0];
-    const response = await fetch(`${BASE_URL}?id=${encodeURIComponent(baseId)}`, fetchOpts());
-    if (!response.ok) return null;
-    const json = await response.json();
-    return json.data && json.data.length > 0 ? json.data[0] : null;
+    return await fetchYugiohCardById(id);
   } catch (error) {
     console.error(`Failed to fetch Yugioh card by ID ${id}:`, error);
     return null;

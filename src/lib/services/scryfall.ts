@@ -17,8 +17,11 @@ const SCRYFALL_HEADERS = {
 // 404 for a search that genuinely matched nothing, so 404 — and ONLY 404 —
 // resolves to a real zero here.
 //
-// getScryfallCardById() is deliberately left lenient: its callers (the card
-// route, price cron) want a null.
+// Phase 5.13C: the by-id lookup is truth-aware too — fetchScryfallCardById()
+// throws, and getScryfallCardById() is the lenient adapter over it for callers
+// (card route, price cron) that genuinely want a null.
+
+// Only searchScryfallCards() still uses this raw transport.
 const fetchOpts = (): RequestInit => ({
   headers: SCRYFALL_HEADERS,
   signal: AbortSignal.timeout(8_000),
@@ -152,7 +155,7 @@ export async function searchScryfallCards(query: string, setCode?: string, colle
     if (collectorNumber) exactQuery += ` cn:${collectorNumber}`;
 
     const response = await fetch(`${SEARCH_URL}?q=${encodeURIComponent(exactQuery)}&order=released&dir=desc`, fetchOpts());
-    
+
     if (response.ok) {
       const json = await response.json();
       if (json.data && json.data.length > 0) {
@@ -164,7 +167,7 @@ export async function searchScryfallCards(query: string, setCode?: string, colle
     await delay(100);
 
     const broadResponse = await fetch(`${SEARCH_URL}?q=${encodeURIComponent(query)}&order=released&dir=desc`, fetchOpts());
-    
+
     if (!broadResponse.ok) {
       if (broadResponse.status === 404) {
         console.log(`[Scryfall] No results found for "${query}"`);
@@ -195,12 +198,23 @@ export async function fetchAllMTGPrintings(name: string): Promise<any[]> {
   return json?.data ?? [];
 }
 
+/**
+ * Authoritative by-id lookup. Throws ProviderError when Scryfall does not
+ * answer. Unlike the Pokémon API, Scryfall's 404 on /cards/{id} is a real
+ * answer — "no card has this id" — so it resolves to null, not a failure.
+ */
+export async function fetchScryfallCardById(id: string) {
+  return await fetchProviderJson<any>(
+    `https://api.scryfall.com/cards/${encodeURIComponent(id)}`,
+    { headers: SCRYFALL_HEADERS, emptyStatuses: [404] },
+  );
+}
+
+/** Lenient adapter: null on ANY failure. Only for callers that would rather
+ *  skip a card than know why it's missing (price cron, card route). */
 export async function getScryfallCardById(id: string) {
   try {
-    const response = await fetch(`https://api.scryfall.com/cards/${encodeURIComponent(id)}`, fetchOpts());
-    if (!response.ok) return null;
-    const json = await response.json();
-    return json;
+    return await fetchScryfallCardById(id);
   } catch (error) {
     console.error(`Failed to fetch Scryfall card by ID ${id}:`, error);
     return null;
