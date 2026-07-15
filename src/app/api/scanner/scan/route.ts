@@ -213,9 +213,16 @@ export async function POST(req: NextRequest) {
     // The failure path has always logged timings; the SUCCESS path only wrote
     // them to the DB, so a healthy-but-slow scan was invisible in the terminal —
     // exactly the scan you want to watch. One line, same data as the telemetry.
+    // Phase 5.13C: per-source spans ride along here too. candidatesMs is one
+    // number over up to three providers, so it could never show WHICH one was
+    // slow — the question every provider decision starts with.
+    const sourceSummary = candidates.sources
+      .map((s) => `${s.source}=${s.durationMs}ms${s.availability === "failed" ? `:${s.reason}` : ""}`)
+      .join(" ");
     console.log(
       `[Scanner] ⏱  ${effectiveGame || "unknown"} ${Date.now() - startedAt}ms total | ` +
       Object.entries(timings).map(([k, v]) => `${k.replace(/Ms$/, "")}=${v}`).join(" ") +
+      (sourceSummary ? ` | ${sourceSummary}` : "") +
       ` | printings=${printings.length} → ${decision.action}`
     );
 
@@ -227,6 +234,10 @@ export async function POST(req: NextRequest) {
       evidence,
       scored,
       decision,
+      // Phase 5.13C: carried on EVERY outcome, not just the failing ones. A scan
+      // that found the card while a source timed out was indistinguishable from
+      // a fully healthy scan — the partial outage left no trace anywhere.
+      candidates: { status: candidates.status, sources: candidates.sources },
       printingsCount: printings.length,
       ocr: identifiedCard,
       game: effectiveGame,

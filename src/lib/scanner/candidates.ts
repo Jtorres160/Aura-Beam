@@ -54,6 +54,15 @@ export interface CandidateSourceStatus {
   availability: "completed" | "failed";
   /** Set only when availability is "failed". */
   reason?: ProviderFailureReason;
+  /** Wall-clock time spent on this source, in ms (Phase 5.13C).
+   *
+   *  Named to match SearchSourceStatus.durationMs — the two layers measure the
+   *  same thing about the same providers, so they spell it the same way.
+   *
+   *  This is a SPAN, not a sum: a game path fires several calls at a source and
+   *  starts some of them concurrently, so adding their elapsed times would
+   *  double-count the overlap and invent latency that never happened. */
+  durationMs: number;
 }
 
 /**
@@ -141,12 +150,19 @@ export function classifyCandidateOutcome(
 class SourceTracker {
   readonly source: CandidateSourceId;
   private failure: ProviderFailureReason | null = null;
+  // Wall-clock span across every call to this source (Phase 5.13C). Tracked as
+  // first-start → last-end rather than a sum of elapsed times, because calls
+  // here overlap: summing would double-count concurrency and report latency the
+  // collector never waited through.
+  private startedAt: number | null = null;
+  private endedAt = 0;
 
   constructor(source: CandidateSourceId) {
     this.source = source;
   }
 
   async run<T>(fn: () => Promise<T>, whenUnavailable: T): Promise<T> {
+    this.startedAt ??= Date.now();
     try {
       return await fn();
     } catch (err) {
@@ -159,11 +175,17 @@ class SourceTracker {
         (err as Error)?.message,
       );
       return whenUnavailable;
+    } finally {
+      this.endedAt = Date.now();
     }
   }
 
   status(): CandidateSourceStatus {
-    const base = { source: this.source, label: CANDIDATE_SOURCE_LABELS[this.source] };
+    const base = {
+      source: this.source,
+      label: CANDIDATE_SOURCE_LABELS[this.source],
+      durationMs: this.startedAt === null ? 0 : Math.max(0, this.endedAt - this.startedAt),
+    };
     return this.failure
       ? { ...base, availability: "failed" as const, reason: this.failure }
       : { ...base, availability: "completed" as const };
