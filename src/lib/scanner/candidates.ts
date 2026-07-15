@@ -95,23 +95,33 @@ async function fetchMTGPrintings(cardName: string, setCode: string, collectorNum
     // ─── Set+collector lookup — bypasses OCR name hallucinations ────
     // Only trusted ("set-cn-verified") when the card it returns also bears
     // the OCR'd name; otherwise the set/CN may itself be the misread field.
-    let directMatch: CandidatePrinting | null = null;
-    if (setCode && collectorNumber) {
+    //
+    // Both lookups read ONLY the OCR fields — neither consumes the other's
+    // result — so they are started together and the direct hit's round trip
+    // hides behind the name search's instead of adding to it (Phase 5.13).
+    const cleanCn = collectorNumber ? collectorNumber.split('/')[0].trim() : "";
+    const directPromise = setCode && cleanCn
       // e.g. "MH2", "267" or "267/303" -> use just the prefix
-      const cleanCn = collectorNumber.split('/')[0].trim();
-      const direct = await searchScryfallBySetAndCollector(setCode, cleanCn);
-      if (direct) {
-        directMatch = formatScryfallCard(direct);
-        if (nameMatchesOcr(cardName, directMatch.name)) {
-          console.log(`[Scanner] Set/CN match verified by name: "${directMatch.name}" (${setCode} #${cleanCn})`);
-          return { printings: [], fallbackCard: directMatch, fallbackMethod: "set-cn-verified" };
-        }
-        console.log(`[Scanner] Set/CN lookup returned "${directMatch.name}" but OCR read "${cardName}" — holding it as a weak guess.`);
+      ? searchScryfallBySetAndCollector(setCode, cleanCn)
+      : Promise.resolve(null);
+    // Floated on purpose: a verified direct hit returns WITHOUT awaiting this,
+    // so it must never surface as an unhandled rejection. [] then flows through
+    // the same "name search found nothing" path it always did.
+    const allPromise = fetchAllMTGPrintings(cardName).catch(() => [] as any[]);
+
+    let directMatch: CandidatePrinting | null = null;
+    const direct = await directPromise;
+    if (direct) {
+      directMatch = formatScryfallCard(direct);
+      if (nameMatchesOcr(cardName, directMatch.name)) {
+        console.log(`[Scanner] Set/CN match verified by name: "${directMatch.name}" (${setCode} #${cleanCn})`);
+        return { printings: [], fallbackCard: directMatch, fallbackMethod: "set-cn-verified" };
       }
+      console.log(`[Scanner] Set/CN lookup returned "${directMatch.name}" but OCR read "${cardName}" — holding it as a weak guess.`);
     }
 
     // Get all unique printings
-    const allPrintings = await fetchAllMTGPrintings(cardName);
+    const allPrintings = await allPromise;
     const printings = allPrintings.map(formatScryfallCard);
 
     if (printings.length > 0) {
@@ -147,20 +157,30 @@ async function fetchPokemonPrintings(cardName: string, setCode?: string, collect
     // ─── Set+number lookup — the Pokemon mirror of the MTG path ─────
     // Only trusted ("set-cn-verified") when the card it returns also bears
     // the OCR'd name; otherwise the set/CN may itself be the misread field.
+    //
+    // Both lookups read ONLY the OCR fields — neither consumes the other's
+    // result — so they are started together and the direct hit's round trip
+    // hides behind the name search's instead of adding to it (Phase 5.13).
+    const directPromise = setCode && collectorNumber
+      ? searchPokemonBySetAndNumber(setCode, collectorNumber)
+      : Promise.resolve([] as any[]);
+    // Floated on purpose: a verified direct hit returns WITHOUT awaiting this,
+    // so it must never surface as an unhandled rejection. [] then flows through
+    // the same "name search found nothing" path it always did.
+    const allPromise = fetchAllPokemonPrintings(cardName).catch(() => [] as any[]);
+
     let directMatch: CandidatePrinting | null = null;
-    if (setCode && collectorNumber) {
-      const hits = await searchPokemonBySetAndNumber(setCode, collectorNumber);
-      if (hits.length === 1) {
-        directMatch = formatPokemonCard(hits[0]);
-        if (nameMatchesOcr(cardName, directMatch.name)) {
-          console.log(`[Scanner] Pokemon set/number match verified by name: "${directMatch.name}" (${setCode} #${collectorNumber})`);
-          return { printings: [], fallbackCard: directMatch, fallbackMethod: "set-cn-verified" };
-        }
-        console.log(`[Scanner] Pokemon set/number lookup returned "${directMatch.name}" but OCR read "${cardName}" — holding it as a weak guess.`);
+    const hits = await directPromise;
+    if (hits.length === 1) {
+      directMatch = formatPokemonCard(hits[0]);
+      if (nameMatchesOcr(cardName, directMatch.name)) {
+        console.log(`[Scanner] Pokemon set/number match verified by name: "${directMatch.name}" (${setCode} #${collectorNumber})`);
+        return { printings: [], fallbackCard: directMatch, fallbackMethod: "set-cn-verified" };
       }
+      console.log(`[Scanner] Pokemon set/number lookup returned "${directMatch.name}" but OCR read "${cardName}" — holding it as a weak guess.`);
     }
 
-    const allPrintings = await fetchAllPokemonPrintings(cardName);
+    const allPrintings = await allPromise;
     const printings = allPrintings.map(formatPokemonCard);
 
     if (printings.length > 0) {

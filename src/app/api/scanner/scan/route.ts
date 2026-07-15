@@ -41,7 +41,11 @@ export async function POST(req: NextRequest) {
   };
 
   try {
-    const session = await auth();
+    // Phase 5.13: the pre-OCR stages were the pipeline's dark matter — ~19% of
+    // the median scan sat outside every timed() call, so no amount of staring at
+    // ocrMs/candidatesMs could explain it. They are cheap to measure and were
+    // simply never instrumented.
+    const session = await timed("authMs", () => auth());
     if (!session?.user?.id) {
       return NextResponse.json({ success: false, message: "Unauthorized" }, { status: 401 });
     }
@@ -58,11 +62,11 @@ export async function POST(req: NextRequest) {
     // cardId != null: only SAVED scans count against the daily cap. Telemetry
     // rows for disambiguation/not-found attempts have cardId null and must not
     // tighten the limit (same semantics as before those rows existed).
-    const scansToday = await runStage("database", () => dbRetry(() =>
+    const scansToday = await runStage("database", () => timed("rateLimitMs", () => dbRetry(() =>
       prisma.scanHistory.count({
         where: { userId: session.user.id, cardId: { not: null }, createdAt: { gte: startOfUtcDay() } },
       })
-    ));
+    )));
     if (scansToday >= SCAN_DAILY_LIMIT) {
       return NextResponse.json(
         { success: false, stage: "rate-limit", message: "You've reached today's scan limit. It resets at midnight UTC." },
@@ -70,7 +74,8 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const body = await runStage("parse", () => req.json());
+    // The body carries a base64 image — this is not a free JSON.parse.
+    const body = await runStage("parse", () => timed("parseMs", () => req.json()));
     const { image, game, isAutoScan } = body;
 
     if (!image) {
@@ -146,21 +151,20 @@ export async function POST(req: NextRequest) {
     // ─── Step 1b: Check AI Learning Rules for this card ───────────────
     // Best-effort: a learning rule refines a scan but must never fail one — a
     // DB hiccup here degrades to "no rule" instead of killing the attempt.
-    const learningRule = await prisma.aiLearningRule.findUnique({
-      where: { targetName: cardName },
-    }).catch((err) => {
-      console.warn("[Scanner] Learning-rule lookup failed (non-fatal):", err?.message);
-      return null;
-    });
-
-    if (learningRule) {
-      console.log(`[Scanner] 🧠 Found learning rule for "${cardName}": ${learningRule.ruleType}`);
-      // Increment timesApplied asynchronously — don't await to avoid slowing the scan
-      prisma.aiLearningRule.update({
-        where: { id: learningRule.id },
-        data: { timesApplied: { increment: 1 } },
-      }).catch(() => {});
-    }
+    //
+    // Started here but NOT awaited until scoring (Phase 5.13). It needs only the
+    // OCR'd name, and the candidate fetch never reads it, so the two are
+    // independent; awaiting it here put a DB round trip on the critical path
+    // ahead of the slowest stage in the pipeline for no reason. The scorer is
+    // the first thing that actually consumes it.
+    const learningRulePromise = timed("learningRuleMs", () =>
+      prisma.aiLearningRule.findUnique({
+        where: { targetName: cardName },
+      }).catch((err) => {
+        console.warn("[Scanner] Learning-rule lookup failed (non-fatal):", err?.message);
+        return null;
+      })
+    );
 
     // ─── Step 2: Fetch all printings of this card ─────────────────────
     console.log(`[Scanner] Step 2: Fetching all printings for "${cardName}"...`);
@@ -169,6 +173,18 @@ export async function POST(req: NextRequest) {
         fetchAllPrintings(cardName, effectiveGame, setCode, collectorNumber, manaCost, typeLine, powerToughness)
       )
     );
+
+    // Now the rule is genuinely needed — usually already resolved behind the
+    // candidate fetch, so this await costs nothing.
+    const learningRule = await learningRulePromise;
+    if (learningRule) {
+      console.log(`[Scanner] 🧠 Found learning rule for "${cardName}": ${learningRule.ruleType}`);
+      // Increment timesApplied asynchronously — don't await to avoid slowing the scan
+      prisma.aiLearningRule.update({
+        where: { id: learningRule.id },
+        data: { timesApplied: { increment: 1 } },
+      }).catch(() => {});
+    }
 
     // ─── Step 3: Score — the scorer owns the identification verdict ────
     // Models only produced evidence; the scorer (heuristic today, probabilistic

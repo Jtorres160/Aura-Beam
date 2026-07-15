@@ -6,6 +6,7 @@
 
 import OpenAI from "openai";
 import type { CandidatePrinting } from "@/lib/scanner/evidence";
+import { throttleVision } from "@/lib/scanner/vision-throttle";
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY || "dummy_build_key",
@@ -41,7 +42,14 @@ export async function pickArtGroupByVision(
       image_url: { url: p.thumbnailUrl as string, detail: "low" as const }
     }));
 
-    const visualResponse = await openai.chat.completions.create({
+    // Routed through the SAME gate as the two OCR passes (Phase 5.13 audit).
+    // This call was the one vision request in the pipeline that bypassed it: a
+    // full-detail scanned image plus one thumbnail per art group is the single
+    // most token-heavy call we make, and in bulk it landed on OpenAI's token
+    // bucket unpaced, alongside the next scan's OCR pair. Single scans pay
+    // nothing for this — by the time scoring runs, the OCR passes have long
+    // since consumed their spacing gap — so it buys burst safety for free.
+    const visualResponse = await throttleVision(() => openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
         {
@@ -76,7 +84,7 @@ Example for 3 candidates where #0 is the clear winner:
       ],
       max_tokens: 100,
       temperature: 0.0,
-    }, { timeout: VISION_TIMEOUT_MS, maxRetries: 1 });
+    }, { timeout: VISION_TIMEOUT_MS, maxRetries: 1 }));
 
     const raw = (visualResponse.choices[0]?.message?.content || "").trim();
     const parsed = JSON.parse(raw);
