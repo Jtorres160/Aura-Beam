@@ -5,6 +5,7 @@ import GoogleProvider from "next-auth/providers/google";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { SignJWT, jwtVerify } from "jose";
 import { verifyPassword } from "./lib/password";
+import { devSession, ensureDevUser, isDevAuthBypassEnabled } from "./lib/auth-dev-bypass";
 
 const JWT_SECRET = process.env.NEXTAUTH_SECRET;
 
@@ -14,7 +15,7 @@ if (process.env.NODE_ENV === "production" && !JWT_SECRET) {
 
 const fallbackSecret = JWT_SECRET || "aura-beam-super-secret-key-for-development";
 
-export const { handlers, auth, signIn, signOut } = NextAuth({
+export const { handlers, auth: nextAuth, signIn, signOut } = NextAuth({
   adapter: PrismaAdapter(prisma),
   secret: JWT_SECRET,
   session: { strategy: "jwt" },
@@ -117,4 +118,33 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     },
   },
 });
+
+// ─── TEMPORARY: development auth bypass seam (Phase 5.14.x) ──────────────────
+// The ONE place the bypass touches the auth stack. Everything above is the real,
+// untouched NextAuth configuration; this wrapper only short-circuits the no-arg
+// `await auth()` call that protected routes make.
+//
+// `auth` is overloaded in NextAuth v5 — it is both a session getter AND a
+// middleware wrapper (src/proxy.ts does `export default auth((req) => …)`).
+// Calls WITH arguments are therefore delegated to NextAuth untouched; only the
+// bare `auth()` form can take the dev branch. Getting this wrong would break
+// route protection itself rather than bypass it.
+//
+// To remove: delete this block and rename `nextAuth` back to `auth` above.
+// NOTE the wrapper is deliberately NOT async. `auth(handler)` must return the
+// middleware FUNCTION synchronously — an async wrapper returns a Promise of it,
+// and Next.js rejects the proxy with "must export a function named `proxy` or a
+// default function". Only the no-arg branch returns a promise, which is exactly
+// what `await auth()` expects.
+export const auth = ((...args: unknown[]) => {
+  if (args.length === 0 && isDevAuthBypassEnabled()) {
+    return (async () => {
+      // The FK targets in scan_history / capture_rejections must resolve, so
+      // the row has to exist before any route writes against this id.
+      await ensureDevUser();
+      return devSession();
+    })();
+  }
+  return (nextAuth as any)(...args);
+}) as typeof nextAuth;
 

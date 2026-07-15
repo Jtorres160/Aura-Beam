@@ -30,6 +30,7 @@ const { PrismaClient } = require("@prisma/client");
 
 const { analyzeTelemetry } = await import("../src/lib/scanner/telemetry-analysis.ts");
 const { formatTelemetryReport } = await import("../src/lib/scanner/telemetry-report.ts");
+const { DEV_USER } = await import("../src/lib/auth-dev-bypass.ts");
 
 /** Telemetry Day 0 — the Phase 5.13C truth-boundary deploy. */
 const DAY_0 = "2026-07-15T20:25:59Z";
@@ -73,14 +74,29 @@ const filter = {
 
 const prisma = new PrismaClient();
 
+const createdAtWindow =
+  filter.from || filter.to
+    ? { createdAt: { ...(filter.from ? { gte: filter.from } : {}), ...(filter.to ? { lt: filter.to } : {}) } }
+    : {};
+
+// ─── Development rows are NOT collector scans ────────────────────────────────
+// DEV_AUTH_BYPASS writes real rows under a fixed userId (see auth-dev-bypass.ts).
+// They are genuine records of something, but they are not a collector scanning a
+// card, so they must never sit in a denominator that Phase 5.15 reads as real
+// usage. They are EXCLUDED here and COUNTED separately: silently dropping them
+// would be its own dishonesty — the reader cannot judge a sample they are not
+// told about. Same treatment as legacy raw-OCR rows below.
+const devScans = await prisma.scanHistory.count({
+  where: { userId: DEV_USER.id, ocrText: { not: null }, ...createdAtWindow },
+});
+
 // Fetch by the DB's own createdAt window where we can — the rest of the filters
 // need the parsed JSON, so they are applied in analyzeTelemetry.
 const rows = await prisma.scanHistory.findMany({
   where: {
     ocrText: { not: null },
-    ...(filter.from || filter.to
-      ? { createdAt: { ...(filter.from ? { gte: filter.from } : {}), ...(filter.to ? { lt: filter.to } : {}) } }
-      : {}),
+    userId: { not: DEV_USER.id },
+    ...createdAtWindow,
   },
   select: { ocrText: true, createdAt: true },
   orderBy: { createdAt: "asc" },
@@ -113,7 +129,7 @@ for (const row of rows) {
 const analysis = analyzeTelemetry(samples, filter);
 
 if (has("json")) {
-  console.log(JSON.stringify({ analysis, skipped: { legacyRawOcr, unparseable } }, null, 2));
+  console.log(JSON.stringify({ analysis, skipped: { legacyRawOcr, unparseable, devScans } }, null, 2));
 } else {
   console.log(formatTelemetryReport(analysis));
   console.log("Source rows");
@@ -122,6 +138,7 @@ if (has("json")) {
   console.log(`  v1 telemetry records       ${samples.length}`);
   console.log(`  legacy raw OCR text        ${legacyRawOcr}   (pre-telemetry rows; not scans we can analyze)`);
   console.log(`  unrecognized shape         ${unparseable}`);
+  console.log(`  development rows excluded  ${devScans}   (userId "${DEV_USER.id}" — DEV_AUTH_BYPASS, not collector scans)`);
   if (filter.from) console.log(`\n  Filtered from ${filter.from.toISOString()}${flag("since") === "day0" ? " (Telemetry Day 0)" : ""}`);
 }
 
