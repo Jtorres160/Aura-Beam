@@ -59,6 +59,25 @@ export interface TelemetrySample {
   /** When the scan happened — ScanHistory.createdAt. */
   at: Date;
   telemetry: ScanTelemetryV1;
+  /**
+   * The scan's authoritative end-to-end wall-clock — ScanHistory.processingTime,
+   * in ms. This is the WHOLE server request (auth → response), and it is the
+   * only honest source for total scan latency.
+   *
+   * It cannot be reconstructed from `timings`. Two spans of real user-facing time
+   * live OUTSIDE that record and always will: the un-instrumented gaps between
+   * stages, and — on an accepted scan — the terminal DB persist (persistPrinting
+   * + scanHistory.create + archive context), which runs AFTER `timings` is
+   * snapshotted to be written INTO that very row. Summing the per-stage
+   * distributions therefore undercounts, most on the path that matters most.
+   *
+   * Optional because it is a COLUMN, not part of the telemetry JSON: older
+   * fixtures and any caller that does not read the row omit it. When absent,
+   * total scan falls back to an in-JSON total key (none is emitted today), and
+   * stays "no data" rather than inventing a sum — the same absent-is-not-zero
+   * rule the rest of this module enforces.
+   */
+  processingTimeMs?: number;
 }
 
 /** Every field is optional; an omitted field does not constrain the set. */
@@ -376,8 +395,19 @@ const TOTAL_STAGE_KEYS = ["totalMs", "total", "scanMs"];
 
 function totalScanValues(samples: TelemetrySample[]): number[] {
   const values: number[] = [];
-  for (const { telemetry } of samples) {
-    const timings = telemetry.timings ?? {};
+  for (const s of samples) {
+    // The row's processingTime is the authoritative end-to-end total: it is what
+    // the collector actually waited for server-side, and — unlike any sum of the
+    // per-stage `timings` — it INCLUDES the terminal DB persist that runs after
+    // `timings` is captured. Prefer it whenever the reader supplied it.
+    if (typeof s.processingTimeMs === "number" && Number.isFinite(s.processingTimeMs) && s.processingTimeMs >= 0) {
+      values.push(s.processingTimeMs);
+      continue;
+    }
+    // Fall back to an in-JSON total only if one was ever recorded. None is today,
+    // so a sample with no processingTime contributes nothing — total scan reads
+    // "no data" rather than a fabricated stage-sum.
+    const timings = s.telemetry.timings ?? {};
     const key = TOTAL_STAGE_KEYS.find((k) => typeof timings[k] === "number");
     if (key) values.push(timings[key]);
   }

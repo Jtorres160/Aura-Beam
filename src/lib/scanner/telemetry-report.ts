@@ -226,6 +226,13 @@ export function formatTelemetryReport(a: TelemetryAnalysis): string {
     }
     out.push("");
     out.push(`  total scan         ${distLine(a.totalScan)}`);
+    if (a.totalScan.count > 0) {
+      // Total scan is the row's end-to-end processingTime; the stages above are a
+      // partial breakdown. They will not sum to it — the terminal DB persist and
+      // the gaps between stages are real user-facing time that `timings` never
+      // captured. The remainder is that dark time, not a rounding error.
+      out.push(`    (end-to-end, incl. persist + un-instrumented gaps — stages above do not sum to it)`);
+    }
   }
 
   out.push(section("By game"));

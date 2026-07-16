@@ -29,7 +29,8 @@ const require = createRequire(import.meta.url);
 const { PrismaClient } = require("@prisma/client");
 
 const { analyzeTelemetry } = await import("../src/lib/scanner/telemetry-analysis.ts");
-const { formatTelemetryReport } = await import("../src/lib/scanner/telemetry-report.ts");
+const { formatTelemetryReport, formatAttemptInterpretation } = await import("../src/lib/scanner/telemetry-report.ts");
+const { interpretAttempts, recordKind } = await import("../src/lib/scanner/telemetry-interpretation.ts");
 const { DEV_USER } = await import("../src/lib/auth-dev-bypass.ts");
 
 /** Telemetry Day 0 — the Phase 5.13C truth-boundary deploy. */
@@ -98,7 +99,10 @@ const rows = await prisma.scanHistory.findMany({
     userId: { not: DEV_USER.id },
     ...createdAtWindow,
   },
-  select: { ocrText: true, createdAt: true },
+  // processingTime is the row's authoritative end-to-end wall-clock (auth →
+  // response). It is the only honest source for total scan latency: it includes
+  // the terminal DB persist, which the in-JSON `timings` snapshot cannot see.
+  select: { ocrText: true, createdAt: true, processingTime: true },
   orderBy: { createdAt: "asc" },
 });
 
@@ -107,7 +111,7 @@ const rows = await prisma.scanHistory.findMany({
 // corrupt telemetry, they are a different thing that predates telemetry, and
 // counting them as scans would understate every coverage denominator. Skip and
 // report them separately.
-const samples = [];
+const records = [];
 let legacyRawOcr = 0;
 let unparseable = 0;
 
@@ -123,19 +127,42 @@ for (const row of rows) {
     unparseable++;
     continue;
   }
-  samples.push({ at: row.createdAt, telemetry: parsed });
+  // processingTime is a nullable Int column; pass it through only when present so
+  // an absent value stays absent (never a 0ms total) in the analysis layer.
+  records.push({
+    at: row.createdAt,
+    telemetry: parsed,
+    processingTimeMs: typeof row.processingTime === "number" ? row.processingTime : undefined,
+  });
 }
 
+// Pipeline-level census (Phase 5.15) spans EVERY stored record shape — the
+// failure and error rows the analysis layer is structurally blind to. Narrowed
+// only by --game, which every shape carries; --source/--status describe
+// candidate data only scored records have, so they narrow the analysis below.
+const interpRecords = filter.game
+  ? records.filter((r) => r.telemetry.game === filter.game)
+  : records;
+const interpretation = interpretAttempts(interpRecords.map((r) => r.telemetry));
+
+// The analysis layer reads ONLY scored records (buildScanTelemetry). Failure and
+// error rows carry no candidateStatus; feeding them in would swell `unclassified`
+// with attempts whose candidate stage never ran — the exact conflation Phase
+// 5.15 separates. They are counted in the interpretation above instead. This is
+// why interpretation.byKind.scored equals the analysis' Scans count.
+const samples = records.filter((r) => recordKind(r.telemetry) === "scored");
 const analysis = analyzeTelemetry(samples, filter);
 
 if (has("json")) {
-  console.log(JSON.stringify({ analysis, skipped: { legacyRawOcr, unparseable, devScans } }, null, 2));
+  console.log(JSON.stringify({ interpretation, analysis, skipped: { legacyRawOcr, unparseable, devScans } }, null, 2));
 } else {
+  console.log(formatAttemptInterpretation(interpretation));
   console.log(formatTelemetryReport(analysis));
   console.log("Source rows");
   console.log("───────────");
   console.log(`  ScanHistory rows read      ${rows.length}`);
-  console.log(`  v1 telemetry records       ${samples.length}`);
+  console.log(`  v1 telemetry records       ${records.length}`);
+  console.log(`  scored (analyzed) records  ${samples.length}   (the rest are failure/error rows — see interpretation)`);
   console.log(`  legacy raw OCR text        ${legacyRawOcr}   (pre-telemetry rows; not scans we can analyze)`);
   console.log(`  unrecognized shape         ${unparseable}`);
   console.log(`  development rows excluded  ${devScans}   (userId "${DEV_USER.id}" — DEV_AUTH_BYPASS, not collector scans)`);

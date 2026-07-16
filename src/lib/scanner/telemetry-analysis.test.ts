@@ -47,7 +47,11 @@ function source(over: Partial<CandidateSourceStatus> = {}): CandidateSourceStatu
   };
 }
 
-function sample(over: Partial<ScanTelemetryV1> = {}, at = new Date("2026-07-16T12:00:00Z")): TelemetrySample {
+function sample(
+  over: Partial<ScanTelemetryV1> = {},
+  at = new Date("2026-07-16T12:00:00Z"),
+  processingTimeMs?: number,
+): TelemetrySample {
   return {
     at,
     telemetry: {
@@ -58,6 +62,7 @@ function sample(over: Partial<ScanTelemetryV1> = {}, at = new Date("2026-07-16T1
       presentedCount: 1,
       ...over,
     },
+    ...(processingTimeMs === undefined ? {} : { processingTimeMs }),
   };
 }
 
@@ -275,6 +280,57 @@ describe("latency", () => {
   test("a stage nobody recorded is absent from the breakdown", () => {
     const a = analyzeTelemetry([sample({ timings: { ocrMs: 100 } })]);
     assert.equal(a.latency.stages.scoreMs, undefined);
+  });
+});
+
+// ─── Total scan latency (Phase 5.16) ─────────────────────────────────────────
+//
+// Total scan comes from the row's authoritative end-to-end processingTime, NOT
+// from summing the per-stage `timings`. The stages are captured before the
+// terminal DB persist and cannot see it, so a stage-sum would systematically
+// undercount the accept path. These pin that the analysis reads the right source
+// and, per the module's one rule, reports "no data" rather than a fabricated sum
+// when the row's total was not supplied.
+
+describe("total scan latency", () => {
+  test("reads the row's processingTime, not a sum of stages", () => {
+    // processingTime (450) deliberately exceeds the lone recorded stage (ocr 100):
+    // the difference is the persist + gaps the breakdown never measured.
+    const a = analyzeTelemetry([
+      sample({ timings: { ocrMs: 100 } }, new Date("2026-07-16T12:00:00Z"), 450),
+      sample({ timings: { ocrMs: 100 } }, new Date("2026-07-16T12:00:00Z"), 550),
+    ]);
+    assert.equal(a.totalScan.count, 2);
+    assert.equal(a.totalScan.mean, 500);
+    assert.equal(a.totalScan.min, 450);
+    assert.equal(a.totalScan.max, 550);
+  });
+
+  test("stays 'no data' when no row supplied a total — never a stage-sum", () => {
+    // Timings are present, but no processingTime: total scan must decline to
+    // report rather than pass off ocrMs (or any sum) as the end-to-end total.
+    const a = analyzeTelemetry([sample({ timings: { ocrMs: 100, candidatesMs: 500 } })]);
+    assert.equal(a.totalScan.count, 0);
+    assert.equal(a.totalScan.mean, null);
+    // The Latency breakdown's total-scan line must read "no data", not a number.
+    assert.match(formatTelemetryReport(a), /total scan\s+no data/, "an unsupplied total must print 'no data'");
+  });
+
+  test("per-day total scan is populated from processingTime too", () => {
+    const a = analyzeTelemetry([
+      sample({}, new Date("2026-07-16T09:00:00Z"), 400),
+      sample({}, new Date("2026-07-16T21:00:00Z"), 600),
+    ]);
+    assert.equal(a.byDay[0].day, "2026-07-16");
+    assert.equal(a.byDay[0].totalScan.mean, 500);
+  });
+
+  test("falls back to an in-JSON total key when processingTime is absent", () => {
+    // Back-compat: if a future record ever carried a totalMs inside timings, it
+    // is still honored when the row-level total is missing.
+    const a = analyzeTelemetry([sample({ timings: { ocrMs: 100, totalMs: 1200 } })]);
+    assert.equal(a.totalScan.count, 1);
+    assert.equal(a.totalScan.mean, 1200);
   });
 });
 
