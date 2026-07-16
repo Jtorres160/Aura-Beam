@@ -27,6 +27,15 @@ import {
   type ProviderStats,
   type TelemetryAnalysis,
 } from "@/lib/scanner/telemetry-analysis";
+import {
+  ATTEMPT_CATEGORIES,
+  ATTEMPT_CATEGORY_DESCRIPTIONS,
+  PIPELINE_STAGES,
+  type AttemptCategory,
+  type AttemptInterpretation,
+  type PipelineStage,
+  type StageState,
+} from "@/lib/scanner/telemetry-interpretation";
 
 // ─── Primitives ──────────────────────────────────────────────────────────────
 
@@ -237,6 +246,90 @@ export function formatTelemetryReport(a: TelemetryAnalysis): string {
     for (const d of a.byDay) {
       out.push(`  ${pad(d.day, 12)} ${pad(String(d.scans), 7)} ${pad(pct(d.matchRate), 8)} ${distLine(d.totalScan)}`);
     }
+  }
+
+  return out.join("\n") + "\n";
+}
+
+// ─── Attempt interpretation (Phase 5.15) ─────────────────────────────────────
+//
+// The pipeline-level view analyzeTelemetry cannot give, because it reads only
+// the scored records. This section spans EVERY stored record — the failure and
+// error rows too — and answers "what happened" and "how far did it get" in one
+// vocabulary. It is DESCRIPTIVE: it never labels an attempt good or bad, and a
+// stage that never ran reads as "not run", never as a failure or a zero.
+
+/** Human labels for the five stage states — the report never prints the raw enum. */
+const STAGE_STATE_LABELS: Record<StageState, string> = {
+  ran_ok: "ran ok",
+  ran_empty: "ran, empty",
+  ran_failed: "ran, failed",
+  not_executed: "not run",
+  unknown: "unknown",
+};
+
+/** The order stage states are printed in — the pipeline's own progression. */
+const STAGE_STATE_ORDER: readonly StageState[] = [
+  "ran_ok",
+  "ran_empty",
+  "ran_failed",
+  "not_executed",
+  "unknown",
+];
+
+function stageStateSummary(counts: Record<StageState, number>): string {
+  // Only mention states that actually occurred — a zero here is a real measured
+  // zero (this stage was seen N times, none of them in this state), but listing
+  // every state on every line buries the signal. Absent states are simply not
+  // printed; the per-stage total makes the omission unambiguous.
+  const parts = STAGE_STATE_ORDER.filter((s) => counts[s] > 0).map(
+    (s) => `${STAGE_STATE_LABELS[s]} ${counts[s]}`,
+  );
+  return parts.length > 0 ? parts.join("   ") : NO_DATA;
+}
+
+export function formatAttemptInterpretation(i: AttemptInterpretation): string {
+  const out: string[] = [];
+
+  out.push("Attempt interpretation (Phase 5.15)");
+  out.push("═══════════════════════════════════");
+  out.push(`Records: ${i.total}`);
+  if (i.total === 0) {
+    out.push(`  ${NO_DATA} — no stored records to interpret.`);
+    return out.join("\n") + "\n";
+  }
+
+  // Record shapes first: this is the reconciliation key between this view (every
+  // record) and the analysis view (scored records only). "scored" here should
+  // equal analyzeTelemetry's sampleCount.
+  out.push(section("Record shapes"));
+  const kindOrder = ["scored", "failure", "error", "selection_only", "unrecognized"] as const;
+  for (const k of kindOrder) {
+    const n = i.byKind[k];
+    if (n > 0) out.push(`  ${pad(k, 16)} ${pad(String(n), 6)} ${share(n, i.total)}`);
+  }
+
+  // Attempt classification: the plain-language "what happened" tally. Only
+  // categories that occurred are listed; each carries its one-line definition so
+  // the reader never has to consult the code to know what a name means.
+  out.push(section("Attempt classification"));
+  const seen: AttemptCategory[] = ATTEMPT_CATEGORIES.filter((c) => i.byCategory[c] > 0);
+  if (seen.length === 0) {
+    out.push(`  ${NO_DATA}`);
+  } else {
+    for (const c of seen) {
+      const n = i.byCategory[c];
+      out.push(`  ${pad(c, 24)} ${pad(String(n), 6)} ${share(n, i.total)}`);
+      out.push(`    ${ATTEMPT_CATEGORY_DESCRIPTIONS[c]}`);
+    }
+  }
+
+  // Stage execution: how far attempts got. Each stage's counts sum to `total`,
+  // so "not run" is visible as its own quantity rather than hidden as a gap.
+  out.push(section("Stage execution"));
+  out.push(`  Each stage was seen in ${i.total} attempts. States: ran ok / ran, empty / ran, failed / not run / unknown.`);
+  for (const stage of PIPELINE_STAGES) {
+    out.push(`  ${pad(stage, 12)} ${stageStateSummary(i.stages[stage as PipelineStage])}`);
   }
 
   return out.join("\n") + "\n";
