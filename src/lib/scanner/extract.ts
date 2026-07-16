@@ -11,6 +11,31 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY || "dummy_build_key",
 });
 
+// ─── OCR cost observability (Phase 5.17B) ───────────────────────────────────
+// `ocrMs` is a single opaque await around the vision call — the pipeline's
+// dominant cost (~1763ms median) but with no visibility into WHY. This logs the
+// two real, un-fabricated drivers of that cost so a future OCR phase has a
+// before/after signal: the uploaded image size (a resolution/quality change
+// moves this) and OpenAI's own token accounting (image tiles land in
+// prompt_tokens, so `detail:"high"` vs a smaller image shows up here directly).
+//
+// Observation ONLY: measured from the request we already send and the response
+// we already receive. Nothing is persisted, returned, retried, or branched on —
+// the OCR reading and every decision downstream are byte-identical without it.
+function approxImageKB(dataUrl: string): number {
+  const comma = dataUrl.indexOf(",");
+  const b64 = comma === -1 ? dataUrl : dataUrl.slice(comma + 1);
+  // base64 encodes 3 bytes per 4 chars; good enough for an order-of-magnitude log.
+  return Math.round((b64.length * 0.75) / 1024);
+}
+function logOcrCost(pass: string, imageUrl: string, detail: string, usage: any): void {
+  const u = usage || {};
+  console.log(
+    `[Scanner] ⏱  ocr-cost ${pass} | image=${approxImageKB(imageUrl)}KB detail=${detail} ` +
+    `promptTokens=${u.prompt_tokens ?? "?"} completionTokens=${u.completion_tokens ?? "?"}`
+  );
+}
+
 // Per-call ceilings (Phase 5.2.5): a hung vision call must fail fast into a
 // classified error, not spin until the platform kills the whole function.
 // SDK-level retries keep transient blips (incl. residual 429s) invisible; they
@@ -68,6 +93,7 @@ Return ONLY raw JSON. No markdown. No explanation.`
       temperature: 0.1,
     }, { timeout: OCR_TIMEOUT_MS, maxRetries: OCR_MAX_RETRIES }));
 
+    logOcrCost("full", imageUrl, "auto", aiResponse.usage);
     const aiMessage = aiResponse.choices[0]?.message?.content || "{}";
     console.log("[Scanner] OCR response:", aiMessage);
 
@@ -143,6 +169,7 @@ If the bottom strip is not legible, return every value as "". Return ONLY raw JS
       temperature: 0.0,
     }, { timeout: OCR_TIMEOUT_MS, maxRetries: OCR_MAX_RETRIES }));
 
+    logOcrCost("strip", imageUrl, "high", aiResponse.usage);
     const raw = aiResponse.choices[0]?.message?.content || "{}";
     console.log("[Scanner] Strip OCR response:", raw);
 
