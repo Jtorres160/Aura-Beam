@@ -1,0 +1,566 @@
+
+> aura@0.1.0 dev
+> next dev
+
+▲ Next.js 16.2.7 (Turbopack)
+- Local:         http://localhost:3000
+- Network:       http://192.168.1.110:3000
+- Environments: .env
+✓ Ready in 335ms
+
+[ScanTrace] ▶ REQUEST RECEIVED @ 2026-07-16T22:59:59.282Z (t=0)
+[ScanTrace]   → authMs START (+3ms)
+
+[auth] DEV_AUTH_BYPASS active — using development user "dev-user" (dev@localhost).
+[auth] Authentication is DISABLED for every protected route in this process.
+[auth] Database: REMOTE (aws-1-us-east-2.pooler.supabase.com) — acknowledged via DEV_AUTH_BYPASS_ALLOW_REMOTE_DB. Rows written here are real, and "dev-user" scans will land in real telemetry.
+
+[auth] DEV_AUTH_BYPASS — development user "dev-user" is present in the database.
+[ScanTrace]   ← authMs END   (took 1072ms, +1075ms)
+[ScanTrace]   → rateLimitMs START (+1076ms)
+[ScanTrace]   ← rateLimitMs END   (took 327ms, +1403ms)
+[ScanTrace]   → parseMs START (+1404ms)
+[ScanTrace]   ← parseMs END   (took 3ms, +1407ms)
+[ScanTrace]   body shape: keys=[image] image=present type=string len=211739 dataUri=data:image/jpeg;base64 game=∅ isAutoScan=false (+1408ms)
+[Scanner] Step 1: OCR — identifying card name...
+[Scanner] Step 1c: Strip OCR — reading the set/collector strip...
+[ScanTrace]   → ocrMs START (+1409ms)
+[Scanner] ⏱  ocr-cost full | image=155KB detail=auto promptTokens=25818 completionTokens=63
+[Scanner] OCR response: {
+  "name": "Zeraora VSTAR",
+  "game": "Pokemon",
+  "setCode": "SWSH",
+  "collectorNumber": "265",
+  "manaCost": "",
+  "typeLine": "VSTAR",
+  "powerToughness": "270"
+}
+[ScanTrace]   ← ocrMs END   (took 2313ms, +3722ms)
+[Scanner] Identified: "Zeraora VSTAR" (Pokemon) [Set: SWSH, CN: 265, Mana: , Type: VSTAR, PT: 270]
+[Scanner] ⏱  ocr-cost strip | image=155KB detail=high promptTokens=25757 completionTokens=35
+[Scanner] Strip OCR response: {
+  "setCode": "SWSH265",
+  "collectorNumber": "",
+  "rarity": "F",
+  "artist": "aky CG Works"
+}
+[Scanner] Strip OCR reconciled set/CN: [SWSH, 265] -> [SWSH265, 265]
+[ScanTrace]   → learningRuleMs START (+4676ms)
+[Scanner] Step 2: Fetching all printings for "Zeraora VSTAR"...
+[ScanTrace]   → candidatesMs START (+4677ms)
+[ScanTrace]   ← learningRuleMs END   (took 330ms, +5006ms)
+[Scanner] Candidate source "pokemon" failed (timeout): No response within 8000ms
+[ScanTrace]   ← candidatesMs END   (took 12060ms, +16737ms)
+[ScanTrace]   → scoreMs START (+16737ms)
+[Scanner] EvidenceMass -2.0 — name:match, setCode:mismatch, collectorNumber:mismatch, rarity:unknown, artwork:unknown
+[Scanner] Coverage 3/4 sensors present, 1 failed, 1 unavailable for this game
+[ScanTrace]   ← scoreMs END   (took 1ms, +16738ms)
+[Scanner] ⏱  Pokemon 16739ms total | auth=1072 rateLimit=327 parse=3 ocr=2313 learningRule=330 candidates=12060 score=1 | pokemon=12060ms:timeout | printings=0 → disambiguate
+[Scanner] Requesting user disambiguation among 1 candidate(s).
+[Scanner] ⏱  persist 392ms | disambiguation-pending scanHistory=392
+[ScanTrace] ■ RESPONSE (disambiguate) total=17133ms
+ POST /api/scanner/scan 200 in 17.3s (next.js: 176ms, application-code: 17.2s)
+[ScanTrace] ▶ REQUEST RECEIVED @ 2026-07-16T23:00:20.439Z (t=0)
+[ScanTrace]   → authMs START (+1ms)
+[ScanTrace]   ← authMs END   (took 0ms, +1ms)
+[ScanTrace]   → rateLimitMs START (+1ms)
+[ScanTrace]   ← rateLimitMs END   (took 323ms, +324ms)
+[ScanTrace]   → parseMs START (+324ms)
+[ScanTrace]   ← parseMs END   (took 1ms, +325ms)
+[ScanTrace]   body shape: keys=[image] image=present type=string len=175219 dataUri=data:image/jpeg;base64 game=∅ isAutoScan=false (+325ms)
+[Scanner] Step 1: OCR — identifying card name...
+[Scanner] Step 1c: Strip OCR — reading the set/collector strip...
+[ScanTrace]   → ocrMs START (+326ms)
+[Scanner] ⏱  ocr-cost full | image=128KB detail=auto promptTokens=25818 completionTokens=65
+[Scanner] OCR response: {
+  "name": "Caretaker's Talent",
+  "game": "MTG",
+  "setCode": "BLB",
+  "collectorNumber": "0006",
+  "manaCost": "{2}",
+  "typeLine": "Enchantment - Class",
+  "powerToughness": ""
+}
+[ScanTrace]   ← ocrMs END   (took 1829ms, +2155ms)
+[Scanner] Identified: "Caretaker's Talent" (MTG) [Set: BLB, CN: 0006, Mana: {2}, Type: Enchantment - Class, PT: ]
+[Scanner] ⏱  ocr-cost strip | image=128KB detail=high promptTokens=25757 completionTokens=38
+[Scanner] Strip OCR response: {
+  "setCode": "BLB",
+  "collectorNumber": "0006",
+  "rarity": "R",
+  "artist": "Lindsey Look"
+}
+[ScanTrace]   → learningRuleMs START (+2242ms)
+[Scanner] Step 2: Fetching all printings for "Caretaker's Talent"...
+[ScanTrace]   → candidatesMs START (+2242ms)
+[ScanTrace]   ← learningRuleMs END   (took 325ms, +2567ms)
+[Scryfall] Found EXACT match via set/collector: Caretaker's Talent
+[Scanner] Set/CN match verified by name: "Caretaker's Talent" (BLB #0006)
+[ScanTrace]   ← candidatesMs END   (took 450ms, +2692ms)
+[ScanTrace]   → scoreMs START (+2692ms)
+[Scanner] EvidenceMass 5.5 — name:match, setCode:match, collectorNumber:match, rarity:match, artwork:unknown
+[Scanner] Coverage 4/5 sensors present, 1 failed
+[ScanTrace]   ← scoreMs END   (took 1ms, +2693ms)
+[Scanner] ⏱  MTG 2693ms total | auth=0 rateLimit=323 parse=1 ocr=1829 learningRule=325 candidates=450 score=1 | scryfall=449ms | printings=0 → accept
+[Scanner] ✅ Saved: "Caretaker's Talent" from "Bloomburrow" (method: set-cn-verified, confidence: 97%)
+[Scanner] ⏱  persist 2100ms | persistPrinting=658 scanHistory=326 archiveContext=1116
+[ScanTrace] ■ RESPONSE (accept) total=4794ms
+ POST /api/scanner/scan 200 in 4.8s (next.js: 2ms, application-code: 4.8s)
+[ScanTrace] ▶ REQUEST RECEIVED @ 2026-07-16T23:00:29.249Z (t=0)
+[ScanTrace]   → authMs START (+0ms)
+[ScanTrace]   ← authMs END   (took 0ms, +0ms)
+[ScanTrace]   → rateLimitMs START (+0ms)
+[ScanTrace]   ← rateLimitMs END   (took 329ms, +329ms)
+[ScanTrace]   → parseMs START (+330ms)
+[ScanTrace]   ← parseMs END   (took 1ms, +331ms)
+[ScanTrace]   body shape: keys=[image] image=present type=string len=192007 dataUri=data:image/jpeg;base64 game=∅ isAutoScan=false (+331ms)
+[Scanner] Step 1: OCR — identifying card name...
+[Scanner] Step 1c: Strip OCR — reading the set/collector strip...
+[ScanTrace]   → ocrMs START (+332ms)
+[Scanner] ⏱  ocr-cost full | image=141KB detail=auto promptTokens=25818 completionTokens=62
+[Scanner] OCR response: {
+  "name": "Mimikyu ex",
+  "game": "Pokemon",
+  "setCode": "JTG",
+  "collectorNumber": "069/159",
+  "manaCost": "",
+  "typeLine": "Basic",
+  "powerToughness": "190"
+}
+[ScanTrace]   ← ocrMs END   (took 2060ms, +2392ms)
+[Scanner] Identified: "Mimikyu ex" (Pokemon) [Set: JTG, CN: 069/159, Mana: , Type: Basic, PT: 190]
+[Scanner] ⏱  ocr-cost strip | image=141KB detail=high promptTokens=25757 completionTokens=40
+[Scanner] Strip OCR response: {
+  "setCode": "JTG",
+  "collectorNumber": "069/159",
+  "rarity": "C",
+  "artist": "PLANETA Igarashi"
+}
+[ScanTrace]   → learningRuleMs START (+2527ms)
+[Scanner] Step 2: Fetching all printings for "Mimikyu ex"...
+[ScanTrace]   → candidatesMs START (+2527ms)
+[ScanTrace]   ← learningRuleMs END   (took 335ms, +2862ms)
+[Scanner] Candidate source "pokemon" failed (timeout): No response within 8000ms
+[Scanner] Candidate source "pokemon" failed (timeout): No response within 8000ms
+[ScanTrace]   ← candidatesMs END   (took 13066ms, +15593ms)
+[ScanTrace]   → scoreMs START (+15594ms)
+[Scanner] EvidenceMass -2.0 — name:match, setCode:mismatch, collectorNumber:mismatch, rarity:unknown, artwork:unknown
+[Scanner] Coverage 3/4 sensors present, 1 failed, 1 unavailable for this game
+[ScanTrace]   ← scoreMs END   (took 0ms, +15594ms)
+[Scanner] ⏱  Pokemon 15594ms total | auth=0 rateLimit=329 parse=1 ocr=2060 learningRule=335 candidates=13066 score=0 | pokemon=13065ms:timeout | printings=0 → disambiguate
+[Scanner] Requesting user disambiguation among 1 candidate(s).
+[Scanner] ⏱  persist 396ms | disambiguation-pending scanHistory=396
+[ScanTrace] ■ RESPONSE (disambiguate) total=15992ms
+ POST /api/scanner/scan 200 in 16.0s (next.js: 2ms, application-code: 16.0s)
+[ScanTrace] ▶ REQUEST RECEIVED @ 2026-07-16T23:00:49.251Z (t=0)
+[ScanTrace]   → authMs START (+0ms)
+[ScanTrace]   ← authMs END   (took 1ms, +1ms)
+[ScanTrace]   → rateLimitMs START (+1ms)
+[ScanTrace]   ← rateLimitMs END   (took 327ms, +328ms)
+[ScanTrace]   → parseMs START (+329ms)
+[ScanTrace]   ← parseMs END   (took 1ms, +330ms)
+[ScanTrace]   body shape: keys=[image] image=present type=string len=210515 dataUri=data:image/jpeg;base64 game=∅ isAutoScan=false (+330ms)
+[Scanner] Step 1: OCR — identifying card name...
+[Scanner] Step 1c: Strip OCR — reading the set/collector strip...
+[ScanTrace]   → ocrMs START (+330ms)
+[Scanner] ⏱  ocr-cost full | image=154KB detail=auto promptTokens=25818 completionTokens=73
+[Scanner] OCR response: {
+  "name": "Exalted Sunborn",
+  "game": "MTG",
+  "setCode": "EOE",
+  "collectorNumber": "0015",
+  "manaCost": "{3}{W}{W}",
+  "typeLine": "Creature – Angel Wizard",
+  "powerToughness": "4/5"
+}
+[ScanTrace]   ← ocrMs END   (took 2157ms, +2487ms)
+[Scanner] Identified: "Exalted Sunborn" (MTG) [Set: EOE, CN: 0015, Mana: {3}{W}{W}, Type: Creature – Angel Wizard, PT: 4/5]
+[Scanner] ⏱  ocr-cost strip | image=154KB detail=high promptTokens=25757 completionTokens=38
+[Scanner] Strip OCR response: {
+  "setCode": "EOE",
+  "collectorNumber": "0015",
+  "rarity": "M",
+  "artist": "Scott M. Fischer"
+}
+[ScanTrace]   → learningRuleMs START (+2488ms)
+[Scanner] Step 2: Fetching all printings for "Exalted Sunborn"...
+[ScanTrace]   → candidatesMs START (+2489ms)
+[ScanTrace]   ← learningRuleMs END   (took 334ms, +2822ms)
+[Scryfall] Found EXACT match via set/collector: Exalted Sunborn
+[Scanner] Set/CN match verified by name: "Exalted Sunborn" (EOE #0015)
+[ScanTrace]   ← candidatesMs END   (took 839ms, +3328ms)
+[ScanTrace]   → scoreMs START (+3328ms)
+[Scanner] EvidenceMass 5.5 — name:match, setCode:match, collectorNumber:match, rarity:match, artwork:unknown
+[Scanner] Coverage 4/5 sensors present, 1 failed
+[ScanTrace]   ← scoreMs END   (took 1ms, +3329ms)
+[Scanner] ⏱  MTG 3329ms total | auth=1 rateLimit=327 parse=1 ocr=2157 learningRule=334 candidates=839 score=1 | scryfall=839ms | printings=0 → accept
+[Scanner] ✅ Saved: "Exalted Sunborn" from "Edge of Eternities" (method: set-cn-verified, confidence: 97%)
+[Scanner] ⏱  persist 1705ms | persistPrinting=659 scanHistory=331 archiveContext=714
+[ScanTrace] ■ RESPONSE (accept) total=5034ms
+ POST /api/scanner/scan 200 in 5.0s (next.js: 1983µs, application-code: 5.0s)
+[ScanTrace] ▶ REQUEST RECEIVED @ 2026-07-16T23:00:58.299Z (t=0)
+[ScanTrace]   → authMs START (+0ms)
+[ScanTrace]   ← authMs END   (took 1ms, +1ms)
+[ScanTrace]   → rateLimitMs START (+1ms)
+[ScanTrace]   ← rateLimitMs END   (took 321ms, +322ms)
+[ScanTrace]   → parseMs START (+322ms)
+[ScanTrace]   ← parseMs END   (took 1ms, +323ms)
+[ScanTrace]   body shape: keys=[image] image=present type=string len=181375 dataUri=data:image/jpeg;base64 game=∅ isAutoScan=false (+324ms)
+[Scanner] Step 1: OCR — identifying card name...
+[Scanner] Step 1c: Strip OCR — reading the set/collector strip...
+[ScanTrace]   → ocrMs START (+324ms)
+[Scanner] ⏱  ocr-cost strip | image=133KB detail=high promptTokens=25757 completionTokens=37
+[Scanner] Strip OCR response: {
+  "setCode": "BPRO",
+  "collectorNumber": "EN024",
+  "rarity": "",
+  "artist": "Studio Dice/Shueisha"
+}
+[Scanner] ⏱  ocr-cost full | image=133KB detail=auto promptTokens=25818 completionTokens=49
+[Scanner] OCR response: {"name":"Fallen of the White Dragon","game":"Yugioh","setCode":"BPRO","collectorNumber":"EN024","manaCost":"","typeLine":"Dragon / Effect","powerToughness":"1800/0"}
+[ScanTrace]   ← ocrMs END   (took 2078ms, +2402ms)
+[Scanner] Identified: "Fallen of the White Dragon" (Yugioh) [Set: BPRO, CN: EN024, Mana: , Type: Dragon / Effect, PT: 1800/0]
+[ScanTrace]   → learningRuleMs START (+2402ms)
+[Scanner] Step 2: Fetching all printings for "Fallen of the White Dragon"...
+[ScanTrace]   → candidatesMs START (+2403ms)
+[ScanTrace]   ← learningRuleMs END   (took 331ms, +2733ms)
+[Yugioh] Exact match found for "Fallen of the White Dragon"
+[Scanner] Yugioh: fetched 1 art variants for "Fallen of the White Dragon"
+[ScanTrace]   ← candidatesMs END   (took 1014ms, +3417ms)
+[ScanTrace]   → scoreMs START (+3417ms)
+[Scanner] Exactly one printing exists — no disambiguation needed.
+[Scanner] EvidenceMass 0.0 — name:match, setCode:mismatch, collectorNumber:unknown, rarity:unknown, artwork:unknown
+[Scanner] Coverage 2/4 sensors present, 2 failed, 1 unavailable for this game
+[ScanTrace]   ← scoreMs END   (took 1ms, +3418ms)
+[Scanner] ⏱  Yugioh 3418ms total | auth=1 rateLimit=321 parse=1 ocr=2078 learningRule=331 candidates=1014 score=1 | ygoprodeck=1014ms | printings=1 → accept
+[Scanner] ✅ Saved: "Fallen of the White Dragon" from "Burst Protocol" (method: single-printing, confidence: 90%)
+[Scanner] ⏱  persist 1700ms | persistPrinting=651 scanHistory=325 archiveContext=722
+[ScanTrace] ■ RESPONSE (accept) total=5118ms
+ POST /api/scanner/scan 200 in 5.1s (next.js: 1712µs, application-code: 5.1s)
+[ScanTrace] ▶ REQUEST RECEIVED @ 2026-07-16T23:01:07.441Z (t=0)
+[ScanTrace]   → authMs START (+0ms)
+[ScanTrace]   ← authMs END   (took 0ms, +0ms)
+[ScanTrace]   → rateLimitMs START (+0ms)
+[ScanTrace]   ← rateLimitMs END   (took 332ms, +332ms)
+[ScanTrace]   → parseMs START (+332ms)
+[ScanTrace]   ← parseMs END   (took 1ms, +333ms)
+[ScanTrace]   body shape: keys=[image] image=present type=string len=88971 dataUri=data:image/jpeg;base64 game=∅ isAutoScan=false (+333ms)
+[Scanner] Step 1: OCR — identifying card name...
+[Scanner] Step 1c: Strip OCR — reading the set/collector strip...
+[ScanTrace]   → ocrMs START (+333ms)
+[Scanner] ⏱  ocr-cost strip | image=65KB detail=high promptTokens=14423 completionTokens=35
+[Scanner] Strip OCR response: {
+  "setCode": "MZMU",
+  "collectorNumber": "EN023",
+  "rarity": "",
+  "artist": "Studio Dice"
+}
+[Scanner] ⏱  ocr-cost full | image=65KB detail=auto promptTokens=14484 completionTokens=63
+[Scanner] OCR response: {
+  "name": "Illusion Gate",
+  "game": "Yugioh",
+  "setCode": "MZMU",
+  "collectorNumber": "EN023",
+  "manaCost": "",
+  "typeLine": "Spell Card",
+  "powerToughness": ""
+}
+[ScanTrace]   ← ocrMs END   (took 1902ms, +2235ms)
+[Scanner] Identified: "Illusion Gate" (Yugioh) [Set: MZMU, CN: EN023, Mana: , Type: Spell Card, PT: ]
+[ScanTrace]   → learningRuleMs START (+2235ms)
+[Scanner] Step 2: Fetching all printings for "Illusion Gate"...
+[ScanTrace]   → candidatesMs START (+2236ms)
+[ScanTrace]   ← learningRuleMs END   (took 337ms, +2572ms)
+[Yugioh] Exact match found for "Illusion Gate"
+[Scanner] Yugioh: fetched 1 art variants for "Illusion Gate"
+[ScanTrace]   ← candidatesMs END   (took 1418ms, +3654ms)
+[ScanTrace]   → scoreMs START (+3655ms)
+[Scanner] Exactly one printing exists — no disambiguation needed.
+[Scanner] EvidenceMass 0.0 — name:match, setCode:mismatch, collectorNumber:unknown, rarity:unknown, artwork:unknown
+[Scanner] Coverage 2/4 sensors present, 2 failed, 1 unavailable for this game
+[ScanTrace]   ← scoreMs END   (took 0ms, +3655ms)
+[Scanner] ⏱  Yugioh 3655ms total | auth=0 rateLimit=332 parse=1 ocr=1902 learningRule=337 candidates=1418 score=0 | ygoprodeck=1418ms | printings=1 → accept
+[Scanner] ✅ Saved: "Illusion Gate" from "Maze of Muertos" (method: single-printing, confidence: 90%)
+[Scanner] ⏱  persist 1713ms | persistPrinting=667 scanHistory=333 archiveContext=713
+[ScanTrace] ■ RESPONSE (accept) total=5369ms
+ POST /api/scanner/scan 200 in 5.4s (next.js: 2ms, application-code: 5.4s)
+
+[auth] DEV_AUTH_BYPASS active — using development user "dev-user" (dev@localhost).
+[auth] Authentication is DISABLED for every protected route in this process.
+[auth] Database: REMOTE (aws-1-us-east-2.pooler.supabase.com) — acknowledged via DEV_AUTH_BYPASS_ALLOW_REMOTE_DB. Rows written here are real, and "dev-user" scans will land in real telemetry.
+
+ GET / 200 in 330ms (next.js: 65ms, proxy.ts: 60ms, application-code: 205ms)
+[ScanTrace] ▶ REQUEST RECEIVED @ 2026-07-16T23:15:01.559Z (t=0)
+[ScanTrace]   → authMs START (+1ms)
+[ScanTrace]   ← authMs END   (took 0ms, +1ms)
+[ScanTrace]   → rateLimitMs START (+1ms)
+[ScanTrace]   ← rateLimitMs END   (took 962ms, +963ms)
+[ScanTrace]   → parseMs START (+964ms)
+[ScanTrace]   ← parseMs END   (took 1ms, +965ms)
+[ScanTrace]   body shape: keys=[image] image=present type=string len=211739 dataUri=data:image/jpeg;base64 game=∅ isAutoScan=false (+965ms)
+[Scanner] Step 1: OCR — identifying card name...
+[Scanner] Step 1c: Strip OCR — reading the set/collector strip...
+[ScanTrace]   → ocrMs START (+965ms)
+[Scanner] ⏱  ocr-cost strip | image=155KB detail=high promptTokens=25757 completionTokens=36
+[Scanner] Strip OCR response: {
+  "setCode": "SWSH",
+  "collectorNumber": "265",
+  "rarity": "F",
+  "artist": "aky CG Works"
+}
+[Scanner] ⏱  ocr-cost full | image=155KB detail=auto promptTokens=25818 completionTokens=63
+[Scanner] OCR response: {
+  "name": "Zeraora VSTAR",
+  "game": "Pokemon",
+  "setCode": "SWSH",
+  "collectorNumber": "265",
+  "manaCost": "",
+  "typeLine": "VSTAR",
+  "powerToughness": "270"
+}
+[ScanTrace]   ← ocrMs END   (took 5157ms, +6122ms)
+[Scanner] Identified: "Zeraora VSTAR" (Pokemon) [Set: SWSH, CN: 265, Mana: , Type: VSTAR, PT: 270]
+[ScanTrace]   → learningRuleMs START (+6123ms)
+[Scanner] Step 2: Fetching all printings for "Zeraora VSTAR"...
+[ScanTrace]   → candidatesMs START (+6123ms)
+[ScanTrace]   ← learningRuleMs END   (took 334ms, +6457ms)
+[Scanner] Pokemon: fetched 3 printings for "Zeraora VSTAR"
+[ScanTrace]   ← candidatesMs END   (took 760ms, +6883ms)
+[ScanTrace]   → scoreMs START (+6883ms)
+[Scanner] Deciding among 3 printings...
+[Scanner] Visual comparison across 3 art groups (3 printings)...
+[Scanner] Visual match selected art group -> SWSH Black Star Promos
+[Scanner] EvidenceMass -2.0 — name:match, setCode:mismatch, collectorNumber:mismatch, rarity:unknown, artwork:unknown
+[Scanner] Coverage 3/4 sensors present, 1 failed, 1 unavailable for this game
+[ScanTrace]   ← scoreMs END   (took 2428ms, +9311ms)
+[Scanner] Artwork identity uncertain + narrow margin (0.10) — requesting user selection instead of auto-accept.
+[Scanner] ⏱  Pokemon 9311ms total | auth=0 rateLimit=962 parse=1 ocr=5157 learningRule=334 candidates=760 score=2428 | pokemon=759ms | printings=3 → disambiguate
+[Scanner] Requesting user disambiguation among 3 candidate(s).
+[Scanner] ⏱  persist 326ms | disambiguation-pending scanHistory=326
+[ScanTrace] ■ RESPONSE (disambiguate) total=9638ms
+ POST /api/scanner/scan 200 in 9.6s (next.js: 2ms, application-code: 9.6s)
+[ScanTrace] ▶ REQUEST RECEIVED @ 2026-07-16T23:15:15.214Z (t=0)
+[ScanTrace]   → authMs START (+0ms)
+[ScanTrace]   ← authMs END   (took 1ms, +1ms)
+[ScanTrace]   → rateLimitMs START (+1ms)
+[ScanTrace]   ← rateLimitMs END   (took 322ms, +323ms)
+[ScanTrace]   → parseMs START (+323ms)
+[ScanTrace]   ← parseMs END   (took 1ms, +324ms)
+[ScanTrace]   body shape: keys=[image] image=present type=string len=175219 dataUri=data:image/jpeg;base64 game=∅ isAutoScan=false (+324ms)
+[Scanner] Step 1: OCR — identifying card name...
+[Scanner] Step 1c: Strip OCR — reading the set/collector strip...
+[ScanTrace]   → ocrMs START (+325ms)
+[Scanner] ⏱  ocr-cost full | image=128KB detail=auto promptTokens=25818 completionTokens=65
+[Scanner] OCR response: {
+  "name": "Caretaker's Talent",
+  "game": "MTG",
+  "setCode": "BLB",
+  "collectorNumber": "0006",
+  "manaCost": "{2}",
+  "typeLine": "Enchantment - Class",
+  "powerToughness": ""
+}
+[ScanTrace]   ← ocrMs END   (took 1709ms, +2034ms)
+[Scanner] Identified: "Caretaker's Talent" (MTG) [Set: BLB, CN: 0006, Mana: {2}, Type: Enchantment - Class, PT: ]
+[Scanner] ⏱  ocr-cost strip | image=128KB detail=high promptTokens=25757 completionTokens=38
+[Scanner] Strip OCR response: {
+  "setCode": "BLB",
+  "collectorNumber": "0006",
+  "rarity": "R",
+  "artist": "Lindsey Look"
+}
+[ScanTrace]   → learningRuleMs START (+2527ms)
+[Scanner] Step 2: Fetching all printings for "Caretaker's Talent"...
+[ScanTrace]   → candidatesMs START (+2527ms)
+[Scryfall] Found EXACT match via set/collector: Caretaker's Talent
+[Scanner] Set/CN match verified by name: "Caretaker's Talent" (BLB #0006)
+[ScanTrace]   ← candidatesMs END   (took 80ms, +2607ms)
+[ScanTrace]   ← learningRuleMs END   (took 385ms, +2912ms)
+[ScanTrace]   → scoreMs START (+2912ms)
+[Scanner] EvidenceMass 5.5 — name:match, setCode:match, collectorNumber:match, rarity:match, artwork:unknown
+[Scanner] Coverage 4/5 sensors present, 1 failed
+[ScanTrace]   ← scoreMs END   (took 0ms, +2912ms)
+[Scanner] ⏱  MTG 2913ms total | auth=1 rateLimit=322 parse=1 ocr=1709 candidates=80 learningRule=385 score=0 | scryfall=79ms | printings=0 → accept
+[Scanner] ✅ Saved: "Caretaker's Talent" from "Bloomburrow" (method: set-cn-verified, confidence: 97%)
+[Scanner] ⏱  persist 2055ms | persistPrinting=646 scanHistory=321 archiveContext=1088
+[ScanTrace] ■ RESPONSE (accept) total=4968ms
+ POST /api/scanner/scan 200 in 5.0s (next.js: 1995µs, application-code: 5.0s)
+[ScanTrace] ▶ REQUEST RECEIVED @ 2026-07-16T23:15:24.197Z (t=0)
+[ScanTrace]   → authMs START (+1ms)
+[ScanTrace]   ← authMs END   (took 0ms, +1ms)
+[ScanTrace]   → rateLimitMs START (+1ms)
+[ScanTrace]   ← rateLimitMs END   (took 317ms, +318ms)
+[ScanTrace]   → parseMs START (+319ms)
+[ScanTrace]   ← parseMs END   (took 1ms, +320ms)
+[ScanTrace]   body shape: keys=[image] image=present type=string len=192007 dataUri=data:image/jpeg;base64 game=∅ isAutoScan=false (+320ms)
+[Scanner] Step 1: OCR — identifying card name...
+[Scanner] Step 1c: Strip OCR — reading the set/collector strip...
+[ScanTrace]   → ocrMs START (+320ms)
+[Scanner] ⏱  ocr-cost strip | image=141KB detail=high promptTokens=25757 completionTokens=40
+[Scanner] Strip OCR response: {
+  "setCode": "JTG",
+  "collectorNumber": "069/159",
+  "rarity": "C",
+  "artist": "PLANETA Igarashi"
+}
+[Scanner] ⏱  ocr-cost full | image=141KB detail=auto promptTokens=25818 completionTokens=62
+[Scanner] OCR response: {
+  "name": "Mimikyu ex",
+  "game": "Pokemon",
+  "setCode": "JTG",
+  "collectorNumber": "069/159",
+  "manaCost": "",
+  "typeLine": "Basic",
+  "powerToughness": "190"
+}
+[ScanTrace]   ← ocrMs END   (took 1919ms, +2239ms)
+[Scanner] Identified: "Mimikyu ex" (Pokemon) [Set: JTG, CN: 069/159, Mana: , Type: Basic, PT: 190]
+[ScanTrace]   → learningRuleMs START (+2239ms)
+[Scanner] Step 2: Fetching all printings for "Mimikyu ex"...
+[ScanTrace]   → candidatesMs START (+2239ms)
+[ScanTrace]   ← learningRuleMs END   (took 320ms, +2559ms)
+[Scanner] Pokemon set/number match verified by name: "Mimikyu ex" (JTG #069/159)
+[ScanTrace]   ← candidatesMs END   (took 374ms, +2613ms)
+[ScanTrace]   → scoreMs START (+2613ms)
+[Scanner] EvidenceMass 5.0 — name:match, setCode:match, collectorNumber:match, rarity:unknown, artwork:unknown
+[Scanner] Coverage 3/4 sensors present, 1 failed, 1 unavailable for this game
+[ScanTrace]   ← scoreMs END   (took 1ms, +2614ms)
+[Scanner] ⏱  Pokemon 2614ms total | auth=0 rateLimit=317 parse=1 ocr=1919 learningRule=320 candidates=374 score=1 | pokemon=373ms | printings=0 → accept
+[Scanner] ✅ Saved: "Mimikyu ex" from "Journey Together" (method: set-cn-verified, confidence: 97%)
+[Scanner] ⏱  persist 1611ms | persistPrinting=641 scanHistory=319 archiveContext=649
+[ScanTrace] ■ RESPONSE (accept) total=4226ms
+ POST /api/scanner/scan 200 in 4.2s (next.js: 1874µs, application-code: 4.2s)
+[ScanTrace] ▶ REQUEST RECEIVED @ 2026-07-16T23:15:32.437Z (t=0)
+[ScanTrace]   → authMs START (+1ms)
+[ScanTrace]   ← authMs END   (took 0ms, +1ms)
+[ScanTrace]   → rateLimitMs START (+1ms)
+[ScanTrace]   ← rateLimitMs END   (took 320ms, +321ms)
+[ScanTrace]   → parseMs START (+322ms)
+[ScanTrace]   ← parseMs END   (took 1ms, +323ms)
+[ScanTrace]   body shape: keys=[image] image=present type=string len=210515 dataUri=data:image/jpeg;base64 game=∅ isAutoScan=false (+323ms)
+[Scanner] Step 1: OCR — identifying card name...
+[Scanner] Step 1c: Strip OCR — reading the set/collector strip...
+[ScanTrace]   → ocrMs START (+324ms)
+[Scanner] Candidate source "pokemon" failed (timeout): No response within 8000ms
+[Scanner] ⏱  ocr-cost full | image=154KB detail=auto promptTokens=25818 completionTokens=73
+[Scanner] OCR response: {
+  "name": "Exalted Sunborn",
+  "game": "MTG",
+  "setCode": "EOE",
+  "collectorNumber": "0015",
+  "manaCost": "{3}{W}{W}",
+  "typeLine": "Creature – Angel Wizard",
+  "powerToughness": "4/5"
+}
+[ScanTrace]   ← ocrMs END   (took 1962ms, +2286ms)
+[Scanner] Identified: "Exalted Sunborn" (MTG) [Set: EOE, CN: 0015, Mana: {3}{W}{W}, Type: Creature – Angel Wizard, PT: 4/5]
+[Scanner] ⏱  ocr-cost strip | image=154KB detail=high promptTokens=25757 completionTokens=38
+[Scanner] Strip OCR response: {
+  "setCode": "EOE",
+  "collectorNumber": "0015",
+  "rarity": "M",
+  "artist": "Scott M. Fischer"
+}
+[ScanTrace]   → learningRuleMs START (+2381ms)
+[Scanner] Step 2: Fetching all printings for "Exalted Sunborn"...
+[ScanTrace]   → candidatesMs START (+2381ms)
+[Scryfall] Found EXACT match via set/collector: Exalted Sunborn
+[Scanner] Set/CN match verified by name: "Exalted Sunborn" (EOE #0015)
+[ScanTrace]   ← candidatesMs END   (took 46ms, +2427ms)
+[ScanTrace]   ← learningRuleMs END   (took 388ms, +2769ms)
+[ScanTrace]   → scoreMs START (+2769ms)
+[Scanner] EvidenceMass 5.5 — name:match, setCode:match, collectorNumber:match, rarity:match, artwork:unknown
+[Scanner] Coverage 4/5 sensors present, 1 failed
+[ScanTrace]   ← scoreMs END   (took 1ms, +2770ms)
+[Scanner] ⏱  MTG 2770ms total | auth=0 rateLimit=320 parse=1 ocr=1962 candidates=46 learningRule=388 score=1 | scryfall=46ms | printings=0 → accept
+[Scanner] ✅ Saved: "Exalted Sunborn" from "Edge of Eternities" (method: set-cn-verified, confidence: 97%)
+[Scanner] ⏱  persist 1682ms | persistPrinting=648 scanHistory=333 archiveContext=701
+[ScanTrace] ■ RESPONSE (accept) total=4452ms
+ POST /api/scanner/scan 200 in 4.5s (next.js: 1910µs, application-code: 4.5s)
+[ScanTrace] ▶ REQUEST RECEIVED @ 2026-07-16T23:15:40.911Z (t=0)
+[ScanTrace]   → authMs START (+0ms)
+[ScanTrace]   ← authMs END   (took 0ms, +0ms)
+[ScanTrace]   → rateLimitMs START (+1ms)
+[ScanTrace]   ← rateLimitMs END   (took 316ms, +318ms)
+[ScanTrace]   → parseMs START (+318ms)
+[ScanTrace]   ← parseMs END   (took 1ms, +319ms)
+[ScanTrace]   body shape: keys=[image] image=present type=string len=181375 dataUri=data:image/jpeg;base64 game=∅ isAutoScan=false (+319ms)
+[Scanner] Step 1: OCR — identifying card name...
+[Scanner] Step 1c: Strip OCR — reading the set/collector strip...
+[ScanTrace]   → ocrMs START (+320ms)
+[Scanner] ⏱  ocr-cost full | image=133KB detail=auto promptTokens=25818 completionTokens=49
+[Scanner] OCR response: {"name":"Fallen of the White Dragon","game":"Yugioh","setCode":"BPRO","collectorNumber":"EN024","manaCost":"","typeLine":"Dragon / Effect","powerToughness":"1800/0"}
+[ScanTrace]   ← ocrMs END   (took 2050ms, +2370ms)
+[Scanner] Identified: "Fallen of the White Dragon" (Yugioh) [Set: BPRO, CN: EN024, Mana: , Type: Dragon / Effect, PT: 1800/0]
+[ScanTrace]   → learningRuleMs START (+2371ms)
+[Scanner] Step 2: Fetching all printings for "Fallen of the White Dragon"...
+[ScanTrace]   → candidatesMs START (+2371ms)
+[Scanner] ⏱  ocr-cost strip | image=133KB detail=high promptTokens=25757 completionTokens=37
+[Scanner] Strip OCR response: {
+  "setCode": "BPRO",
+  "collectorNumber": "EN024",
+  "rarity": "",
+  "artist": "Studio Dice/Shueisha"
+}
+[Yugioh] Exact match found for "Fallen of the White Dragon"
+[Scanner] Yugioh: fetched 1 art variants for "Fallen of the White Dragon"
+[ScanTrace]   ← candidatesMs END   (took 90ms, +2461ms)
+[ScanTrace]   ← learningRuleMs END   (took 318ms, +2689ms)
+[ScanTrace]   → scoreMs START (+2690ms)
+[Scanner] Exactly one printing exists — no disambiguation needed.
+[Scanner] EvidenceMass 0.0 — name:match, setCode:mismatch, collectorNumber:unknown, rarity:unknown, artwork:unknown
+[Scanner] Coverage 2/4 sensors present, 2 failed, 1 unavailable for this game
+[ScanTrace]   ← scoreMs END   (took 0ms, +2690ms)
+[Scanner] ⏱  Yugioh 2690ms total | auth=0 rateLimit=316 parse=1 ocr=2050 candidates=90 learningRule=318 score=0 | ygoprodeck=89ms | printings=1 → accept
+[Scanner] ✅ Saved: "Fallen of the White Dragon" from "Burst Protocol" (method: single-printing, confidence: 90%)
+[Scanner] ⏱  persist 1587ms | persistPrinting=634 scanHistory=319 archiveContext=633
+[ScanTrace] ■ RESPONSE (accept) total=4278ms
+ POST /api/scanner/scan 200 in 4.3s (next.js: 1631µs, application-code: 4.3s)
+[ScanTrace] ▶ REQUEST RECEIVED @ 2026-07-16T23:15:49.209Z (t=0)
+[ScanTrace]   → authMs START (+1ms)
+[ScanTrace]   ← authMs END   (took 0ms, +1ms)
+[ScanTrace]   → rateLimitMs START (+1ms)
+[ScanTrace]   ← rateLimitMs END   (took 316ms, +317ms)
+[ScanTrace]   → parseMs START (+318ms)
+[ScanTrace]   ← parseMs END   (took 1ms, +319ms)
+[ScanTrace]   body shape: keys=[image] image=present type=string len=88971 dataUri=data:image/jpeg;base64 game=∅ isAutoScan=false (+319ms)
+[Scanner] Step 1: OCR — identifying card name...
+[Scanner] Step 1c: Strip OCR — reading the set/collector strip...
+[ScanTrace]   → ocrMs START (+319ms)
+[Scanner] ⏱  ocr-cost full | image=65KB detail=auto promptTokens=14484 completionTokens=63
+[Scanner] OCR response: {
+  "name": "Illusion Gate",
+  "game": "Yugioh",
+  "setCode": "MZMU",
+  "collectorNumber": "EN023",
+  "manaCost": "",
+  "typeLine": "Spell Card",
+  "powerToughness": ""
+}
+[ScanTrace]   ← ocrMs END   (took 1630ms, +1949ms)
+[Scanner] Identified: "Illusion Gate" (Yugioh) [Set: MZMU, CN: EN023, Mana: , Type: Spell Card, PT: ]
+[ScanTrace]   → learningRuleMs START (+1949ms)
+[Scanner] Step 2: Fetching all printings for "Illusion Gate"...
+[ScanTrace]   → candidatesMs START (+1950ms)
+[Yugioh] Exact match found for "Illusion Gate"
+[Scanner] Yugioh: fetched 1 art variants for "Illusion Gate"
+[ScanTrace]   ← candidatesMs END   (took 60ms, +2010ms)
+[ScanTrace]   ← learningRuleMs END   (took 319ms, +2268ms)
+[ScanTrace]   → scoreMs START (+2268ms)
+[Scanner] Exactly one printing exists — no disambiguation needed.
+[Scanner] EvidenceMass 0.0 — name:match, setCode:mismatch, collectorNumber:unknown, rarity:unknown, artwork:unknown
+[Scanner] Coverage 2/4 sensors present, 2 failed, 1 unavailable for this game
+[ScanTrace]   ← scoreMs END   (took 1ms, +2269ms)
+[Scanner] ⏱  Yugioh 2269ms total | auth=0 rateLimit=316 parse=1 ocr=1630 candidates=60 learningRule=319 score=1 | ygoprodeck=59ms | printings=1 → accept
+[Scanner] ⏱  ocr-cost strip | image=65KB detail=high promptTokens=14423 completionTokens=35
+[Scanner] Strip OCR response: {
+  "setCode": "MZMU",
+  "collectorNumber": "EN023",
+  "rarity": "",
+  "artist": "Studio Dice"
+}
+[Scanner] ✅ Saved: "Illusion Gate" from "Maze of Muertos" (method: single-printing, confidence: 90%)
+[Scanner] ⏱  persist 1716ms | persistPrinting=697 scanHistory=319 archiveContext=700
+[ScanTrace] ■ RESPONSE (accept) total=3986ms
+ POST /api/scanner/scan 200 in 4.0s (next.js: 1642µs, application-code: 4.0s)
+[?25h

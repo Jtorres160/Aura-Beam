@@ -1,0 +1,18 @@
+[drive] scanning 14 images against http://localhost:3000/api/scanner/scan
+
+[drive] MAGIC THE GATHERING/559638_in_1000x1000.jpg -> HTTP 200 | clientRTT=5929ms | success=true stage=- disambig=false | (no name/message)
+[drive] MAGIC THE GATHERING/641725_in_1000x1000.jpg -> HTTP 200 | clientRTT=5606ms | success=true stage=- disambig=false | (no name/message)
+[drive] MAGIC THE GATHERING/696863_in_600x600.jpg -> HTTP 400 | clientRTT=2545ms | success=false stage=ocr disambig=false | AI vision error: Expected ',' or '}' after property value in JSON at position 223 (line 8 column 26)
+[drive] MAGIC THE GATHERING/697023_in_1000x1000.jpg -> HTTP 200 | clientRTT=5694ms | success=true stage=- disambig=false | (no name/message)
+[drive] MAGIC THE GATHERING/697024_in_1000x1000.jpg -> HTTP 200 | clientRTT=4886ms | success=true stage=- disambig=true | Hex Magic
+[drive] POKEMON/449520_in_1000x1000.jpg -> HTTP 400 | clientRTT=1613ms | success=false stage=ocr disambig=false | AI vision error: 429 Rate limit reached for gpt-4o-mini in organization org-C1wBz8MVDUkp3oclV8IJJAMj on tokens per min (TPM): Limit 200000, Used 200000, Requested 1049. Please try again in 314ms. Visit https://platform.openai.com/account/rate-limits to learn more.
+[drive] POKEMON/517175_in_1000x1000.jpg -> HTTP 400 | clientRTT=1622ms | success=false stage=ocr disambig=false | AI vision error: 429 Rate limit reached for gpt-4o-mini in organization org-C1wBz8MVDUkp3oclV8IJJAMj on tokens per min (TPM): Limit 200000, Used 199013, Requested 1049. Please try again in 18ms. Visit https://platform.openai.com/account/rate-limits to learn more.
+[drive] POKEMON/518872_in_1000x1000.jpg -> HTTP 400 | clientRTT=1597ms | success=false stage=ocr disambig=false | AI vision error: 429 Rate limit reached for gpt-4o-mini in organization org-C1wBz8MVDUkp3oclV8IJJAMj on tokens per min (TPM): Limit 200000, Used 200000, Requested 1049. Please try again in 314ms. Visit https://platform.openai.com/account/rate-limits to learn more.
+[drive] POKEMON/535952_in_1000x1000.jpg -> HTTP 200 | clientRTT=13067ms | success=true stage=- disambig=true | Mimikyu
+[drive] POKEMON/623496_in_1000x1000.jpg -> HTTP 200 | clientRTT=7302ms | success=true stage=- disambig=false | (no name/message)
+[drive] POKEMON/680480_in_1000x1000.jpg -> HTTP 200 | clientRTT=7593ms | success=true stage=- disambig=false | (no name/message)
+[drive] YUGIOH/674743_in_1000x1000.jpg -> HTTP 400 | clientRTT=1683ms | success=false stage=ocr disambig=false | AI vision error: 429 Rate limit reached for gpt-4o-mini in organization org-C1wBz8MVDUkp3oclV8IJJAMj on tokens per min (TPM): Limit 200000, Used 200000, Requested 1049. Please try again in 314ms. Visit https://platform.openai.com/account/rate-limits to learn more.
+[drive] YUGIOH/678931_in_1000x1000.jpg -> HTTP 200 | clientRTT=4702ms | success=true stage=- disambig=false | (no name/message)
+[drive] YUGIOH/702429_in_1000x1000.jpg -> HTTP 200 | clientRTT=4964ms | success=true stage=- disambig=false | (no name/message)
+
+[drive] done (5 hard errors)

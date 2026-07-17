@@ -1,0 +1,18 @@
+[drive] scanning 14 images against http://localhost:3000/api/scanner/scan
+
+[drive] MAGIC THE GATHERING/559638_in_1000x1000.jpg -> HTTP 200 | clientRTT=7160ms | success=true stage=- disambig=false | (no name/message)
+[drive] MAGIC THE GATHERING/641725_in_1000x1000.jpg -> HTTP 200 | clientRTT=6366ms | success=true stage=- disambig=false | (no name/message)
+[drive] MAGIC THE GATHERING/696863_in_600x600.jpg -> HTTP 200 | clientRTT=6314ms | success=true stage=- disambig=false | (no name/message)
+[drive] MAGIC THE GATHERING/697023_in_1000x1000.jpg -> HTTP 200 | clientRTT=5911ms | success=true stage=- disambig=false | (no name/message)
+[drive] MAGIC THE GATHERING/697024_in_1000x1000.jpg -> HTTP 200 | clientRTT=6735ms | success=true stage=- disambig=true | Hex Magic
+[drive] POKEMON/449520_in_1000x1000.jpg -> HTTP 200 | clientRTT=12635ms | success=true stage=- disambig=true | Zeraora VSTAR
+[drive] POKEMON/517175_in_1000x1000.jpg -> HTTP 200 | clientRTT=6011ms | success=true stage=- disambig=false | (no name/message)
+[drive] POKEMON/518872_in_1000x1000.jpg -> HTTP 200 | clientRTT=6916ms | success=true stage=- disambig=false | (no name/message)
+[drive] POKEMON/535952_in_1000x1000.jpg -> HTTP 200 | clientRTT=5775ms | success=true stage=- disambig=false | (no name/message)
+[drive] POKEMON/623496_in_1000x1000.jpg -> HTTP 200 | clientRTT=6020ms | success=true stage=- disambig=false | (no name/message)
+[drive] POKEMON/680480_in_1000x1000.jpg -> HTTP 200 | clientRTT=12509ms | success=true stage=- disambig=true | N's Zekrom
+[drive] YUGIOH/674743_in_1000x1000.jpg -> HTTP 200 | clientRTT=4736ms | success=true stage=- disambig=false | (no name/message)
+[drive] YUGIOH/678931_in_1000x1000.jpg -> HTTP 400 | clientRTT=1624ms | success=false stage=ocr disambig=false | AI vision error: 429 Rate limit reached for gpt-4o-mini in organization org-C1wBz8MVDUkp3oclV8IJJAMj on tokens per min (TPM): Limit 200000, Used 200000, Requested 1049. Please try again in 314ms. Visit https://platform.openai.com/account/rate-limits to learn more.
+[drive] YUGIOH/702429_in_1000x1000.jpg -> HTTP 200 | clientRTT=5274ms | success=true stage=- disambig=false | (no name/message)
+
+[drive] done (1 hard errors)
