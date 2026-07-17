@@ -111,6 +111,7 @@ model Card {
   collectionCards CollectionCard[]
   scanHistory     ScanHistory[]
   watchlist       Watchlist[]
+  recognitionMemory RecognitionMemory[]
 
   @@index([name])
   @@index([game])
@@ -239,6 +240,56 @@ model CaptureRejection {
   @@index([createdAt])
   @@index([userId, createdAt])
   @@map("capture_rejections")
+}
+
+// ─── Recognition Memory (Phase 5.18) ────────────────────────────────
+// Aura's durable memory of card identities it has ALREADY verified. One row is
+// written ONLY after the Decision Gate accepts a scan — never for a rejected,
+// ambiguous, or guessed candidate, and never straight from a provider response
+// that has not passed the truth boundary. Existence of a row therefore means
+// exactly one thing: "Aura deterministically identified this card, and stands
+// behind it." That is the same bar `persistPrinting` already meets, recorded
+// here as an addressable identity so a future scan can consult Aura's own
+// memory before asking an external provider.
+//
+// This does NOT replace the provider truth boundary — it records its verdicts.
+// Unknown cards (no row) still go through full provider discovery unchanged.
+//
+// `lookupKey` is a deterministic function of the OCR-derived identity (game +
+// set/collector for set-CN games, game + name otherwise), computed identically
+// at write and read time (recognition-memory.ts). It is unique so re-verifying
+// the same identity refreshes one row rather than accumulating duplicates. The
+// discrete normalized columns are kept alongside it for the name-key fallback
+// query and for honest, queryable telemetry.
+
+model RecognitionMemory {
+  id                 String   @id @default(cuid())
+  // Deterministic identity key — the primary lookup path. Unique: one verified
+  // identity, one row.
+  lookupKey          String   @unique
+  game               String
+  nameKey            String   // normalized card name (lowercased, ws-collapsed)
+  setCodeKey         String?  // normalized set code; null when keyed by name
+  collectorNumberKey String?  // normalized collector-number prefix; null likewise
+  // The canonical, authoritative printing this identity resolves to. Points at
+  // the same global Card row persistPrinting wrote on accept — the printing is
+  // rebuilt from here on a memory hit, so serving never touches a provider.
+  cardId             String
+  externalId         String   // denormalized canonical id (integrity + telemetry)
+  cardName           String   // human-readable, for logs
+  // Verdict metadata from the accept that created/refreshed this memory.
+  verificationState  String   @default("VERIFIED")
+  method             String   // the MatchMethod that produced the accept
+  confidence         Int      // 0–100, the accepted confidence
+  signals            String?  // JSON: evidence summary at verification time
+  timesServed        Int      @default(0) // how often memory answered for this id
+  verifiedAt         DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  card Card @relation(fields: [cardId], references: [id], onDelete: Cascade)
+
+  @@index([game, nameKey])
+  @@map("recognition_memory")
 }
 
 // ─── Watchlist ──────────────────────────────────────────────────────

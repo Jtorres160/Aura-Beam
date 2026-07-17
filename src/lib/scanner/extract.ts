@@ -89,7 +89,13 @@ Return ONLY raw JSON. No markdown. No explanation.`
           content: [{ type: "image_url", image_url: { url: imageUrl, detail: "auto" } }]
         }
       ],
-      max_tokens: 80,
+      // 160, not 80 (Phase 5.18A): the model pretty-prints the JSON despite the
+      // prompt, and a long name + long type line ("Taskmaster, Mercenary Mimic"
+      // + "Legendary Creature — Human Mercenary Villain") measured EXACTLY 80
+      // completion tokens — truncated mid-object, a repeatable extraction
+      // failure. 160 doubles the observed worst case; output is still bounded
+      // by the fixed JSON shape, so this adds headroom, not rambling room.
+      max_tokens: 160,
       temperature: 0.1,
     }, { timeout: OCR_TIMEOUT_MS, maxRetries: OCR_MAX_RETRIES }));
 

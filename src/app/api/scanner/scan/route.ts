@@ -9,7 +9,24 @@ import {
   type CandidatePrinting,
   type ScanEvidence,
 } from "@/lib/scanner/evidence";
-import { type Decision, gateDecision } from "@/lib/scanner/decision";
+import {
+  ACCEPT_THRESHOLD,
+  ACCEPT_THRESHOLD_AUTOSCAN,
+  type Decision,
+  gateDecision,
+  type MatchMethod,
+} from "@/lib/scanner/decision";
+import {
+  RECOGNITION_MEMORY_SERVE,
+  buildServeRecord,
+  buildShadowRecord,
+  formatMemoryLog,
+  lookupRecognitionMemory,
+  markMemoryServed,
+  memoryServeEligible,
+  printingFromMemory,
+  rememberVerifiedIdentity,
+} from "@/lib/scanner/recognition-memory";
 import { extractBottomStrip, extractCardFields } from "@/lib/scanner/extract";
 import { fetchAllPrintings } from "@/lib/scanner/candidates";
 import { scorer } from "@/lib/scanner/score";
@@ -182,6 +199,68 @@ export async function POST(req: NextRequest) {
       if (collectorNumber) evidence.printing.collectorNumber = reading(collectorNumber, SET_CN_CONFIDENCE.full, "ocr-full");
     }
 
+    // ─── Recognition Memory (Phase 5.18) — consult Aura's own memory ────
+    // Before asking any external provider, check whether Aura has ALREADY
+    // verified this identity. The lookup uses the same OCR-derived fields the
+    // candidate layer keys on, and never throws (a miss/degradation is null).
+    //
+    // Stage 2 (shadow): the result is recorded for telemetry below but does NOT
+    // change behavior — providers still run. Stage 3 (serve): a verified hit
+    // that meets the CURRENT scan mode's accept threshold is served straight
+    // from memory, bypassing provider discovery entirely. Anything short of
+    // that (miss, or a stored confidence below this mode's bar) falls through
+    // to normal discovery, so unknown cards are wholly unaffected.
+    const memoryHit = await timed("memoryLookupMs", () =>
+      lookupRecognitionMemory({ game: effectiveGame, name: cardName, setCode, collectorNumber })
+    );
+    const modeThreshold = isAutoScan ? ACCEPT_THRESHOLD_AUTOSCAN : ACCEPT_THRESHOLD;
+    // Phase 5.18A (P0-1): a hit may only SERVE when its key strategy is at
+    // least as strong as the identity evidence this game carries — for set/CN
+    // games that means a "set-cn" match. A name-fallback hit on MTG/Pokémon is
+    // still observed in shadow telemetry below, but for serving it behaves
+    // exactly as a miss: memory must never override stronger live evidence.
+    const memoryWouldServe = Boolean(
+      memoryHit && memoryServeEligible(memoryHit) && memoryHit.memory.confidence / 100 >= modeThreshold
+    );
+    if (RECOGNITION_MEMORY_SERVE && memoryHit && memoryWouldServe) {
+      // Rebuild the accepted printing from Aura's own Card row — no provider.
+      const printing = printingFromMemory(memoryHit);
+      const decision: Decision = {
+        action: "accept",
+        confidence: memoryHit.memory.confidence / 100,
+        method: memoryHit.memory.method as MatchMethod,
+        printing,
+      };
+      markMemoryServed(memoryHit.memory.id);
+      const serveRecord = buildServeRecord(memoryHit);
+      console.log(`[Scanner] ${formatMemoryLog(serveRecord)}`);
+      // A memory-serve record is its own shape: no scorer ran, so no margin/mass
+      // is asserted. It carries the real OCR evidence, the replayed verdict, and
+      // the memory provenance block.
+      const memoryTelemetryJson = JSON.stringify({
+        v: 1,
+        servedFromMemory: true,
+        evidence,
+        decision: {
+          action: "accept",
+          method: memoryHit.memory.method,
+          confidence: memoryHit.memory.confidence / 100,
+        },
+        memory: serveRecord,
+        printingsCount: 1,
+        presentedCount: 1,
+        ocr: identifiedCard,
+        game: effectiveGame,
+        isAutoScan: Boolean(isAutoScan),
+        timings,
+      });
+      return await runStage("database", () =>
+        saveAndRespond(printing, session.user.id, identifiedCard, decision, memoryTelemetryJson, startedAt, {
+          game: effectiveGame, name: cardName, setCode, collectorNumber, signals: evidence,
+        })
+      );
+    }
+
     // ─── Step 1b: Check AI Learning Rules for this card ───────────────
     // Best-effort: a learning rule refines a scan but must never fail one — a
     // DB hiccup here degrades to "no rule" instead of killing the attempt.
@@ -264,24 +343,50 @@ export async function POST(req: NextRequest) {
     // Evidence + verdict + candidate counts, persisted with the attempt so
     // real scans accumulate into the Phase 6 evaluation dataset. Stored in
     // ScanHistory.ocrText (versioned JSON, previously unused column).
-    const telemetryJson = JSON.stringify(buildScanTelemetry({
-      evidence,
-      scored,
-      decision,
-      // Phase 5.13C: carried on EVERY outcome, not just the failing ones. A scan
-      // that found the card while a source timed out was indistinguishable from
-      // a fully healthy scan — the partial outage left no trace anywhere.
-      candidates: { status: candidates.status, sources: candidates.sources },
-      printingsCount: printings.length,
-      ocr: identifiedCard,
-      game: effectiveGame,
-      isAutoScan: Boolean(isAutoScan),
-      timings,
-    }));
+    // ─── Recognition Memory shadow record (Phase 5.18 Stage 2) ───────────
+    // Providers ran; memory only observed. Record what memory held vs what the
+    // live pipeline decided, so hits/misses/avoided-calls/disagreements are
+    // separable from the data. The "memory-only" agreement is the phase's proof
+    // case: memory had the identity while the live pipeline (e.g. a provider
+    // timeout) failed to accept it.
+    const acceptedExternalId = decision.action === "accept" ? decision.printing?.externalId ?? null : null;
+    const shadowRecord = buildShadowRecord(
+      memoryHit,
+      decision.action,
+      acceptedExternalId,
+      candidates.sources.length,
+      memoryWouldServe,
+    );
+    console.log(`[Scanner] ${formatMemoryLog(shadowRecord)}`);
+
+    const telemetryJson = JSON.stringify({
+      ...buildScanTelemetry({
+        evidence,
+        scored,
+        decision,
+        // Phase 5.13C: carried on EVERY outcome, not just the failing ones. A scan
+        // that found the card while a source timed out was indistinguishable from
+        // a fully healthy scan — the partial outage left no trace anywhere.
+        candidates: { status: candidates.status, sources: candidates.sources },
+        printingsCount: printings.length,
+        ocr: identifiedCard,
+        game: effectiveGame,
+        isAutoScan: Boolean(isAutoScan),
+        timings,
+      }),
+      // Additive, non-breaking (v stays 1): older readers ignore it.
+      memory: shadowRecord,
+    });
 
     if (decision.action === "accept" && decision.printing) {
+      // Stage 1: this accept passed the Decision Gate — the ONLY point at which
+      // an identity earns a place in recognition memory. The remember key is the
+      // OCR-derived identity (not the matched printing's), so a future scan's OCR
+      // lands on the same row. saveAndRespond writes it after persistPrinting.
       return await runStage("database", () =>
-        saveAndRespond(decision.printing!, session.user.id, identifiedCard, decision, telemetryJson, startedAt)
+        saveAndRespond(decision.printing!, session.user.id, identifiedCard, decision, telemetryJson, startedAt, {
+          game: effectiveGame, name: cardName, setCode, collectorNumber, signals: scored.evidenceSignals,
+        })
       );
     }
 
@@ -291,6 +396,11 @@ export async function POST(req: NextRequest) {
       // updates THIS row, linking the pick (ground truth) to this evidence.
       // Best-effort: if the telemetry row can't be written, the user still gets
       // their grid (without a scanId to link the pick back to).
+      //
+      // Phase 5.17: this is the other common post-decision persistence site (a
+      // single scanHistory.create, no persistPrinting/archive), also downstream
+      // of the timings snapshot. Timed for the same observability, logged only.
+      const pendingStart = Date.now();
       const pending = await dbRetry(() =>
         prisma.scanHistory.create({
           data: {
@@ -305,6 +415,7 @@ export async function POST(req: NextRequest) {
         console.warn("[Scanner] Could not persist pending disambiguation (non-fatal):", err?.message);
         return null;
       });
+      console.log(`[Scanner] ⏱  persist ${Date.now() - pendingStart}ms | disambiguation-pending scanHistory=${Date.now() - pendingStart}`);
       return disambiguationResponse(cardName, decision.candidates, identifiedCard, pending?.id ?? null, decision.bestMatchExternalId);
     }
 
@@ -460,14 +571,67 @@ async function persistAttempt(
 }
 
 // ─── Database Save Helper ──────────────────────────────────────────────────
-async function saveAndRespond(matchedCard: CandidatePrinting, userId: string, ocrData: any, decision: Decision, telemetryJson: string, startedAt: number) {
+// `remember` (Phase 5.18): when present AND the decision is an accept, the
+// verified identity is recorded in recognition memory after the printing is
+// persisted — keyed on the OCR-derived identity supplied by the caller, so a
+// future scan's OCR finds it. Best-effort inside rememberVerifiedIdentity; a
+// failed write never breaks the response.
+async function saveAndRespond(
+  matchedCard: CandidatePrinting,
+  userId: string,
+  ocrData: any,
+  decision: Decision,
+  telemetryJson: string,
+  startedAt: number,
+  remember?: { game: string; name: string; setCode?: string | null; collectorNumber?: string | null; signals?: unknown },
+) {
   const confidencePct = Math.round(decision.confidence * 100);
+
+  // ─── Phase 5.17: instrument the post-decision persistence path ─────────────
+  // This is the accepted-scan "dark remainder" from Phase 5.16. Everything
+  // below runs AFTER the `timings` snapshot was serialized into telemetryJson
+  // (it has to — that snapshot is written INTO the row created here), so none
+  // of it ever appeared in the per-stage breakdown. It is up to ~5 sequential
+  // DB round-trips (2 upserts in persistPrinting, 1 scanHistory.create, then
+  // 1+2 in getArchiveContext), the leading suspect for the ~1.4s median gap.
+  //
+  // Observation ONLY: no operation is moved, no response field changes, no
+  // scanner logic is touched. `persistSpan` mirrors the critical-path `timed()`
+  // helper in POST() and just records wall-clock into `persistTimings`, which
+  // is logged in the same `⏱` style — never persisted, never returned.
+  const persistStart = Date.now();
+  const persistTimings: Record<string, number> = {};
+  const persistSpan = async <T,>(key: string, fn: () => Promise<T>): Promise<T> => {
+    const t0 = Date.now();
+    try {
+      return await fn();
+    } finally {
+      persistTimings[key] = Date.now() - t0;
+    }
+  };
 
   // Shared Card + CardPrice persistence (Phase 2 · C4) — identical to the
   // user-selection save path.
-  const localCard = await persistPrinting(matchedCard);
+  const localCard = await persistSpan("persistPrintingMs", () => persistPrinting(matchedCard));
 
-  const history = await dbRetry(() => prisma.scanHistory.create({
+  // Stage 1 write: only reached on an accepted scan (both callers gate on it),
+  // so this is the truthful "Aura verified this" signal. Awaited on purpose —
+  // latency optimization is out of scope for this phase, and the validation
+  // requires the row to exist before the next scan.
+  if (remember && decision.action === "accept" && decision.method) {
+    await rememberVerifiedIdentity({
+      game: remember.game,
+      ocrName: remember.name,
+      ocrSetCode: remember.setCode,
+      ocrCollectorNumber: remember.collectorNumber,
+      card: localCard,
+      method: decision.method,
+      confidence: confidencePct,
+      signals: remember.signals,
+    });
+  }
+
+  const history = await persistSpan("scanHistoryMs", () => dbRetry(() => prisma.scanHistory.create({
     data: {
       userId,
       cardId: localCard.id,
@@ -477,14 +641,23 @@ async function saveAndRespond(matchedCard: CandidatePrinting, userId: string, oc
       ocrText: telemetryJson,
       processingTime: Date.now() - startedAt,
     },
-  }));
+  })));
 
   console.log(`[Scanner] ✅ Saved: "${localCard.name}" from "${localCard.setName}" (method: ${decision.method}, confidence: ${confidencePct}%)`);
 
   // Archive context (Phase 5 · Batch 2): what this card means in the user's
   // collection. Read-only, failure-safe (null on any error), and strictly
   // additive to the response — identification is already complete here.
-  const archive = await getArchiveContext(userId, localCard);
+  const archive = await persistSpan("archiveContextMs", () => getArchiveContext(userId, localCard));
+
+  // One line, same shape as the critical-path ⏱ summary. `persistTotalMs` is
+  // the whole post-decision span (including any gaps between the spans), so the
+  // report can check whether the three measured stages account for it fully.
+  const persistTotalMs = Date.now() - persistStart;
+  console.log(
+    `[Scanner] ⏱  persist ${persistTotalMs}ms | ` +
+    Object.entries(persistTimings).map(([k, v]) => `${k.replace(/Ms$/, "")}=${v}`).join(" ")
+  );
 
   return NextResponse.json({
     success: true,
