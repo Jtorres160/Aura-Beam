@@ -1,0 +1,5 @@
+{
+  "v": 1,
+  "description": "Aura Recognition Benchmark Dataset. The versioned regression suite for every Scanner V2 recognizer change. Entries pair a real, rights-cleared card photo (under ./images) with its known identity and the difficulty conditions it exercises. Starts empty by design (M0 defines the structure); populate with real photos before recognizer work in M1+. See ./images/README.md for how to contribute an entry.",
+  "entries": []
+}
