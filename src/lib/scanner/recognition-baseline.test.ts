@@ -11,7 +11,12 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 
-import { analyzeRecognitionBaseline, formatRecognitionBaseline } from "@/lib/scanner/recognition-baseline";
+import {
+  analyzeRecognitionBaseline,
+  formatRecognitionBaseline,
+  analyzeArtPickAgreement,
+  formatArtPickAgreement,
+} from "@/lib/scanner/recognition-baseline";
 
 // ─── Fixtures — the record shapes the scan route actually persists ───────────
 
@@ -167,6 +172,109 @@ describe("OCR cost", () => {
     ]);
     assert.equal(b.ocrCost.n, 3);
     assert.equal(b.ocrCost.medianMs, 2000);
+  });
+});
+
+// ─── Art-pick agreement (Scanner V2 · M1 step 2) ─────────────────────────────
+
+/** A disambiguation row carrying vision's art pick and (optionally) the label. */
+function disambiguated(
+  over: { bestMatchExternalId?: string; selectionId?: string } = {},
+): Record<string, unknown> {
+  const decision: Record<string, unknown> = {
+    action: "disambiguate",
+    confidence: 0.6,
+    margin: 0,
+    evidenceMass: 1,
+  };
+  if (over.bestMatchExternalId !== undefined) decision.bestMatchExternalId = over.bestMatchExternalId;
+  const record: Record<string, unknown> = { v: 1, evidence: {}, decision, printingsCount: 3, presentedCount: 3 };
+  if (over.selectionId !== undefined) {
+    record.selection = { externalId: over.selectionId, game: "MTG", at: "2026-07-19T00:00:00Z" };
+  }
+  return record;
+}
+
+describe("art-pick agreement — was vision's suggestion right?", () => {
+  test("counts agreement when vision's pick equals the user's selection", () => {
+    const a = analyzeArtPickAgreement([disambiguated({ bestMatchExternalId: "mh2-267", selectionId: "mh2-267" })]);
+    assert.equal(a.n, 1);
+    assert.equal(a.agree, 1);
+    assert.equal(a.disagree, 0);
+    assert.equal(a.agreementRate, 1);
+    assert.equal(a.disagreementRate, 0);
+    assert.equal(a.disambiguationsWithoutPick, 0);
+  });
+
+  test("counts disagreement when vision's pick differs from the selection", () => {
+    const a = analyzeArtPickAgreement([disambiguated({ bestMatchExternalId: "mh2-267", selectionId: "sld-1234" })]);
+    assert.equal(a.n, 1);
+    assert.equal(a.agree, 0);
+    assert.equal(a.disagree, 1);
+    assert.equal(a.agreementRate, 0);
+    assert.equal(a.disagreementRate, 1);
+    assert.equal(a.disambiguationsWithoutPick, 0);
+  });
+
+  test("mixes agree and disagree into a rate over eligible rows only", () => {
+    const a = analyzeArtPickAgreement([
+      disambiguated({ bestMatchExternalId: "a", selectionId: "a" }),
+      disambiguated({ bestMatchExternalId: "b", selectionId: "b" }),
+      disambiguated({ bestMatchExternalId: "c", selectionId: "x" }),
+    ]);
+    assert.equal(a.n, 3);
+    assert.equal(a.agree, 2);
+    assert.equal(a.disagree, 1);
+    assert.equal(a.agreementRate, 2 / 3);
+  });
+
+  test("a selection with NO vision pick is disambiguationsWithoutPick, not a disagreement", () => {
+    const a = analyzeArtPickAgreement([disambiguated({ selectionId: "mh2-267" })]);
+    assert.equal(a.n, 0);
+    assert.equal(a.agree, 0);
+    assert.equal(a.disagree, 0);
+    assert.equal(a.disambiguationsWithoutPick, 1);
+  });
+
+  test("a vision pick with NO selection is excluded entirely (no ground truth)", () => {
+    const a = analyzeArtPickAgreement([disambiguated({ bestMatchExternalId: "mh2-267" })]);
+    assert.equal(a.n, 0);
+    assert.equal(a.disambiguationsWithoutPick, 0);
+  });
+
+  test("rows missing both fields, and junk, contribute nothing", () => {
+    const a = analyzeArtPickAgreement([
+      disambiguated(),
+      scored(), // an accept: has decision but no selection
+      null,
+      42,
+      { decision: null },
+    ]);
+    assert.equal(a.n, 0);
+    assert.equal(a.agree, 0);
+    assert.equal(a.disagree, 0);
+    assert.equal(a.disambiguationsWithoutPick, 0);
+  });
+
+  test("n=0 reports null rates, never a fabricated number", () => {
+    const a = analyzeArtPickAgreement([]);
+    assert.equal(a.n, 0);
+    assert.equal(a.agreementRate, null);
+    assert.equal(a.disagreementRate, null);
+    const out = formatArtPickAgreement(a);
+    assert.match(out, /No eligible rows yet/);
+    assert.match(out, /NOT the auto-accept rate/);
+  });
+
+  test("formatter renders a populated agreement without error", () => {
+    const a = analyzeArtPickAgreement([
+      disambiguated({ bestMatchExternalId: "a", selectionId: "a" }),
+      disambiguated({ bestMatchExternalId: "b", selectionId: "x" }),
+      disambiguated({ selectionId: "c" }),
+    ]);
+    const out = formatArtPickAgreement(a);
+    assert.match(out, /Eligible rows/);
+    assert.match(out, /Disambig\. w\/o vision pick/);
   });
 });
 

@@ -287,6 +287,101 @@ export function analyzeRecognitionBaseline(records: unknown[]): RecognitionBasel
   };
 }
 
+// ─── Art-pick agreement (Scanner V2 · M1 step 2) ─────────────────────────────
+// A DIFFERENT question from the M0 accept rate. This asks only: on scans that
+// went to disambiguation AND where vision produced a single-candidate art pick
+// (Decision.bestMatchExternalId, set at rank.ts and persisted since commit
+// 912f2884), did that pick match what the user ultimately chose from the grid
+// (SelectionLabel.externalId, the hard ground-truth label)?
+//
+// It is NOT the auto-accept rate. Every row here still required the user to
+// confirm — the pipeline did not decide on its own. The metric measures whether
+// vision's *suggestion* was right, not whether the pipeline was confident enough
+// to skip the user. Conflating the two would overstate autonomy.
+//
+// Honesty boundary: rows lacking either field are excluded from the rate, never
+// silently counted as agreement. Real rows written BEFORE commit 912f2884 carry
+// no bestMatchExternalId, so `n` is expected to be 0 until post-fix scans
+// accumulate — a 0/0 rate is reported as null, not as a number.
+
+export interface ArtPickAgreement {
+  /** Rows carrying BOTH decision.bestMatchExternalId and selection.externalId —
+   *  the only rows on which agreement is measurable. */
+  n: number;
+  /** bestMatchExternalId === selection.externalId. */
+  agree: number;
+  /** bestMatchExternalId !== selection.externalId. */
+  disagree: number;
+  /** agree / n, or null when n === 0 (never a fabricated rate on no data). */
+  agreementRate: number | null;
+  /** disagree / n, or null when n === 0. */
+  disagreementRate: number | null;
+  /** Rows where the user made a selection (ground truth exists) but vision
+   *  produced NO single-candidate pick — bestMatchExternalId absent. Vision
+   *  never offered a suggestion for that scan (e.g. set/CN already resolved it,
+   *  or >1 printing sat in the matched art group). Reported separately: it is
+   *  context for the denominator, not a disagreement. */
+  disambiguationsWithoutPick: number;
+}
+
+/**
+ * Compute art-pick agreement from parsed telemetry records (pure; same tolerant
+ * `unknown[]` input as analyzeRecognitionBaseline). The universe is rows that
+ * carry a user selection (ground truth); those are partitioned by whether vision
+ * also produced a pick. Rows with no selection are ignored entirely — without a
+ * label there is nothing to agree or disagree with.
+ */
+export function analyzeArtPickAgreement(records: unknown[]): ArtPickAgreement {
+  let agree = 0;
+  let disagree = 0;
+  let disambiguationsWithoutPick = 0;
+
+  for (const record of records) {
+    if (!isObject(record)) continue;
+    const selection = isObject(record.selection) ? record.selection : undefined;
+    const selectionId = selection ? str(selection.externalId) : undefined;
+    // No ground-truth label ⇒ not part of this metric at all.
+    if (selectionId === undefined) continue;
+
+    const decision = isObject(record.decision) ? record.decision : undefined;
+    const bestMatchId = decision ? str(decision.bestMatchExternalId) : undefined;
+    if (bestMatchId === undefined) {
+      disambiguationsWithoutPick++;
+      continue;
+    }
+    if (bestMatchId === selectionId) agree++;
+    else disagree++;
+  }
+
+  const n = agree + disagree;
+  return {
+    n,
+    agree,
+    disagree,
+    agreementRate: n > 0 ? agree / n : null,
+    disagreementRate: n > 0 ? disagree / n : null,
+    disambiguationsWithoutPick,
+  };
+}
+
+export function formatArtPickAgreement(a: ArtPickAgreement): string {
+  const L: string[] = [];
+  L.push("Art-pick agreement (Scanner V2 · M1) — was vision's suggestion right?");
+  L.push("────────────────────────────────────────────────────────────────────");
+  L.push(`  Eligible rows (pick + label) ${a.n}`);
+  if (a.n === 0) {
+    L.push("  No eligible rows yet — rows written before commit 912f2884 carry no");
+    L.push("  bestMatchExternalId. Re-run once post-fix scans accumulate.");
+  } else {
+    L.push(`  Agree                        ${a.agree}   (${((a.agreementRate ?? 0) * 100).toFixed(1)}%)`);
+    L.push(`  Disagree                     ${a.disagree}   (${((a.disagreementRate ?? 0) * 100).toFixed(1)}%)`);
+  }
+  L.push(`  Disambig. w/o vision pick    ${a.disambiguationsWithoutPick}   (label present, no bestMatch)`);
+  L.push("  NOTE: this is NOT the auto-accept rate — every row still required the");
+  L.push("        user to confirm. It measures whether vision's pick was correct.");
+  return L.join("\n");
+}
+
 // ─── Human-readable report ───────────────────────────────────────────────────
 
 function pct(n: number, d: number): string {

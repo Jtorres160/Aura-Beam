@@ -24,7 +24,7 @@ register("../test/alias-loader.mjs", import.meta.url);
 const require = createRequire(import.meta.url);
 const { PrismaClient } = require("@prisma/client");
 
-const { analyzeRecognitionBaseline, formatRecognitionBaseline } = await import(
+const { analyzeRecognitionBaseline, formatRecognitionBaseline, analyzeArtPickAgreement, formatArtPickAgreement } = await import(
   "../src/lib/scanner/recognition-baseline.ts"
 );
 const { DEV_USER } = await import("../src/lib/auth-dev-bypass.ts");
@@ -91,11 +91,14 @@ for (const row of rows) {
 }
 
 const baseline = analyzeRecognitionBaseline(records);
+const artPick = analyzeArtPickAgreement(records);
 
 if (has("json")) {
-  console.log(JSON.stringify({ baseline, skipped: { legacyRawOcr } }, null, 2));
+  console.log(JSON.stringify({ baseline, artPick, skipped: { legacyRawOcr } }, null, 2));
 } else {
   console.log(formatRecognitionBaseline(baseline));
+  console.log("");
+  console.log(formatArtPickAgreement(artPick));
   console.log("");
   console.log("Source rows");
   console.log("───────────");
