@@ -403,6 +403,44 @@ describe("telemetry — candidate source state", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+//  bestMatchExternalId persistence (Scanner V2 · M1 step 1)
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("telemetry — vision's art pick is persisted", () => {
+  test("a decision carrying bestMatchExternalId round-trips into the record", () => {
+    const chosen = printing({ externalId: "a", illustrationId: "illo-a" });
+    const ev = evidence({ name: "Counterspell", illustrationId: "illo-a" });
+    // rank.ts sets bestMatchExternalId when vision resolves a single-printing art
+    // group; model that here by attaching it to a disambiguation decision.
+    const decision: Decision = {
+      ...disambiguateDecision([chosen, printing({ externalId: "b", illustrationId: "illo-b" })]),
+      bestMatchExternalId: "a",
+    };
+    const out = scored(ev, chosen, { ...decision, printing: chosen });
+
+    const t = buildScanTelemetry({ evidence: ev, scored: out, decision, printingsCount: 2 });
+
+    assert.equal(t.decision.bestMatchExternalId, "a");
+    assert.equal(t.v, 1, "additive field must not bump the version");
+
+    // Survives JSON serialization — this is what actually lands in ScanHistory.
+    const persisted = JSON.parse(JSON.stringify(t));
+    assert.equal(persisted.decision.bestMatchExternalId, "a");
+  });
+
+  test("a decision without an art pick omits the field", () => {
+    const chosen = printing({ externalId: "a" });
+    const ev = evidence({ name: "Counterspell" });
+    const decision = acceptDecision(chosen, "single-printing");
+    const out = scored(ev, chosen, decision);
+
+    const t = buildScanTelemetry({ evidence: ev, scored: out, decision, printingsCount: 1 });
+
+    assert.equal(t.decision.bestMatchExternalId, undefined);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 //  Failed selection attempts (Phase 5.13C)
 // ═══════════════════════════════════════════════════════════════════════════
 

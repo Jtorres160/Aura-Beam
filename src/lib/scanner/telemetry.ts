@@ -53,6 +53,14 @@ export interface ScanTelemetryV1 {
     confidence: number;
     margin: number;
     evidenceMass: number;
+    /** externalId of the printing vision judged the best match, when the
+     *  decision carried a preferred candidate among its alternatives (set at
+     *  rank.ts for single-printing art groups). Persisting it lets analysis ask
+     *  "did vision's art pick match what the user chose from the grid?" — the
+     *  value was already computed and surfaced to the client as `isBestMatch`,
+     *  and only dropped before the write. Optional and additive: older records
+     *  omit it, so v stays 1. */
+    bestMatchExternalId?: string;
   };
   /** The per-signal evidence breakdown that summed to `decision.evidenceMass`,
    *  captured verbatim from assessIdentitySignals() — NOT recomputed here.
@@ -214,6 +222,7 @@ export function buildScanTelemetry(input: {
       confidence: decision.confidence,
       margin: scored.margin,
       evidenceMass: scored.evidenceMass,
+      bestMatchExternalId: decision.bestMatchExternalId,
     },
     candidateStatus: candidates?.status,
     candidateSources: candidates?.sources,
