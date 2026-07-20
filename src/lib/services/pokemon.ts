@@ -118,6 +118,49 @@ export async function getPokemonCardById(id: string) {
   }
 }
 
+// ─── Price extraction ───────────────────────────────────────────────────────
+// tcgplayer.prices is keyed by printing variant, and the set of keys is open:
+// normal, holofoil, reverseHolofoil, 1stEditionNormal, unlimited, … The old
+// code hardcoded three keys and only read `market`, so any card priced under
+// another variant — or one whose market figure hadn't been computed yet, as is
+// common for freshly released sets — showed $0.00 despite real price data
+// sitting right there in the payload. Walk EVERY variant, prefer the familiar
+// ones, and fall through market → mid → directLow → low, then to cardmarket's
+// trend/average figures before conceding zero.
+const PREFERRED_VARIANTS = ["holofoil", "normal", "reverseHolofoil"];
+
+function pokemonPriceOf(externalCard: any, field: string): number {
+  const variants = externalCard?.tcgplayer?.prices;
+  if (!variants || typeof variants !== "object") return 0;
+  const keys = [
+    ...PREFERRED_VARIANTS.filter((k) => k in variants),
+    ...Object.keys(variants).filter((k) => !PREFERRED_VARIANTS.includes(k)),
+  ];
+  for (const key of keys) {
+    const value = variants[key]?.[field];
+    if (typeof value === "number" && value > 0) return value;
+  }
+  return 0;
+}
+
+function extractPokemonPrice(externalCard: any) {
+  const market =
+    pokemonPriceOf(externalCard, "market") ||
+    pokemonPriceOf(externalCard, "mid") ||
+    pokemonPriceOf(externalCard, "directLow") ||
+    pokemonPriceOf(externalCard, "low");
+  const cm = externalCard?.cardmarket?.prices;
+  const cardmarketFallback =
+    [cm?.trendPrice, cm?.averageSellPrice, cm?.avg7, cm?.avg30]
+      .find((v: any) => typeof v === "number" && v > 0) ?? 0;
+  return {
+    marketPrice: market || cardmarketFallback,
+    lowPrice: pokemonPriceOf(externalCard, "low") || null,
+    midPrice: pokemonPriceOf(externalCard, "mid") || null,
+    highPrice: pokemonPriceOf(externalCard, "high") || null,
+  };
+}
+
 export function formatPokemonCard(externalCard: any): CandidatePrinting {
   return {
     externalId: externalCard.id,
@@ -136,10 +179,6 @@ export function formatPokemonCard(externalCard: any): CandidatePrinting {
     rarity: externalCard.rarity || "Common",
     imageUrl: externalCard.images?.large || externalCard.images?.small || null,
     thumbnailUrl: externalCard.images?.small || null,
-    price: {
-      marketPrice: externalCard.tcgplayer?.prices?.holofoil?.market ||
-                   externalCard.tcgplayer?.prices?.normal?.market ||
-                   externalCard.tcgplayer?.prices?.reverseHolofoil?.market || 0
-    }
+    price: extractPokemonPrice(externalCard)
   };
 }

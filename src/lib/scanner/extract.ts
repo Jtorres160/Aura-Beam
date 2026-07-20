@@ -110,6 +110,13 @@ Return ONLY raw JSON. No markdown. No explanation.`
     identifiedCard = JSON.parse(cleanMessage);
   } catch (aiError: any) {
     console.error("[Scanner] OCR Error:", aiError?.message || aiError);
+    if (aiError?.status === 429 || aiError?.code === "rate_limit_exceeded") {
+      // The throttle already waited out several refills and the bucket is
+      // still empty — tell the collector to pause, not paste the raw quota
+      // dump in their viewfinder. In bulk this lands in the skip chip and the
+      // loop simply tries again on the next tick.
+      return { ok: false, status: 429, message: "Scanning very fast — pausing a moment to catch up. Hold steady." };
+    }
     const userMessage = aiError?.code === "invalid_image_format"
       ? "Camera frame was invalid. Please ensure your camera is working and try again."
       : `AI vision error: ${aiError?.message || "Unknown error"}`;

@@ -213,7 +213,9 @@ export default function ScannerPage() {
     playVideo();
   }, []);
 
-  const startCamera = useCallback(async () => {
+  // Returns true when the camera is up and state is "scanning" — callers that
+  // must not strand the UI (bulk disambiguation resume) branch on it.
+  const startCamera = useCallback(async (): Promise<boolean> => {
     // Pre-flight: getUserMedia only exists in a secure context (HTTPS or
     // localhost). Opening the dev server's Network URL (http://192.168.x.x)
     // leaves navigator.mediaDevices undefined — which otherwise surfaces as a
@@ -228,7 +230,7 @@ export default function ScannerPage() {
           ? `Camera needs a secure connection. Open the app at http://localhost:${window.location.port || "3000"} (not the network IP ${window.location.hostname}) or use HTTPS.`
           : "This browser doesn't expose camera access (navigator.mediaDevices is unavailable). Try Chrome, Edge, or Safari."
       );
-      return;
+      return false;
     }
 
     try {
@@ -249,6 +251,7 @@ export default function ScannerPage() {
       // and restores cameraReady.
       if (videoRef.current) attachStreamToVideo(videoRef.current);
       setState("scanning");
+      return true;
     } catch (err) {
       // Surface the ACTUAL failure — a single generic message hides whether
       // permission was denied, the camera is busy, or no camera exists.
@@ -278,6 +281,7 @@ export default function ScannerPage() {
           message = `Could not start the camera${e?.name ? ` (${e.name})` : ""}. ${e?.message || "Please try again."}`;
       }
       alert(message);
+      return false;
     }
   }, [attachStreamToVideo]);
 
@@ -908,6 +912,24 @@ export default function ScannerPage() {
     startCamera();
   }, [startCamera]);
 
+  // ─── Leave disambiguation WITHOUT touching the bulk queue ─────────────
+  // resetScan() wipes bulkQueue by design (it's "start over"), which made both
+  // disambiguation exits in a bulk session destroy every card already scanned:
+  // picking an artwork restarted the camera blind (a failed restart stranded a
+  // blank panel), and "None of these" called resetScan outright. This clears
+  // ONLY the disambiguation state, then resumes scanning — and if the camera
+  // won't come back, falls through to the bulk review so the queue stays
+  // visible instead of vanishing.
+  const resumeAfterDisambiguation = useCallback(async () => {
+    setDisambiguationCandidates([]);
+    setDisambiguationCardName("");
+    setDisambiguationScanId(null);
+    const cameraUp = await startCamera();
+    if (!cameraUp) {
+      setState(bulkQueue.length > 0 ? "bulk-review" : "idle");
+    }
+  }, [startCamera, bulkQueue.length]);
+
   // ─── Handle user selecting a specific variant from disambiguation ─────
   const handleSelectCandidate = async (candidate: DisambiguationCandidate) => {
     setIsAdding(true);
@@ -941,9 +963,7 @@ export default function ScannerPage() {
           if (prev.length > 0 && prev[prev.length - 1].id === card.id) return prev;
           return [...prev, card];
         });
-        setDisambiguationCandidates([]);
-        setDisambiguationScanId(null);
-        startCamera();
+        await resumeAfterDisambiguation();
       } else {
         setScanResult(card);
         setState("result");
@@ -1454,10 +1474,12 @@ export default function ScannerPage() {
                 </div>
 
                 {/* Actions */}
+                {/* In bulk, skipping this card must not discard the queue —
+                    resume scanning with everything already identified intact. */}
                 <Button
                   variant="outline"
                   className="w-full h-11"
-                  onClick={resetScan}
+                  onClick={isBulkMode ? resumeAfterDisambiguation : resetScan}
                   disabled={isAdding}
                 >
                   <RotateCcw className="h-4 w-4 mr-2" /> None of these — Scan Again

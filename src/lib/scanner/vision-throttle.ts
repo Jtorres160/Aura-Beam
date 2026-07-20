@@ -58,15 +58,75 @@ function release(): void {
   else activeCount--; // nobody waiting — free the slot
 }
 
+// ─── 429 recovery (bulk-scan fix) ───────────────────────────────────────────
+// In a long bulk session the org-level token bucket can be GENUINELY empty
+// (Used 200000/200000) — the SDK's own quick retries all land inside the same
+// exhausted minute and the 429 leaked to the collector as "AI vision error".
+// The bucket refills at ~3.3k tokens/sec, so the right medicine is a short,
+// bounded wait honoring the server's own "try again in Nms" hint, then one
+// more attempt — repeated a few times before giving up for real.
+
+/** Total attempts (1 initial + retries). */
+const VISION_429_MAX_ATTEMPTS = 4;
+/** Never wait longer than this for a single refill, or in total. */
+const VISION_429_MAX_WAIT_MS = 4_000;
+const VISION_429_TOTAL_WAIT_MS = 10_000;
+
+function is429(err: any): boolean {
+  return err?.status === 429 || err?.code === "rate_limit_exceeded";
+}
+
+/** The wait the server asked for, parsed from headers or the error message
+ *  ("Please try again in 314ms" / "in 1.2s"), else an escalating default. */
+function retryDelayMs(err: any, attempt: number): number {
+  let hinted: number | null = null;
+  const headers = err?.headers;
+  const headerVal =
+    (typeof headers?.get === "function" ? headers.get("retry-after-ms") : headers?.["retry-after-ms"]) ??
+    (typeof headers?.get === "function" ? headers.get("retry-after") : headers?.["retry-after"]);
+  if (headerVal != null && !Number.isNaN(Number(headerVal))) {
+    const n = Number(headerVal);
+    hinted = n < 100 ? n * 1000 : n; // bare seconds vs ms
+  }
+  if (hinted == null) {
+    const m = /try again in ([\d.]+)\s*(ms|s)/i.exec(err?.message ?? "");
+    if (m) hinted = m[2].toLowerCase() === "s" ? parseFloat(m[1]) * 1000 : parseFloat(m[1]);
+  }
+  // Pad the server's hint — other in-flight calls drain the same refill.
+  const fallback = 750 * Math.pow(2, attempt - 1);
+  return Math.min(Math.max((hinted ?? 0) + 250, fallback), VISION_429_MAX_WAIT_MS);
+}
+
 /**
  * Run a single OpenAI vision call under the concurrency + spacing gate. Always
  * releases, even if the call throws, so a failed call can't leak a slot.
+ *
+ * A 429 releases the slot, waits out the token-bucket refill (bounded), and
+ * re-enters the gate for another attempt; any other error rethrows untouched.
  */
 export async function throttleVision<T>(fn: () => Promise<T>): Promise<T> {
-  await acquire();
-  try {
-    return await fn();
-  } finally {
-    release();
+  let waited = 0;
+  for (let attempt = 1; ; attempt++) {
+    await acquire();
+    let delay: number;
+    try {
+      return await fn();
+    } catch (err: any) {
+      delay = retryDelayMs(err, attempt);
+      const retryable =
+        is429(err) &&
+        attempt < VISION_429_MAX_ATTEMPTS &&
+        waited + delay <= VISION_429_TOTAL_WAIT_MS;
+      if (!retryable) throw err;
+      console.warn(
+        `[Scanner] Vision 429 — waiting ${delay}ms for the token bucket to refill (attempt ${attempt}/${VISION_429_MAX_ATTEMPTS})`
+      );
+      waited += delay;
+    } finally {
+      release();
+    }
+    // Reached only on the retry path — the finally above has already freed the
+    // slot, so this refill pause never blocks the other in-flight call.
+    await sleep(delay);
   }
 }
