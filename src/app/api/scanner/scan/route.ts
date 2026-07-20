@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
 import { dbRetry, prisma } from "@/lib/prisma";
 import { auth } from "@/auth";
 import { messageForStage, messageForUnavailableSources, runStage, stageOfError, type FailureStage } from "@/lib/scanner/failure";
@@ -27,10 +27,12 @@ import {
   printingFromMemory,
   rememberVerifiedIdentity,
 } from "@/lib/scanner/recognition-memory";
+import { matchFingerprint } from "@/lib/scanner/fingerprint-match";
+import { runFingerprintShadow, shouldRunFingerprintShadow } from "@/lib/scanner/fingerprint-shadow";
 import { extractBottomStrip, extractCardFields } from "@/lib/scanner/extract";
 import { fetchAllPrintings } from "@/lib/scanner/candidates";
 import { scorer } from "@/lib/scanner/score";
-import { buildFailureTelemetry, buildScanTelemetry } from "@/lib/scanner/telemetry";
+import { buildFailureTelemetry, buildScanTelemetry, type FingerprintShadow } from "@/lib/scanner/telemetry";
 import { getArchiveContext } from "@/lib/scanner/archive-context";
 import { persistPrinting } from "@/lib/cards/persist-printing";
 import { serializeSavedCard } from "@/lib/cards/serialize-card";
@@ -257,7 +259,7 @@ export async function POST(req: NextRequest) {
       return await runStage("database", () =>
         saveAndRespond(printing, session.user.id, identifiedCard, decision, memoryTelemetryJson, startedAt, {
           game: effectiveGame, name: cardName, setCode, collectorNumber, signals: evidence,
-        })
+        }, { imageUrl, game: effectiveGame })
       );
     }
 
@@ -386,7 +388,7 @@ export async function POST(req: NextRequest) {
       return await runStage("database", () =>
         saveAndRespond(decision.printing!, session.user.id, identifiedCard, decision, telemetryJson, startedAt, {
           game: effectiveGame, name: cardName, setCode, collectorNumber, signals: scored.evidenceSignals,
-        })
+        }, { imageUrl, game: effectiveGame })
       );
     }
 
@@ -416,6 +418,15 @@ export async function POST(req: NextRequest) {
         return null;
       });
       console.log(`[Scanner] ⏱  persist ${Date.now() - pendingStart}ms | disambiguation-pending scanHistory=${Date.now() - pendingStart}`);
+      // Scanner V2 · M2-B: the compared identity is vision's best-match pick —
+      // the SAME field M1's art-pick agreement uses. No-op unless flag + Pokémon.
+      scheduleFingerprintShadow({
+        rowId: pending?.id ?? null,
+        imageUrl,
+        game: effectiveGame,
+        pipelineExternalId: decision.bestMatchExternalId ?? null,
+        pipelinePickSource: "disambiguate",
+      });
       return disambiguationResponse(cardName, decision.candidates, identifiedCard, pending?.id ?? null, decision.bestMatchExternalId);
     }
 
@@ -430,7 +441,9 @@ export async function POST(req: NextRequest) {
     if (candidates.status === "provider_unavailable") {
       // A verdict of "we don't know" — persisted like any other, so the rate of
       // unanswerable scans is measurable rather than folded into not-found.
-      await dbRetry(() =>
+      // The row id is captured (previously discarded) only so the M2-B shadow
+      // sensor can attach to it — a behavior-neutral read of the same create.
+      const unavailableRow = await dbRetry(() =>
         prisma.scanHistory.create({
           data: {
             userId: session.user.id,
@@ -440,7 +453,19 @@ export async function POST(req: NextRequest) {
             processingTime: Date.now() - startedAt,
           },
         })
-      ).catch((err) => console.warn("[Scanner] Could not persist unavailable attempt (non-fatal):", err?.message));
+      ).catch((err) => {
+        console.warn("[Scanner] Could not persist unavailable attempt (non-fatal):", err?.message);
+        return null;
+      });
+      // Scanner V2 · M2-B: no pipeline pick here (nothing was chosen). No-op
+      // unless flag + Pokémon.
+      scheduleFingerprintShadow({
+        rowId: unavailableRow?.id ?? null,
+        imageUrl,
+        game: effectiveGame,
+        pipelineExternalId: null,
+        pipelinePickSource: "none",
+      });
 
       console.log(`[Scanner] ⚠ Cannot verify "${cardName}" — unavailable: ${candidates.unavailable.join(", ")}`);
       // 503, not 404: 404 asserts the card does not exist. It might; we did not
@@ -455,8 +480,9 @@ export async function POST(req: NextRequest) {
     }
 
     // Not-found is a VERDICT, not an error — and now an EARNED one: every source
-    // we consulted answered, and none of them had this card.
-    await dbRetry(() =>
+    // we consulted answered, and none of them had this card. The row id is
+    // captured (previously discarded) only for the M2-B shadow attach.
+    const notFoundRow = await dbRetry(() =>
       prisma.scanHistory.create({
         data: {
           userId: session.user.id,
@@ -466,7 +492,18 @@ export async function POST(req: NextRequest) {
           processingTime: Date.now() - startedAt,
         },
       })
-    ).catch((err) => console.warn("[Scanner] Could not persist not-found attempt (non-fatal):", err?.message));
+    ).catch((err) => {
+      console.warn("[Scanner] Could not persist not-found attempt (non-fatal):", err?.message);
+      return null;
+    });
+    // Scanner V2 · M2-B: no pipeline pick here. No-op unless flag + Pokémon.
+    scheduleFingerprintShadow({
+      rowId: notFoundRow?.id ?? null,
+      imageUrl,
+      game: effectiveGame,
+      pipelineExternalId: null,
+      pipelinePickSource: "none",
+    });
     return NextResponse.json({
       success: false,
       stage: "not-found",
@@ -497,6 +534,57 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ success: false, stage, message: messageForStage(stage) }, { status: 500 });
   }
+}
+
+// ─── Fingerprint shadow sensor (Scanner V2 · M2-B) ──────────────────────────
+// Thin production wiring for the shadow sensor. All the logic (flag/game gating,
+// the match, the row append, failure isolation) lives in fingerprint-shadow.ts
+// where it is unit-tested with injected deps; here we only supply the real
+// `after()` scheduler, matchFingerprint, and prisma.
+//
+// The shadow computes the visually-nearest indexed printing for this scan's
+// image and records it onto the ScanHistory row this attempt already wrote —
+// with ZERO effect on the response. By the time after() fires, the decision,
+// confidence, candidates and status code are all fixed and the response is being
+// (or has been) sent. It exists only to let a later analysis ask the same
+// agreement question M1 asks (did the visual pick match the pipeline's pick?)
+// without this stage ever having influenced that pick.
+//
+// When shouldRunFingerprintShadow is false (flag off / non-Pokémon / no row)
+// this returns BEFORE scheduling anything: no after() callback, no model load,
+// no DB query.
+function scheduleFingerprintShadow(opts: {
+  rowId: string | null;
+  imageUrl: string;
+  game: string;
+  /** The pipeline's chosen identity, to compare the top visual match against. */
+  pipelineExternalId: string | null;
+  pipelinePickSource: FingerprintShadow["pipelinePickSource"];
+}): void {
+  if (!shouldRunFingerprintShadow(opts.game, opts.rowId)) return;
+  const { rowId, imageUrl, pipelineExternalId, pipelinePickSource } = opts;
+  // after(): runs the match AFTER the response is finished, so it adds zero
+  // measured latency to what the user receives.
+  after(() =>
+    runFingerprintShadow(
+      { rowId, imageUrl, pipelineExternalId, pipelinePickSource },
+      {
+        matcher: matchFingerprint,
+        // Read-modify-write mirrors save-selection's withSelection append: read
+        // the row's ocrText immediately before writing, so the window a
+        // concurrent selection append could be clobbered is a single update
+        // round-trip — negligible against human grid-selection time.
+        loadOcrText: async (id) =>
+          (await dbRetry(() =>
+            prisma.scanHistory.findUnique({ where: { id }, select: { ocrText: true } })
+          ))?.ocrText ?? null,
+        saveOcrText: async (id, ocrText) =>
+          void (await dbRetry(() =>
+            prisma.scanHistory.update({ where: { id }, data: { ocrText } })
+          )),
+      }
+    )
+  );
 }
 
 // ─── Game gating for the strip pass ─────────────────────────────────────────
@@ -584,6 +672,10 @@ async function saveAndRespond(
   telemetryJson: string,
   startedAt: number,
   remember?: { game: string; name: string; setCode?: string | null; collectorNumber?: string | null; signals?: unknown },
+  // Scanner V2 · M2-B: when present, schedule the fingerprint shadow match onto
+  // THIS accept's row (history.id) after the response is sent. Inert unless the
+  // flag is on and the game is Pokémon (scheduleFingerprintShadow gates both).
+  shadowInput?: { imageUrl: string; game: string },
 ) {
   const confidencePct = Math.round(decision.confidence * 100);
 
@@ -644,6 +736,19 @@ async function saveAndRespond(
   })));
 
   console.log(`[Scanner] ✅ Saved: "${localCard.name}" from "${localCard.setName}" (method: ${decision.method}, confidence: ${confidencePct}%)`);
+
+  // Scanner V2 · M2-B: the accept's row now exists — attach the shadow match to
+  // it. The compared identity is the accepted printing's externalId (which IS
+  // matchedCard here). No-op unless the flag is on and the game is Pokémon.
+  if (shadowInput) {
+    scheduleFingerprintShadow({
+      rowId: history.id,
+      imageUrl: shadowInput.imageUrl,
+      game: shadowInput.game,
+      pipelineExternalId: matchedCard.externalId,
+      pipelinePickSource: "accept",
+    });
+  }
 
   // Archive context (Phase 5 · Batch 2): what this card means in the user's
   // collection. Read-only, failure-safe (null on any error), and strictly

@@ -25,6 +25,14 @@ import { prisma } from "@/lib/prisma";
 
 const MODEL_ID = "Xenova/mobileclip_s2";
 
+// ─── Feature flag (Scanner V2 · M2-B wiring) ─────────────────────────────────
+// Wiring this sensor into the live scan route is explicit opt-in, mirroring
+// RECOGNITION_MEMORY_SERVE's gating: even a provably inert shadow sensor stays
+// dark until deliberately switched on. Default OFF — when unset, the scan route
+// skips the model load, the DB query, and the after() schedule entirely, so the
+// live path pays nothing. Enable by setting FINGERPRINT_SHADOW_ENABLED=1.
+export const FINGERPRINT_SHADOW_ENABLED = process.env.FINGERPRINT_SHADOW_ENABLED === "1";
+
 export interface FingerprintMatch {
   externalId: string;
   /** Cosine distance in [0, 2]; 0 = identical direction. Lower is closer. */

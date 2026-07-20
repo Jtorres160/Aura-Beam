@@ -42,6 +42,47 @@ export interface SelectionAttemptFailure {
   at: string;
 }
 
+/**
+ * Fingerprint shadow-sensor block (Scanner V2 · M2-B).
+ *
+ * Appended to a scan's ScanHistory row AFTER the response is sent, by an
+ * `after()` callback that has ZERO effect on what the user received. It records
+ * what the local visual matcher (matchFingerprint) saw for this image versus the
+ * identity the live pipeline chose, so a later analysis can ask the SAME
+ * agreement question M1's analyzeArtPickAgreement asks — did the fingerprint's
+ * top visual pick match the pipeline's pick? — without this stage ever having
+ * influenced that pick.
+ *
+ * The agreement is NOT computed here on purpose (mirrors bestMatchExternalId in
+ * M1): both externalIds are stored raw and the boolean is derived downstream, so
+ * a premature/derived "agreement" can't bake in a comparison rule we may revise.
+ * Optional and additive: older records omit it, older readers ignore it, v
+ * stays 1.
+ */
+export interface FingerprintShadow {
+  /** Top visual match's externalId, or null when the matcher went dark
+   *  (unsupported game / empty index / silent failure — never a throw). */
+  topMatchExternalId: string | null;
+  /** Top match's cosine distance in [0, 2] (lower = closer), or null when
+   *  there was no match. */
+  topMatchDistance: number | null;
+  /** The full top-K the matcher returned (≤5, ascending distance), for later
+   *  analysis. Absent when the matcher returned null (went dark). Shape mirrors
+   *  FingerprintMatch; inlined so this pure telemetry module stays free of the
+   *  matcher's runtime (prisma) dependency. */
+  matches?: Array<{ externalId: string; distance: number }>;
+  /** The pipeline identity to compare the top pick against — the accepted
+   *  printing's externalId, or the disambiguation best-match externalId. null
+   *  when the attempt chose nothing (not-found / provider-unavailable). Stored,
+   *  never compared here. */
+  pipelineExternalId: string | null;
+  /** Where pipelineExternalId came from, so the downstream comparison knows
+   *  which M1-style question it is answering. */
+  pipelinePickSource: "accept" | "disambiguate" | "none";
+  /** ISO timestamp of when the shadow match completed. */
+  at: string;
+}
+
 export interface ScanTelemetryV1 {
   v: 1;
   /** Everything the sensors read, with confidence + provenance. */
@@ -132,6 +173,10 @@ export interface ScanTelemetryV1 {
    *  failures clustered, and on which source?" — unanswerable before 5.13C,
    *  because the failure became a 404 and left no trace at all. */
   selectionAttempts?: SelectionAttemptFailure[];
+  /** Fingerprint shadow-sensor block (Scanner V2 · M2-B), appended after the
+   *  response is sent. Optional and additive: older records omit it, so v stays
+   *  1. See FingerprintShadow. */
+  fingerprintShadow?: FingerprintShadow;
 }
 
 /**
@@ -291,4 +336,31 @@ export function withSelectionAttempt(
     }
   }
   return JSON.stringify({ v: 1, selectionAttempts: [record] });
+}
+
+/**
+ * Append the fingerprint shadow block to an existing telemetry JSON string
+ * (Scanner V2 · M2-B). Same tolerance contract as withSelection(): a
+ * missing/corrupt original never loses the block — a minimal record carrying
+ * just the shadow is written instead.
+ *
+ * Everything already on the record — evidence, decision, a selection label — is
+ * preserved: this is a pure additive merge of one field onto the parsed object.
+ */
+export function withFingerprintShadow(
+  rawJson: string | null | undefined,
+  shadow: FingerprintShadow,
+): string {
+  if (rawJson) {
+    try {
+      const parsed = JSON.parse(rawJson);
+      if (parsed && typeof parsed === "object") {
+        parsed.fingerprintShadow = shadow;
+        return JSON.stringify(parsed);
+      }
+    } catch {
+      /* fall through to the minimal record */
+    }
+  }
+  return JSON.stringify({ v: 1, fingerprintShadow: shadow });
 }
