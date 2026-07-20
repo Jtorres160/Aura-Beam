@@ -14,28 +14,55 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // When the failure is specifically an unverified email, offer a resend link.
+  const [needsVerification, setNeedsVerification] = useState(false);
+  const [resendStatus, setResendStatus] = useState<"idle" | "sending" | "sent">("idle");
 
   useEffect(() => {
     // Safely check query params on client side
     const params = new URLSearchParams(window.location.search);
     const errorParam = params.get("error");
+    // Auth.js surfaces a custom CredentialsSignin `code` in the query string;
+    // an unverified email uses code "email_not_verified".
+    const codeParam = params.get("code");
     if (errorParam) {
-      if (errorParam === "CredentialsSignin" || errorParam === "Credentials") {
+      if (codeParam === "email_not_verified") {
+        setError("Please verify your email — check your inbox for the verification link.");
+        setNeedsVerification(true);
+      } else if (errorParam === "CredentialsSignin" || errorParam === "Credentials") {
         setError("Invalid email or password.");
       } else if (errorParam === "Configuration") {
         setError("OAuth configuration is missing. Google Login may not be configured yet.");
-      } else if (errorParam === "EmailNotVerified") {
-        setError("Please check your inbox and verify your email before logging in.");
       } else {
         setError(`Authentication error: ${errorParam}`);
       }
     }
   }, []);
 
+  const handleResend = async () => {
+    if (!email || resendStatus === "sending") return;
+    setResendStatus("sending");
+    try {
+      await fetch("/api/auth/resend-verification", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      // The endpoint intentionally returns a generic success regardless, so we
+      // always show the same confirmation.
+      setResendStatus("sent");
+    } catch {
+      setResendStatus("idle");
+      setError("Could not resend the verification email. Please try again.");
+    }
+  };
+
   const handleEmailSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
     setError(null);
+    setNeedsVerification(false);
+    setResendStatus("idle");
 
     try {
       const result = await signIn("credentials", {
@@ -46,10 +73,13 @@ export default function LoginPage() {
       });
 
       if (result?.error) {
-        if (result.error === "CredentialsSignin" || result.error === "Credentials") {
+        // Auth.js normalizes the thrown error type to "CredentialsSignin"; the
+        // specific reason is carried in `result.code`.
+        if (result.code === "email_not_verified") {
+          setError("Please verify your email — check your inbox for the verification link.");
+          setNeedsVerification(true);
+        } else if (result.error === "CredentialsSignin" || result.error === "Credentials") {
           setError("Invalid email or password.");
-        } else if (result.error === "EmailNotVerified") {
-          setError("Please check your inbox and verify your email before logging in.");
         } else {
           setError(result.error);
         }
@@ -117,9 +147,29 @@ export default function LoginPage() {
           </div>
 
           {error && (
-            <div className="mb-4 p-3 rounded-xl bg-destructive/10 border border-destructive/20 text-destructive text-sm flex items-center gap-2">
-              <AlertCircle className="h-4 w-4 shrink-0" />
-              <span>{error}</span>
+            <div className="mb-4 p-3 rounded-xl bg-destructive/10 border border-destructive/20 text-destructive text-sm">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="h-4 w-4 shrink-0" />
+                <span>{error}</span>
+              </div>
+              {needsVerification && (
+                <div className="mt-2 pl-6">
+                  {resendStatus === "sent" ? (
+                    <span className="text-muted-foreground">
+                      Verification email sent. Check your inbox (and spam).
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={handleResend}
+                      disabled={resendStatus === "sending"}
+                      className="text-aura-purple hover:text-aura-violet font-medium underline underline-offset-2 disabled:opacity-60"
+                    >
+                      {resendStatus === "sending" ? "Sending…" : "Resend verification email"}
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           )}
 

@@ -1,4 +1,4 @@
-import NextAuth from "next-auth";
+import NextAuth, { CredentialsSignin } from "next-auth";
 import { PrismaAdapter } from "@auth/prisma-adapter";
 import { prisma } from "./lib/prisma";
 import GoogleProvider from "next-auth/providers/google";
@@ -8,6 +8,16 @@ import { verifyPassword } from "./lib/password";
 import { devSession, ensureDevUser, isDevAuthBypassEnabled } from "./lib/auth-dev-bypass";
 
 const JWT_SECRET = process.env.NEXTAUTH_SECRET;
+
+// A plain `throw new Error(...)` inside `authorize` is NOT an AuthError, so
+// Auth.js v5 masks it as `error=Configuration` on the client (see
+// @auth/core/index.js: non-client-safe errors fall back to "Configuration").
+// Subclassing CredentialsSignin keeps the client-facing type as
+// "CredentialsSignin" while surfacing our own `code` in the result, letting the
+// login page distinguish "unverified email" from "wrong password".
+class EmailNotVerifiedError extends CredentialsSignin {
+  code = "email_not_verified";
+}
 
 if (process.env.NODE_ENV === "production" && !JWT_SECRET) {
   throw new Error("CRITICAL: NEXTAUTH_SECRET environment variable is missing in production. This is a severe security risk.");
@@ -72,7 +82,7 @@ export const { handlers, auth: nextAuth, signIn, signOut } = NextAuth({
           const isValid = verifyPassword(password, user.passwordHash);
           if (isValid) {
             if (!user.emailVerified) {
-              throw new Error("EmailNotVerified");
+              throw new EmailNotVerifiedError();
             }
             return user;
           }

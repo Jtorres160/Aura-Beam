@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { evaluateVerificationToken } from "@/lib/verification";
 
 export async function POST(req: NextRequest) {
   try {
@@ -24,23 +25,24 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    if (!verificationToken) {
+    const outcome = evaluateVerificationToken(verificationToken);
+
+    if (outcome === "missing") {
       return NextResponse.json(
         { message: "Invalid or expired verification token." },
         { status: 400 }
       );
     }
 
-    // Check expiration
-    if (new Date() > verificationToken.expires) {
-      // Delete expired token
+    if (outcome === "expired") {
+      // Delete the expired token so it can't linger.
       await prisma.verificationToken.delete({
         where: {
           identifier_token: { identifier: normalizedEmail, token },
         },
       });
       return NextResponse.json(
-        { message: "Verification token has expired. Please register again." },
+        { message: "Verification token has expired. Please request a new link." },
         { status: 400 }
       );
     }
