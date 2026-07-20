@@ -268,10 +268,25 @@ async function upsertFingerprint(prisma, row) {
 
 // ─── Per-card fingerprint (shared by both modes) ─────────────────────────────
 async function fingerprintCard(prisma, model, processor, card) {
-  const imageUrl = card.images?.large || card.images?.small;
-  if (!imageUrl) throw new Error("no image url on card");
+  // Prefer the hires image, but some older promo sets (e.g. xyp) have a working
+  // small while their `_hires` 404s. A lower-res fingerprint beats none, so fall
+  // back large → small. Only when BOTH are absent/404 is the card a genuine
+  // "no source image exists" — left unfingerprinted, never fabricated.
+  const candidates = [card.images?.large, card.images?.small].filter(Boolean);
+  if (candidates.length === 0) throw new Error("no image url on card");
 
-  const buf = await withRetry(() => downloadImage(imageUrl), { tries: 3, label: "image" });
+  let buf, imageUrl, lastErr;
+  for (const url of candidates) {
+    try {
+      buf = await withRetry(() => downloadImage(url), { tries: 3, label: "image" });
+      imageUrl = url;
+      break;
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  if (!buf) throw lastErr; // both large and small failed — genuine unknown
+
   const pHash = await computePHash(buf);
   const embedding = await computeEmbedding(model, processor, buf);
 
