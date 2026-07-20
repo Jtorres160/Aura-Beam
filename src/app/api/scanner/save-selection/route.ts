@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { dbRetry, prisma } from "@/lib/prisma";
 import { auth } from "@/auth";
 import { METHOD_CONFIDENCE } from "@/lib/scanner/decision";
-import { fetchPrintingById } from "@/lib/scanner/candidates";
+import { fetchPrintingById, type PrintingLookupResult } from "@/lib/scanner/candidates";
+import type { CandidatePrinting } from "@/lib/scanner/evidence";
 import { withSelection, withSelectionAttempt, type SelectionAttemptFailure } from "@/lib/scanner/telemetry";
 import { getArchiveContext } from "@/lib/scanner/archive-context";
 import { persistPrinting } from "@/lib/cards/persist-printing";
@@ -11,6 +12,58 @@ import { messageForStage, messageForUnavailableSelection, runStage, stageOfError
 
 // The user looked at the physical card and picked — that's ground truth.
 const USER_SELECTION_CONFIDENCE = Math.round(METHOD_CONFIDENCE["user-selection"] * 100);
+
+// The provider lookup can eat up to two 8s timeouts back-to-back; give the
+// route room for that plus the DB writes.
+export const maxDuration = 30;
+
+/**
+ * By-id lookup with one bounded retry. The Pokémon API in particular flaps —
+ * a 404/504 followed by a 200 on the SAME url is a measured behavior (see
+ * providers/http.ts) — and this call has a user standing on the grid waiting.
+ * One short pause + re-ask converts most of those flaps into a save. A timeout
+ * is not retried (we already waited the full 8s ceiling once).
+ */
+const LOOKUP_RETRY_DELAY_MS = 1500;
+async function fetchPrintingWithRetry(game: string, externalId: string): Promise<PrintingLookupResult> {
+  const first = await fetchPrintingById(game, externalId);
+  if (first.status !== "provider_unavailable" || first.reason === "timeout") return first;
+  await new Promise((r) => setTimeout(r, LOOKUP_RETRY_DELAY_MS));
+  return fetchPrintingById(game, externalId);
+}
+
+/**
+ * Last-resort source when the provider stays dark: OUR OWN copy of the card,
+ * persisted by an earlier scan of this same printing. This does not weaken the
+ * trust boundary — the row was written server-side from the provider's
+ * authoritative answer at the time; the request still contributes identifiers
+ * only. The price may be as stale as that last fetch, which beats telling a
+ * collector their save failed.
+ */
+async function printingFromLocalCache(externalId: string): Promise<CandidatePrinting | null> {
+  const cached = await dbRetry(() => prisma.card.findUnique({
+    where: { externalId },
+    include: { prices: true },
+  }));
+  if (!cached?.externalId) return null;
+  return {
+    externalId: cached.externalId,
+    name: cached.name,
+    game: cached.game as CandidatePrinting["game"],
+    setName: cached.setName,
+    setCode: cached.setCode,
+    collectorNumber: cached.collectorNumber,
+    rarity: cached.rarity,
+    imageUrl: cached.imageUrl,
+    thumbnailUrl: cached.thumbnailUrl,
+    price: {
+      marketPrice: cached.prices?.marketPrice ?? 0,
+      lowPrice: cached.prices?.lowPrice ?? null,
+      midPrice: cached.prices?.midPrice ?? null,
+      highPrice: cached.prices?.highPrice ?? null,
+    },
+  };
+}
 
 /**
  * Append a failed save attempt to the originating scan's telemetry (5.13C).
@@ -76,7 +129,20 @@ export async function POST(req: NextRequest) {
     // because a provider failure was collapsed into null and rendered as
     // "Could not verify the selected card. Please scan again." — a 404 asserting
     // the card isn't real, told to someone who just picked it off our own grid.
-    const lookup = await fetchPrintingById(game, externalId);
+    let lookup = await fetchPrintingWithRetry(game, externalId);
+
+    // Provider still dark after the retry → serve the card from our own DB if
+    // an earlier scan already persisted this exact printing.
+    if (lookup.status === "provider_unavailable") {
+      const cached = await printingFromLocalCache(externalId);
+      if (cached) {
+        console.warn(
+          `[SaveSelection] ${lookup.label} unavailable (${lookup.reason}) — ` +
+          `saving "${cached.name}" (${externalId}) from the local card cache`
+        );
+        lookup = { status: "found", card: cached };
+      }
+    }
 
     if (lookup.status === "provider_unavailable") {
       // We could not ASK. That is not a verdict about the user's card, so it
