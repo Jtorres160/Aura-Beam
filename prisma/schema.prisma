@@ -407,3 +407,46 @@ model AiLearningRule {
   @@index([targetName])
   @@map("ai_learning_rules")
 }
+
+// ─── Card Fingerprint Index (Scanner V2 · M1) ───────────────────────
+// One row per printing = the visual fingerprint of a single Pokémon TCG card
+// image, keyed by the Pokémon TCG API card id. Populated offline by a batch
+// script (not the scan path). Read at scan time as *evidence*, never as the
+// final judge — the truth boundary and set/CN OCR still decide (see AGENTS.md,
+// "AI is a sensor, not the judge").
+//
+// Staleness is queryable, not enforced: `builtAt` + `embeddingModel` +
+// `sourceUpdatedAt` let a rebuild target only stale/changed rows. A missing or
+// stale fingerprint is low-risk — the pipeline degrades to the current live
+// path, it never tells a collector a real card doesn't exist.
+//
+// pHash (bit(64)) and embedding (vector(512)) are pgvector column types Prisma
+// 5.x cannot express natively, so they are Unsupported(...) — written/read via
+// raw SQL. Their HNSW indexes are created by raw SQL outside this schema (see
+// docs/scanner-v2/M1-investigation.md §3); db push does not manage them.
+
+model CardFingerprint {
+  id              String   @id @default(cuid())
+
+  // Identity — the join key back to the live catalog / persisted Card.
+  externalId      String   @unique            // Pokémon TCG API card id, e.g. "sv3-125"
+  game            String   @default("POKEMON")
+  setCode         String?                      // set.ptcgoCode ("SV3") or set.id fallback
+  collectorNumber String?                      // card.number
+
+  // Provenance of the pixels this fingerprint was computed from.
+  imageUrl        String                       // exact source image (images.large)
+  sourceUpdatedAt DateTime?                    // set.updatedAt at build time (change detection)
+
+  // Fingerprints.
+  pHash           Unsupported("bit(64)")?
+  embedding       Unsupported("vector(512)")?
+
+  // Staleness / reproducibility.
+  embeddingModel  String   @default("mobileclip_s2")
+  builtAt         DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([game, setCode, collectorNumber])
+  @@map("card_fingerprints")
+}
