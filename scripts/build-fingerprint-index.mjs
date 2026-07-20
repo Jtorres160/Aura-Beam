@@ -68,9 +68,10 @@ const flag = (name) => {
 const has = (name) => argv.includes(`--${name}`);
 
 if (has("help")) {
-  console.log("Usage: node scripts/build-fingerprint-index.mjs [--set <id>] [--sets-from <file>] [--resume|--no-resume] [--delay <ms>]");
+  console.log("Usage: node scripts/build-fingerprint-index.mjs [--set <id>] [--sets-from <file>] [--resume|--no-resume] [--delay <ms>] [--list-retries <n>] [--list-backoff <ms>]");
   console.log("  No --set → FULL catalog (all sets), resume ON by default.");
   console.log("  --set <id> → one set (proof run), resume OFF by default.");
+  console.log("  --list-retries/--list-backoff → patience for the flaky per-set list call (default 6 / 2000ms).");
   process.exit(0);
 }
 
@@ -86,6 +87,16 @@ const EMBEDDING_MODEL = "mobileclip_s2";
 const API_CARDS = "https://api.pokemontcg.io/v2/cards";
 const API_SETS = "https://api.pokemontcg.io/v2/sets";
 const IMAGE_TIMEOUT_MS = 15_000;
+
+// The set-LIST call is the whole run's fragile point: the Pokémon API's per-set
+// enumeration times out (or 404s while unwell) in sustained slow spells, and a
+// failed list = a whole set skipped. Observed ~25 sets fail this way over one
+// full pass. These are more patient than the per-card image retries so a set is
+// only abandoned after the API has had real time to recover between attempts.
+// Tunable so a resume sweep of the previously-failed sets can push harder.
+const LIST_RETRIES = Number(flag("list-retries") ?? 6);
+const LIST_BACKOFF_MS = Number(flag("list-backoff") ?? 2000);
+const listRetryOpts = (label) => ({ tries: LIST_RETRIES, baseMs: LIST_BACKOFF_MS, label });
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const nfmt = (n) => n.toLocaleString("en-US");
@@ -139,7 +150,7 @@ async function fetchAllSetIds() {
   }
   const headers = pokemonHeaders();
   const url = `${API_SETS}?pageSize=250&select=id,name,total,releaseDate`;
-  const json = await withRetry(() => fetchProviderJson(url, { headers }), { label: "list sets" });
+  const json = await withRetry(() => fetchProviderJson(url, { headers }), listRetryOpts("list sets"));
   const sets = json?.data ?? [];
   // Oldest-first is the friendliest order to watch and to resume: newly added
   // sets land at the end, so a re-run reaches fresh cards last.
@@ -155,7 +166,7 @@ async function fetchSetCards(setId) {
     const url =
       `${API_CARDS}?q=${encodeURIComponent(`set.id:${setId}`)}` +
       `&pageSize=${pageSize}&page=${page}&select=id,name,number,set,images`;
-    const json = await withRetry(() => fetchProviderJson(url, { headers }), { label: `${setId} list page ${page}` });
+    const json = await withRetry(() => fetchProviderJson(url, { headers }), listRetryOpts(`${setId} list page ${page}`));
     const batch = json?.data ?? [];
     out.push(...batch);
     if (batch.length < pageSize) break; // last page
