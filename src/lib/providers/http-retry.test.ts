@@ -59,11 +59,11 @@ describe("fetchProviderJson retry — transient failures are ridden out", () => 
     assert.equal(count(), 2, "should have retried exactly once");
   });
 
-  test("survives four 500s and succeeds on the fifth attempt", async () => {
-    const count = failThenSucceed(4, 500, { data: ["ok"] });
+  test("survives seven 500s and succeeds on the eighth attempt", async () => {
+    const count = failThenSucceed(7, 500, { data: ["ok"] });
     const json = await fetchProviderJson("https://x/y");
     assert.ok(json);
-    assert.equal(count(), 5, "five attempts is the ceiling and it used all five");
+    assert.equal(count(), 8, "eight attempts is the ceiling and it used all eight");
   });
 
   test("gives up after the attempt ceiling and throws the classified error", async () => {
@@ -72,7 +72,7 @@ describe("fetchProviderJson retry — transient failures are ridden out", () => 
       () => fetchProviderJson("https://x/y"),
       (err: unknown) => err instanceof ProviderError && err.reason === "http_error",
     );
-    assert.equal(count(), 5, "should stop at the 5-attempt ceiling");
+    assert.equal(count(), 8, "should stop at the 8-attempt ceiling");
   });
 
   test("a rate-limit (429) is retried", async () => {

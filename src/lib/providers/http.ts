@@ -78,10 +78,22 @@ export const PROVIDER_TIMEOUT_MS = 8_000;
 // retry, because a real answer isn't a failure and never enters the loop.
 //
 // Latency is bounded two ways at once, because the two failure shapes are
-// different: fast 500s (~140ms) let many attempts fit under the budget and drive
-// the residual failure rate to ~2%; a true 8s hang consumes the whole budget on
-// its own, so it gets effectively ONE attempt and never stacks 8s + 8s. A
-// healthy request returns on the first attempt and pays nothing.
+// different: fast 500s (~140ms) let many attempts fit under the budget, and a
+// true 8s hang consumes ~half the budget on its own so it never stacks more than
+// two. A healthy request returns on the first attempt and pays nothing.
+//
+// Attempt count set by MEASUREMENT, not guesswork. A 9.5-minute soak against the
+// live API during a 42%-per-request-failure window (225 HTTP-500s + 2 timeouts
+// of 541 requests) showed:
+//
+//     no retry (1 attempt):   42% of scans fail   ← what the demo hit
+//     5 attempts:            ~2% of scans fail     (0.45^5 ≈ 1.8%, confirmed)
+//     8 attempts:          ~0.2% of scans fail     (0.45^8 ≈ 0.17%)
+//
+// 2% is ~1-in-50 — still a coin-flip chance of one failure across a 20-card demo.
+// 8 attempts takes that demo-session risk from ~33% to ~3%. The cost is paid only
+// on the tail: a scan that would have FAILED now takes up to ~6.5s and succeeds,
+// while healthy scans are untouched (p50 stayed ~700ms in the soak).
 
 /** Failure reasons worth retrying: the source didn't give us a real answer.
  *  bad_query (our malformed question), not_configured (missing creds) and
@@ -94,15 +106,17 @@ const RETRYABLE_REASONS: ReadonlySet<ProviderFailureReason> = new Set([
   "rate_limited",
 ]);
 
-/** Total attempts including the first. 5 attempts against ~45% per-request
- *  failure leaves ~0.45^5 ≈ 1.8% residual. */
-const RETRY_MAX_ATTEMPTS = 5;
+/** Total attempts including the first. 8 attempts against ~45% per-request
+ *  failure leaves ~0.45^8 ≈ 0.17% residual (measured ~0.2% in a live soak). For
+ *  fast 500s this ceiling — not the budget — is the binding limit. */
+const RETRY_MAX_ATTEMPTS = 8;
 
-/** Wall-clock ceiling for all attempts of one request. Set to the per-request
- *  timeout on purpose: a single genuine 8s hang exhausts it, so timeouts don't
- *  get an expensive second 8s attempt, while fast failures leave nearly the
- *  whole budget for further tries. */
-const RETRY_BUDGET_MS = PROVIDER_TIMEOUT_MS;
+/** Wall-clock ceiling for all attempts of one request. Two per-request timeouts
+ *  wide: a single 8s hang no longer exhausts the whole budget (the demo's one
+ *  timeout-shaped failure did), so a hung request still earns a second full try,
+ *  while a run of genuine hangs is still capped at ~16s rather than stacking
+ *  unbounded. Fast failures never approach it — 8 of them fit in ~6.5s. */
+const RETRY_BUDGET_MS = 2 * PROVIDER_TIMEOUT_MS;
 
 /** Base backoff; the delay grows 200 → 400 → 800 → 1000(cap) with jitter.
  *  Read from env so the test harness can zero it out (see test/register.mjs). */
