@@ -7,9 +7,14 @@ import { getYugiohCardById, formatYugiohCard } from "@/lib/services/yugioh";
 // This endpoint is meant to be called by a cron job (e.g., Vercel Cron)
 export async function GET(request: Request) {
   try {
-    // Basic security: check for a cron secret if one is configured
+    // Mandatory cron-secret guard (Vercel's recommended pattern). CRON_SECRET
+    // MUST be set in every deployed environment: a missing secret now returns
+    // 401 rather than silently allowing unauthenticated requests through. Vercel
+    // automatically sends `Authorization: Bearer $CRON_SECRET` on its own
+    // scheduled invocations, so this check passes for the real cron and fails
+    // for everyone else.
     const authHeader = request.headers.get("authorization");
-    if (process.env.CRON_SECRET && authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+    if (!process.env.CRON_SECRET || authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
       return NextResponse.json({ success: false, message: "Unauthorized" }, { status: 401 });
     }
 

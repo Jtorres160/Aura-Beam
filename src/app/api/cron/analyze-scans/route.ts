@@ -26,13 +26,15 @@ const CRON_SECRET = process.env.CRON_SECRET || "";
  * manually from the admin dashboard).
  */
 export async function GET(req: NextRequest) {
-  // Cron-only endpoint. When CRON_SECRET is configured, a matching Bearer token
-  // is required; when it is unset the guard is skipped (conditional pattern),
-  // which is why CRON_SECRET must be set in every deployed environment. No
-  // in-app/admin-dashboard caller triggers this today — it is invoked solely by
-  // the Vercel cron schedule in vercel.json.
+  // Cron-only endpoint with a MANDATORY secret guard (Vercel's recommended
+  // pattern): a missing OR mismatched secret returns 401 — we no longer skip the
+  // check when CRON_SECRET is unset. CRON_SECRET must therefore be set in every
+  // deployed environment. Vercel automatically sends `Authorization: Bearer
+  // $CRON_SECRET` on its own scheduled invocations, so the real cron passes and
+  // everyone else is rejected. No in-app/admin-dashboard caller triggers this
+  // today — it is invoked solely by the Vercel cron schedule in vercel.json.
   const authHeader = req.headers.get("authorization");
-  if (CRON_SECRET && authHeader !== `Bearer ${CRON_SECRET}`) {
+  if (!CRON_SECRET || authHeader !== `Bearer ${CRON_SECRET}`) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
