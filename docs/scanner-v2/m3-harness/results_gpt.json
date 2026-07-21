@@ -1,0 +1,282 @@
+[
+  {
+    "externalId": "base1-6",
+    "truthSet": "BS",
+    "truthCN": "6",
+    "setCode": "1",
+    "collectorNumber": "6/102",
+    "rarity": "",
+    "artist": "Mitsuhiro Arita",
+    "ms": 3272
+  },
+  {
+    "externalId": "gym1-6",
+    "truthSet": "G1",
+    "truthCN": "6",
+    "setCode": "1",
+    "collectorNumber": "6/132",
+    "rarity": "",
+    "artist": "Ken Sugimori",
+    "ms": 1874
+  },
+  {
+    "externalId": "neo1-6",
+    "truthSet": "N1",
+    "truthCN": "6",
+    "setCode": "1",
+    "collectorNumber": "6/111",
+    "rarity": "",
+    "artist": "Ken Sugimori",
+    "ms": 1928
+  },
+  {
+    "externalId": "ecard1-6",
+    "truthSet": "EX",
+    "truthCN": "6",
+    "setCode": "1",
+    "collectorNumber": "6/165",
+    "rarity": "H",
+    "artist": "Hiromichi Sugiyama",
+    "ms": 2513
+  },
+  {
+    "externalId": "ex1-6",
+    "truthSet": "RS",
+    "truthCN": "6",
+    "setCode": "EX",
+    "collectorNumber": "6/109",
+    "rarity": "",
+    "artist": "Midori Harada",
+    "ms": 1591
+  },
+  {
+    "externalId": "ex7-6",
+    "truthSet": "TRR",
+    "truthCN": "6",
+    "setCode": "3C1",
+    "collectorNumber": "6/109",
+    "rarity": "R",
+    "artist": "Kouki Saitou",
+    "ms": 2685
+  },
+  {
+    "externalId": "dp1-6",
+    "truthSet": "DP",
+    "truthCN": "6",
+    "setCode": "DP",
+    "collectorNumber": "6/130",
+    "rarity": "R",
+    "artist": "Ken Sugimori",
+    "ms": 1898
+  },
+  {
+    "externalId": "pl1-6",
+    "truthSet": "PL",
+    "truthCN": "6",
+    "setCode": "DP",
+    "collectorNumber": "27/130",
+    "rarity": "R",
+    "artist": "Kouki Saitou",
+    "ms": 1882
+  },
+  {
+    "externalId": "hgss1-6",
+    "truthSet": "HS",
+    "truthCN": "6",
+    "setCode": "HGSS",
+    "collectorNumber": "6/123",
+    "rarity": "R",
+    "artist": "sui",
+    "ms": 1630
+  },
+  {
+    "externalId": "bw1-6",
+    "truthSet": "BLW",
+    "truthCN": "6",
+    "setCode": "BW",
+    "collectorNumber": "6/114",
+    "rarity": "R",
+    "artist": "5ban Graphics",
+    "ms": 1925
+  },
+  {
+    "externalId": "bw7-6",
+    "truthSet": "BCR",
+    "truthCN": "6",
+    "setCode": "SV3",
+    "collectorNumber": "6/149",
+    "rarity": "",
+    "artist": "TOKIYA",
+    "ms": 1920
+  },
+  {
+    "externalId": "xy1-6",
+    "truthSet": "XY",
+    "truthCN": "6",
+    "setCode": "SV3",
+    "collectorNumber": "6/146",
+    "rarity": "",
+    "artist": "Mizue",
+    "ms": 1577
+  },
+  {
+    "externalId": "xy5-6",
+    "truthSet": "PRC",
+    "truthCN": "6",
+    "setCode": "XY",
+    "collectorNumber": "6/160",
+    "rarity": "C",
+    "artist": "Akira Komayama",
+    "ms": 2585
+  },
+  {
+    "externalId": "sm1-6",
+    "truthSet": "SUM",
+    "truthCN": "6",
+    "setCode": "",
+    "collectorNumber": "",
+    "ms": 923,
+    "err": "429 Rate limit reached for gpt-4o-mini in organization org-C1wBz8MVDUkp3oclV8IJJAMj on tokens per min (TPM): Limit 200000, Used 200000, Requested 1016. Please try again in 304ms. Visit https://platform.openai.com/account/rate-limits to learn more."
+  },
+  {
+    "externalId": "sm12-6",
+    "truthSet": "CEC",
+    "truthCN": "6",
+    "setCode": "SM",
+    "collectorNumber": "6/236",
+    "rarity": "Rare",
+    "artist": "nagimiso",
+    "ms": 2198
+  },
+  {
+    "externalId": "swsh1-6",
+    "truthSet": "SSH",
+    "truthCN": "6",
+    "setCode": "D",
+    "collectorNumber": "006/202",
+    "rarity": "★",
+    "artist": "kodama",
+    "ms": 2075
+  },
+  {
+    "externalId": "swsh8-6",
+    "truthSet": "FST",
+    "truthCN": "6",
+    "setCode": "E",
+    "collectorNumber": "006/264",
+    "rarity": "★",
+    "artist": "PLANETA Mochizuki",
+    "ms": 2041
+  },
+  {
+    "externalId": "sv1-6",
+    "truthSet": "sv1",
+    "truthCN": "6",
+    "setCode": "",
+    "collectorNumber": "",
+    "ms": 896,
+    "err": "429 Rate limit reached for gpt-4o-mini in organization org-C1wBz8MVDUkp3oclV8IJJAMj on tokens per min (TPM): Limit 200000, Used 200000, Requested 1016. Please try again in 304ms. Visit https://platform.openai.com/account/rate-limits to learn more."
+  },
+  {
+    "externalId": "sv3-6",
+    "truthSet": "sv3",
+    "truthCN": "6",
+    "setCode": "OBF",
+    "collectorNumber": "006/197",
+    "rarity": "G",
+    "artist": "Saya Tsuruta",
+    "ms": 1864
+  },
+  {
+    "externalId": "sv4pt5-6",
+    "truthSet": "sv4pt5",
+    "truthCN": "6",
+    "setCode": "",
+    "collectorNumber": "",
+    "ms": 894,
+    "err": "429 Rate limit reached for gpt-4o-mini in organization org-C1wBz8MVDUkp3oclV8IJJAMj on tokens per min (TPM): Limit 200000, Used 200000, Requested 1016. Please try again in 304ms. Visit https://platform.openai.com/account/rate-limits to learn more."
+  },
+  {
+    "externalId": "sv8-6",
+    "truthSet": "SSP",
+    "truthCN": "6",
+    "setCode": "",
+    "collectorNumber": "",
+    "ms": 841,
+    "err": "429 Rate limit reached for gpt-4o-mini in organization org-C1wBz8MVDUkp3oclV8IJJAMj on tokens per min (TPM): Limit 200000, Used 200000, Requested 1016. Please try again in 304ms. Visit https://platform.openai.com/account/rate-limits to learn more."
+  },
+  {
+    "externalId": "sv1-258",
+    "truthSet": "sv1",
+    "truthCN": "258",
+    "setCode": "",
+    "collectorNumber": "",
+    "ms": 808,
+    "err": "429 Rate limit reached for gpt-4o-mini in organization org-C1wBz8MVDUkp3oclV8IJJAMj on tokens per min (TPM): Limit 200000, Used 200000, Requested 1016. Please try again in 304ms. Visit https://platform.openai.com/account/rate-limits to learn more."
+  },
+  {
+    "externalId": "sv3-230",
+    "truthSet": "sv3",
+    "truthCN": "230",
+    "setCode": "",
+    "collectorNumber": "",
+    "ms": 851,
+    "err": "429 Rate limit reached for gpt-4o-mini in organization org-C1wBz8MVDUkp3oclV8IJJAMj on tokens per min (TPM): Limit 200000, Used 200000, Requested 1016. Please try again in 304ms. Visit https://platform.openai.com/account/rate-limits to learn more."
+  },
+  {
+    "externalId": "sv8-252",
+    "truthSet": "SSP",
+    "truthCN": "252",
+    "setCode": "SSP",
+    "collectorNumber": "252/191",
+    "rarity": "G",
+    "artist": "2024 Pokémon / Nintendo / Creatures / GAME FREAK",
+    "ms": 2387
+  },
+  {
+    "externalId": "swsh8-284",
+    "truthSet": "FST",
+    "truthCN": "284",
+    "setCode": "",
+    "collectorNumber": "",
+    "ms": 879,
+    "err": "429 Rate limit reached for gpt-4o-mini in organization org-C1wBz8MVDUkp3oclV8IJJAMj on tokens per min (TPM): Limit 200000, Used 200000, Requested 1016. Please try again in 304ms. Visit https://platform.openai.com/account/rate-limits to learn more."
+  },
+  {
+    "externalId": "sm12-271",
+    "truthSet": "CEC",
+    "truthCN": "271",
+    "setCode": "",
+    "collectorNumber": "",
+    "ms": 815,
+    "err": "429 Rate limit reached for gpt-4o-mini in organization org-C1wBz8MVDUkp3oclV8IJJAMj on tokens per min (TPM): Limit 200000, Used 200000, Requested 1016. Please try again in 304ms. Visit https://platform.openai.com/account/rate-limits to learn more."
+  },
+  {
+    "externalId": "xy5-164",
+    "truthSet": "PRC",
+    "truthCN": "164",
+    "setCode": "XY",
+    "collectorNumber": "164/160",
+    "rarity": "R",
+    "artist": "Ayaka Yoshida",
+    "ms": 2541
+  },
+  {
+    "externalId": "ecard2-H1",
+    "truthSet": "AQ",
+    "truthCN": "H1",
+    "setCode": "",
+    "collectorNumber": "",
+    "ms": 832,
+    "err": "429 Rate limit reached for gpt-4o-mini in organization org-C1wBz8MVDUkp3oclV8IJJAMj on tokens per min (TPM): Limit 200000, Used 200000, Requested 1016. Please try again in 304ms. Visit https://platform.openai.com/account/rate-limits to learn more."
+  },
+  {
+    "externalId": "ecard2-H2",
+    "truthSet": "AQ",
+    "truthCN": "H2",
+    "setCode": "",
+    "collectorNumber": "",
+    "ms": 839,
+    "err": "429 Rate limit reached for gpt-4o-mini in organization org-C1wBz8MVDUkp3oclV8IJJAMj on tokens per min (TPM): Limit 200000, Used 200000, Requested 1016. Please try again in 304ms. Visit https://platform.openai.com/account/rate-limits to learn more."
+  }
+]

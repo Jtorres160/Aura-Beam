@@ -1,0 +1,263 @@
+[
+  {
+    "externalId": "base1-6",
+    "truthSet": "BS",
+    "truthCN": "6",
+    "setCode": "",
+    "collectorNumber": "",
+    "raw": "************************************",
+    "ms": 133
+  },
+  {
+    "externalId": "gym1-6",
+    "truthSet": "G1",
+    "truthCN": "6",
+    "setCode": "",
+    "collectorNumber": "",
+    "raw": "***",
+    "ms": 102
+  },
+  {
+    "externalId": "neo1-6",
+    "truthSet": "N1",
+    "truthCN": "6",
+    "setCode": "",
+    "collectorNumber": "",
+    "raw": "-.......................................................................................................................",
+    "ms": 155
+  },
+  {
+    "externalId": "ecard1-6",
+    "truthSet": "EX",
+    "truthCN": "6",
+    "setCode": "",
+    "collectorNumber": "",
+    "raw": "-INTAINING",
+    "ms": 107
+  },
+  {
+    "externalId": "ex1-6",
+    "truthSet": "RS",
+    "truthCN": "6",
+    "setCode": "",
+    "collectorNumber": "",
+    "raw": "TOTAL",
+    "ms": 93
+  },
+  {
+    "externalId": "ex7-6",
+    "truthSet": "TRR",
+    "truthCN": "6",
+    "setCode": "",
+    "collectorNumber": "",
+    "raw": "***",
+    "ms": 96
+  },
+  {
+    "externalId": "dp1-6",
+    "truthSet": "DP",
+    "truthCN": "6",
+    "setCode": "",
+    "collectorNumber": "",
+    "raw": "2",
+    "ms": 91
+  },
+  {
+    "externalId": "pl1-6",
+    "truthSet": "PL",
+    "truthCN": "6",
+    "setCode": "",
+    "collectorNumber": "",
+    "raw": "***",
+    "ms": 93
+  },
+  {
+    "externalId": "hgss1-6",
+    "truthSet": "HS",
+    "truthCN": "6",
+    "setCode": "",
+    "collectorNumber": "",
+    "raw": "TOTAL",
+    "ms": 102
+  },
+  {
+    "externalId": "bw1-6",
+    "truthSet": "BLW",
+    "truthCN": "6",
+    "setCode": "",
+    "collectorNumber": "",
+    "raw": "- - - - - - - - - - - -",
+    "ms": 134
+  },
+  {
+    "externalId": "bw7-6",
+    "truthSet": "BCR",
+    "truthCN": "6",
+    "setCode": "",
+    "collectorNumber": "",
+    "raw": "***",
+    "ms": 108
+  },
+  {
+    "externalId": "xy1-6",
+    "truthSet": "XY",
+    "truthCN": "6",
+    "setCode": "",
+    "collectorNumber": "",
+    "raw": "TOTAL",
+    "ms": 94
+  },
+  {
+    "externalId": "xy5-6",
+    "truthSet": "PRC",
+    "truthCN": "6",
+    "setCode": "",
+    "collectorNumber": "",
+    "raw": "TOTAL",
+    "ms": 96
+  },
+  {
+    "externalId": "sm1-6",
+    "truthSet": "SUM",
+    "truthCN": "6",
+    "setCode": "",
+    "collectorNumber": "",
+    "raw": "TABLE:",
+    "ms": 97
+  },
+  {
+    "externalId": "sm12-6",
+    "truthSet": "CEC",
+    "truthCN": "6",
+    "setCode": "",
+    "collectorNumber": "",
+    "raw": "TOTAL",
+    "ms": 90
+  },
+  {
+    "externalId": "swsh1-6",
+    "truthSet": "SSH",
+    "truthCN": "6",
+    "setCode": "FOR",
+    "collectorNumber": "",
+    "raw": "TOTAL FOR A FREE CARDS AND RECEIPT FOR AN OFFER",
+    "ms": 134
+  },
+  {
+    "externalId": "swsh8-6",
+    "truthSet": "FST",
+    "truthCN": "6",
+    "setCode": "",
+    "collectorNumber": "",
+    "raw": "***",
+    "ms": 86
+  },
+  {
+    "externalId": "sv1-6",
+    "truthSet": "sv1",
+    "truthCN": "6",
+    "setCode": "",
+    "collectorNumber": "",
+    "raw": "MARGE: 000000000000000000000000000000000000000000000000",
+    "ms": 131
+  },
+  {
+    "externalId": "sv3-6",
+    "truthSet": "sv3",
+    "truthCN": "6",
+    "setCode": "",
+    "collectorNumber": "",
+    "raw": "***",
+    "ms": 86
+  },
+  {
+    "externalId": "sv4pt5-6",
+    "truthSet": "sv4pt5",
+    "truthCN": "6",
+    "setCode": "",
+    "collectorNumber": "",
+    "raw": "***",
+    "ms": 91
+  },
+  {
+    "externalId": "sv8-6",
+    "truthSet": "SSP",
+    "truthCN": "6",
+    "setCode": "SEE",
+    "collectorNumber": "",
+    "raw": "SEE BACK OF RECEIPT FOR AN OFFER",
+    "ms": 122
+  },
+  {
+    "externalId": "sv1-258",
+    "truthSet": "sv1",
+    "truthCN": "258",
+    "setCode": "",
+    "collectorNumber": "",
+    "raw": "-",
+    "ms": 89
+  },
+  {
+    "externalId": "sv3-230",
+    "truthSet": "sv3",
+    "truthCN": "230",
+    "setCode": "",
+    "collectorNumber": "",
+    "raw": "1",
+    "ms": 89
+  },
+  {
+    "externalId": "sv8-252",
+    "truthSet": "SSP",
+    "truthCN": "252",
+    "setCode": "",
+    "collectorNumber": "",
+    "raw": "2",
+    "ms": 95
+  },
+  {
+    "externalId": "swsh8-284",
+    "truthSet": "FST",
+    "truthCN": "284",
+    "setCode": "",
+    "collectorNumber": "",
+    "raw": "-",
+    "ms": 88
+  },
+  {
+    "externalId": "sm12-271",
+    "truthSet": "CEC",
+    "truthCN": "271",
+    "setCode": "",
+    "collectorNumber": "",
+    "raw": "P",
+    "ms": 91
+  },
+  {
+    "externalId": "xy5-164",
+    "truthSet": "PRC",
+    "truthCN": "164",
+    "setCode": "",
+    "collectorNumber": "",
+    "raw": "***",
+    "ms": 113
+  },
+  {
+    "externalId": "ecard2-H1",
+    "truthSet": "AQ",
+    "truthCN": "H1",
+    "setCode": "",
+    "collectorNumber": "",
+    "raw": "PERFORMENT -",
+    "ms": 101
+  },
+  {
+    "externalId": "ecard2-H2",
+    "truthSet": "AQ",
+    "truthCN": "H2",
+    "setCode": "PER",
+    "collectorNumber": "",
+    "raw": "PER MONTH",
+    "ms": 91
+  }
+]

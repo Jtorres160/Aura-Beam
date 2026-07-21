@@ -1,0 +1,830 @@
+{
+  "Tesseract": {
+    "cn": {
+      "exact": 17,
+      "near": 3,
+      "miss": 9
+    },
+    "set": {
+      "exact": 0,
+      "near": 0,
+      "miss": 29
+    },
+    "avgMs": 227,
+    "detail": [
+      {
+        "id": "base1-6",
+        "cn": "6/102",
+        "cnv": "exact",
+        "set": "LE",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "BS"
+      },
+      {
+        "id": "gym1-6",
+        "cn": "6/132",
+        "cnv": "exact",
+        "set": "CE",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "G1"
+      },
+      {
+        "id": "neo1-6",
+        "cn": "6/111",
+        "cnv": "exact",
+        "set": "ERY",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "N1"
+      },
+      {
+        "id": "ecard1-6",
+        "cn": "",
+        "cnv": "miss",
+        "set": "YP",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "EX"
+      },
+      {
+        "id": "ex1-6",
+        "cn": "",
+        "cnv": "miss",
+        "set": "",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "RS"
+      },
+      {
+        "id": "ex7-6",
+        "cn": "6/109",
+        "cnv": "exact",
+        "set": "BN",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "TRR"
+      },
+      {
+        "id": "dp1-6",
+        "cn": "",
+        "cnv": "miss",
+        "set": "SL",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "DP"
+      },
+      {
+        "id": "pl1-6",
+        "cn": "7/7",
+        "cnv": "near",
+        "set": "AI",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "PL"
+      },
+      {
+        "id": "hgss1-6",
+        "cn": "5/123",
+        "cnv": "near",
+        "set": "RE",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "HS"
+      },
+      {
+        "id": "bw1-6",
+        "cn": "6/114",
+        "cnv": "exact",
+        "set": "",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "BLW"
+      },
+      {
+        "id": "bw7-6",
+        "cn": "6/149",
+        "cnv": "exact",
+        "set": "WOR",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "BCR"
+      },
+      {
+        "id": "xy1-6",
+        "cn": "6/146",
+        "cnv": "exact",
+        "set": "LEC",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "XY"
+      },
+      {
+        "id": "xy5-6",
+        "cn": "6/160",
+        "cnv": "exact",
+        "set": "LIRA",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "PRC"
+      },
+      {
+        "id": "sm1-6",
+        "cn": "",
+        "cnv": "miss",
+        "set": "PIAS",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "SUM"
+      },
+      {
+        "id": "sm12-6",
+        "cn": "6/236",
+        "cnv": "exact",
+        "set": "XK",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "CEC"
+      },
+      {
+        "id": "swsh1-6",
+        "cn": "006/202",
+        "cnv": "exact",
+        "set": "WE",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "SSH"
+      },
+      {
+        "id": "swsh8-6",
+        "cn": "006/264",
+        "cnv": "exact",
+        "set": "GN",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "FST"
+      },
+      {
+        "id": "sv1-6",
+        "cn": "006/195",
+        "cnv": "exact",
+        "set": "XK",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "sv1"
+      },
+      {
+        "id": "sv3-6",
+        "cn": "006/197",
+        "cnv": "exact",
+        "set": "XK",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "sv3"
+      },
+      {
+        "id": "sv4pt5-6",
+        "cn": "006/091",
+        "cnv": "exact",
+        "set": "LN",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "sv4pt5"
+      },
+      {
+        "id": "sv8-6",
+        "cn": "006/191",
+        "cnv": "exact",
+        "set": "XK",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "SSP"
+      },
+      {
+        "id": "sv1-258",
+        "cn": "",
+        "cnv": "miss",
+        "set": "GAME",
+        "sv": "miss",
+        "truthCN": "258",
+        "truthSet": "sv1"
+      },
+      {
+        "id": "sv3-230",
+        "cn": "",
+        "cnv": "miss",
+        "set": "GAME",
+        "sv": "miss",
+        "truthCN": "230",
+        "truthSet": "sv3"
+      },
+      {
+        "id": "sv8-252",
+        "cn": "552/797",
+        "cnv": "near",
+        "set": "RN",
+        "sv": "miss",
+        "truthCN": "252",
+        "truthSet": "SSP"
+      },
+      {
+        "id": "swsh8-284",
+        "cn": "284/264",
+        "cnv": "exact",
+        "set": "GAME",
+        "sv": "miss",
+        "truthCN": "284",
+        "truthSet": "FST"
+      },
+      {
+        "id": "sm12-271",
+        "cn": "",
+        "cnv": "miss",
+        "set": "CT",
+        "sv": "miss",
+        "truthCN": "271",
+        "truthSet": "CEC"
+      },
+      {
+        "id": "xy5-164",
+        "cn": "164/160",
+        "cnv": "exact",
+        "set": "AN",
+        "sv": "miss",
+        "truthCN": "164",
+        "truthSet": "PRC"
+      },
+      {
+        "id": "ecard2-H1",
+        "cn": "",
+        "cnv": "miss",
+        "set": "XX",
+        "sv": "miss",
+        "truthCN": "H1",
+        "truthSet": "AQ"
+      },
+      {
+        "id": "ecard2-H2",
+        "cn": "",
+        "cnv": "miss",
+        "set": "TRE",
+        "sv": "miss",
+        "truthCN": "H2",
+        "truthSet": "AQ"
+      }
+    ]
+  },
+  "TrOCR-small": {
+    "cn": {
+      "exact": 0,
+      "near": 0,
+      "miss": 29
+    },
+    "set": {
+      "exact": 0,
+      "near": 0,
+      "miss": 29
+    },
+    "avgMs": 103,
+    "detail": [
+      {
+        "id": "base1-6",
+        "cn": "",
+        "cnv": "miss",
+        "set": "",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "BS"
+      },
+      {
+        "id": "gym1-6",
+        "cn": "",
+        "cnv": "miss",
+        "set": "",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "G1"
+      },
+      {
+        "id": "neo1-6",
+        "cn": "",
+        "cnv": "miss",
+        "set": "",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "N1"
+      },
+      {
+        "id": "ecard1-6",
+        "cn": "",
+        "cnv": "miss",
+        "set": "",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "EX"
+      },
+      {
+        "id": "ex1-6",
+        "cn": "",
+        "cnv": "miss",
+        "set": "",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "RS"
+      },
+      {
+        "id": "ex7-6",
+        "cn": "",
+        "cnv": "miss",
+        "set": "",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "TRR"
+      },
+      {
+        "id": "dp1-6",
+        "cn": "",
+        "cnv": "miss",
+        "set": "",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "DP"
+      },
+      {
+        "id": "pl1-6",
+        "cn": "",
+        "cnv": "miss",
+        "set": "",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "PL"
+      },
+      {
+        "id": "hgss1-6",
+        "cn": "",
+        "cnv": "miss",
+        "set": "",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "HS"
+      },
+      {
+        "id": "bw1-6",
+        "cn": "",
+        "cnv": "miss",
+        "set": "",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "BLW"
+      },
+      {
+        "id": "bw7-6",
+        "cn": "",
+        "cnv": "miss",
+        "set": "",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "BCR"
+      },
+      {
+        "id": "xy1-6",
+        "cn": "",
+        "cnv": "miss",
+        "set": "",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "XY"
+      },
+      {
+        "id": "xy5-6",
+        "cn": "",
+        "cnv": "miss",
+        "set": "",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "PRC"
+      },
+      {
+        "id": "sm1-6",
+        "cn": "",
+        "cnv": "miss",
+        "set": "",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "SUM"
+      },
+      {
+        "id": "sm12-6",
+        "cn": "",
+        "cnv": "miss",
+        "set": "",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "CEC"
+      },
+      {
+        "id": "swsh1-6",
+        "cn": "",
+        "cnv": "miss",
+        "set": "FOR",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "SSH"
+      },
+      {
+        "id": "swsh8-6",
+        "cn": "",
+        "cnv": "miss",
+        "set": "",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "FST"
+      },
+      {
+        "id": "sv1-6",
+        "cn": "",
+        "cnv": "miss",
+        "set": "",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "sv1"
+      },
+      {
+        "id": "sv3-6",
+        "cn": "",
+        "cnv": "miss",
+        "set": "",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "sv3"
+      },
+      {
+        "id": "sv4pt5-6",
+        "cn": "",
+        "cnv": "miss",
+        "set": "",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "sv4pt5"
+      },
+      {
+        "id": "sv8-6",
+        "cn": "",
+        "cnv": "miss",
+        "set": "SEE",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "SSP"
+      },
+      {
+        "id": "sv1-258",
+        "cn": "",
+        "cnv": "miss",
+        "set": "",
+        "sv": "miss",
+        "truthCN": "258",
+        "truthSet": "sv1"
+      },
+      {
+        "id": "sv3-230",
+        "cn": "",
+        "cnv": "miss",
+        "set": "",
+        "sv": "miss",
+        "truthCN": "230",
+        "truthSet": "sv3"
+      },
+      {
+        "id": "sv8-252",
+        "cn": "",
+        "cnv": "miss",
+        "set": "",
+        "sv": "miss",
+        "truthCN": "252",
+        "truthSet": "SSP"
+      },
+      {
+        "id": "swsh8-284",
+        "cn": "",
+        "cnv": "miss",
+        "set": "",
+        "sv": "miss",
+        "truthCN": "284",
+        "truthSet": "FST"
+      },
+      {
+        "id": "sm12-271",
+        "cn": "",
+        "cnv": "miss",
+        "set": "",
+        "sv": "miss",
+        "truthCN": "271",
+        "truthSet": "CEC"
+      },
+      {
+        "id": "xy5-164",
+        "cn": "",
+        "cnv": "miss",
+        "set": "",
+        "sv": "miss",
+        "truthCN": "164",
+        "truthSet": "PRC"
+      },
+      {
+        "id": "ecard2-H1",
+        "cn": "",
+        "cnv": "miss",
+        "set": "",
+        "sv": "miss",
+        "truthCN": "H1",
+        "truthSet": "AQ"
+      },
+      {
+        "id": "ecard2-H2",
+        "cn": "",
+        "cnv": "miss",
+        "set": "PER",
+        "sv": "miss",
+        "truthCN": "H2",
+        "truthSet": "AQ"
+      }
+    ]
+  },
+  "GPT-4o-mini": {
+    "cn": {
+      "exact": 18,
+      "near": 0,
+      "miss": 11
+    },
+    "set": {
+      "exact": 2,
+      "near": 3,
+      "miss": 24
+    },
+    "avgMs": 1688,
+    "detail": [
+      {
+        "id": "base1-6",
+        "cn": "6/102",
+        "cnv": "exact",
+        "set": "1",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "BS"
+      },
+      {
+        "id": "gym1-6",
+        "cn": "6/132",
+        "cnv": "exact",
+        "set": "1",
+        "sv": "near",
+        "truthCN": "6",
+        "truthSet": "G1"
+      },
+      {
+        "id": "neo1-6",
+        "cn": "6/111",
+        "cnv": "exact",
+        "set": "1",
+        "sv": "near",
+        "truthCN": "6",
+        "truthSet": "N1"
+      },
+      {
+        "id": "ecard1-6",
+        "cn": "6/165",
+        "cnv": "exact",
+        "set": "1",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "EX"
+      },
+      {
+        "id": "ex1-6",
+        "cn": "6/109",
+        "cnv": "exact",
+        "set": "EX",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "RS"
+      },
+      {
+        "id": "ex7-6",
+        "cn": "6/109",
+        "cnv": "exact",
+        "set": "3C1",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "TRR"
+      },
+      {
+        "id": "dp1-6",
+        "cn": "6/130",
+        "cnv": "exact",
+        "set": "DP",
+        "sv": "exact",
+        "truthCN": "6",
+        "truthSet": "DP"
+      },
+      {
+        "id": "pl1-6",
+        "cn": "27/130",
+        "cnv": "miss",
+        "set": "DP",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "PL"
+      },
+      {
+        "id": "hgss1-6",
+        "cn": "6/123",
+        "cnv": "exact",
+        "set": "HGSS",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "HS"
+      },
+      {
+        "id": "bw1-6",
+        "cn": "6/114",
+        "cnv": "exact",
+        "set": "BW",
+        "sv": "near",
+        "truthCN": "6",
+        "truthSet": "BLW"
+      },
+      {
+        "id": "bw7-6",
+        "cn": "6/149",
+        "cnv": "exact",
+        "set": "SV3",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "BCR"
+      },
+      {
+        "id": "xy1-6",
+        "cn": "6/146",
+        "cnv": "exact",
+        "set": "SV3",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "XY"
+      },
+      {
+        "id": "xy5-6",
+        "cn": "6/160",
+        "cnv": "exact",
+        "set": "XY",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "PRC"
+      },
+      {
+        "id": "sm1-6",
+        "cn": "",
+        "cnv": "miss",
+        "set": "",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "SUM"
+      },
+      {
+        "id": "sm12-6",
+        "cn": "6/236",
+        "cnv": "exact",
+        "set": "SM",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "CEC"
+      },
+      {
+        "id": "swsh1-6",
+        "cn": "006/202",
+        "cnv": "exact",
+        "set": "D",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "SSH"
+      },
+      {
+        "id": "swsh8-6",
+        "cn": "006/264",
+        "cnv": "exact",
+        "set": "E",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "FST"
+      },
+      {
+        "id": "sv1-6",
+        "cn": "",
+        "cnv": "miss",
+        "set": "",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "sv1"
+      },
+      {
+        "id": "sv3-6",
+        "cn": "006/197",
+        "cnv": "exact",
+        "set": "OBF",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "sv3"
+      },
+      {
+        "id": "sv4pt5-6",
+        "cn": "",
+        "cnv": "miss",
+        "set": "",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "sv4pt5"
+      },
+      {
+        "id": "sv8-6",
+        "cn": "",
+        "cnv": "miss",
+        "set": "",
+        "sv": "miss",
+        "truthCN": "6",
+        "truthSet": "SSP"
+      },
+      {
+        "id": "sv1-258",
+        "cn": "",
+        "cnv": "miss",
+        "set": "",
+        "sv": "miss",
+        "truthCN": "258",
+        "truthSet": "sv1"
+      },
+      {
+        "id": "sv3-230",
+        "cn": "",
+        "cnv": "miss",
+        "set": "",
+        "sv": "miss",
+        "truthCN": "230",
+        "truthSet": "sv3"
+      },
+      {
+        "id": "sv8-252",
+        "cn": "252/191",
+        "cnv": "exact",
+        "set": "SSP",
+        "sv": "exact",
+        "truthCN": "252",
+        "truthSet": "SSP"
+      },
+      {
+        "id": "swsh8-284",
+        "cn": "",
+        "cnv": "miss",
+        "set": "",
+        "sv": "miss",
+        "truthCN": "284",
+        "truthSet": "FST"
+      },
+      {
+        "id": "sm12-271",
+        "cn": "",
+        "cnv": "miss",
+        "set": "",
+        "sv": "miss",
+        "truthCN": "271",
+        "truthSet": "CEC"
+      },
+      {
+        "id": "xy5-164",
+        "cn": "164/160",
+        "cnv": "exact",
+        "set": "XY",
+        "sv": "miss",
+        "truthCN": "164",
+        "truthSet": "PRC"
+      },
+      {
+        "id": "ecard2-H1",
+        "cn": "",
+        "cnv": "miss",
+        "set": "",
+        "sv": "miss",
+        "truthCN": "H1",
+        "truthSet": "AQ"
+      },
+      {
+        "id": "ecard2-H2",
+        "cn": "",
+        "cnv": "miss",
+        "set": "",
+        "sv": "miss",
+        "truthCN": "H2",
+        "truthSet": "AQ"
+      }
+    ]
+  }
+}
