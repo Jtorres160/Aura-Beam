@@ -64,6 +64,58 @@ export class ProviderError extends Error {
  *  empty result, which is what 5.13B fixes. */
 export const PROVIDER_TIMEOUT_MS = 8_000;
 
+// ─── Transient-failure retry (Phase 5.19) ────────────────────────────────────
+// The Pokémon TCG API fails INDIVIDUAL requests at a high rate while staying
+// broadly reachable: a measured burst returned HTTP 500 on ~half of identical
+// requests, with 200s interleaved seconds apart on the same URL. That is not an
+// outage the truth layer should surface to a collector on every scan — it is
+// per-request flakiness that a retry within one scan almost always rides out.
+//
+// The rule this adds sits UNDER the truth layer, not beside it: a request that
+// never got a real answer is retried; a request that DID answer — including a
+// clean zero — is not. So this only ever converts "we couldn't ask" into "we
+// asked and here's the answer". It can never turn a real "not found" into a
+// retry, because a real answer isn't a failure and never enters the loop.
+//
+// Latency is bounded two ways at once, because the two failure shapes are
+// different: fast 500s (~140ms) let many attempts fit under the budget and drive
+// the residual failure rate to ~2%; a true 8s hang consumes the whole budget on
+// its own, so it gets effectively ONE attempt and never stacks 8s + 8s. A
+// healthy request returns on the first attempt and pays nothing.
+
+/** Failure reasons worth retrying: the source didn't give us a real answer.
+ *  bad_query (our malformed question), not_configured (missing creds) and
+ *  unexpected (deterministic malformed JSON) are excluded — a retry re-sends the
+ *  same doomed request. */
+const RETRYABLE_REASONS: ReadonlySet<ProviderFailureReason> = new Set([
+  "timeout",
+  "http_error",
+  "network",
+  "rate_limited",
+]);
+
+/** Total attempts including the first. 5 attempts against ~45% per-request
+ *  failure leaves ~0.45^5 ≈ 1.8% residual. */
+const RETRY_MAX_ATTEMPTS = 5;
+
+/** Wall-clock ceiling for all attempts of one request. Set to the per-request
+ *  timeout on purpose: a single genuine 8s hang exhausts it, so timeouts don't
+ *  get an expensive second 8s attempt, while fast failures leave nearly the
+ *  whole budget for further tries. */
+const RETRY_BUDGET_MS = PROVIDER_TIMEOUT_MS;
+
+/** Base backoff; the delay grows 200 → 400 → 800 → 1000(cap) with jitter.
+ *  Read from env so the test harness can zero it out (see test/register.mjs). */
+const RETRY_BASE_MS = Number(process.env.PROVIDER_RETRY_BASE_MS ?? 200);
+
+function backoffDelay(attempt: number): number {
+  if (RETRY_BASE_MS <= 0) return 0;
+  const exp = Math.min(RETRY_BASE_MS * 2 ** (attempt - 1), 1_000);
+  // Jitter decorrelates the concurrent calls a scan fires at one source, so a
+  // bad instant doesn't retry them all in lockstep into the same bad instant.
+  return exp + Math.floor(Math.random() * RETRY_BASE_MS);
+}
+
 /**
  * Fetch JSON from a card database, converting every non-answer into a
  * classified ProviderError.
@@ -80,6 +132,44 @@ export const PROVIDER_TIMEOUT_MS = 8_000;
  * the honest reading is "it did not answer".
  */
 export async function fetchProviderJson<T = any>(
+  url: string,
+  opts: { headers?: Record<string, string>; emptyStatuses?: number[] } = {},
+): Promise<T | null> {
+  const startedAt = Date.now();
+  let lastError: ProviderError | undefined;
+
+  for (let attempt = 1; attempt <= RETRY_MAX_ATTEMPTS; attempt++) {
+    try {
+      // A real answer — a value OR a null from an emptyStatus — returns straight
+      // through. Only a ProviderError (the source did not answer) reaches catch.
+      return await fetchProviderJsonOnce<T>(url, opts);
+    } catch (err) {
+      if (!(err instanceof ProviderError)) throw err;
+      lastError = err;
+
+      const budgetLeft = RETRY_BUDGET_MS - (Date.now() - startedAt);
+      const retryable = RETRYABLE_REASONS.has(err.reason);
+      const hasAttemptsLeft = attempt < RETRY_MAX_ATTEMPTS;
+      // Stop if it's not worth retrying, we're out of tries, or the budget can't
+      // even fit a backoff. Throwing the LAST error preserves its reason for the
+      // truth layer, so a card is still never called "not found" on a failure.
+      if (!retryable || !hasAttemptsLeft || budgetLeft <= 0) throw err;
+
+      const delay = Math.min(backoffDelay(attempt), budgetLeft);
+      console.warn(
+        `[Provider] ${err.reason} on attempt ${attempt}/${RETRY_MAX_ATTEMPTS} — retrying in ${delay}ms: ${url}`,
+      );
+      if (delay > 0) await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+
+  // Unreachable: the loop either returns an answer or throws lastError above.
+  throw lastError ?? new ProviderError("unexpected", "Retry loop exited without a result");
+}
+
+/** One attempt: fetch + classify. Throws ProviderError on any non-answer; the
+ *  retry wrapper above decides whether that failure is worth another try. */
+async function fetchProviderJsonOnce<T = any>(
   url: string,
   opts: { headers?: Record<string, string>; emptyStatuses?: number[] } = {},
 ): Promise<T | null> {
