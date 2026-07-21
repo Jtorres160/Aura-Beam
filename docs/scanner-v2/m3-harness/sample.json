@@ -1,0 +1,234 @@
+[
+  {
+    "externalId": "base1-6",
+    "setCode": "BS",
+    "collectorNumber": "6",
+    "imageUrl": "https://images.pokemontcg.io/base1/6_hires.png",
+    "era": "WOTC 1999 Base",
+    "kind": "typical"
+  },
+  {
+    "externalId": "gym1-6",
+    "setCode": "G1",
+    "collectorNumber": "6",
+    "imageUrl": "https://images.pokemontcg.io/gym1/6_hires.png",
+    "era": "WOTC 2000 Gym",
+    "kind": "typical"
+  },
+  {
+    "externalId": "neo1-6",
+    "setCode": "N1",
+    "collectorNumber": "6",
+    "imageUrl": "https://images.pokemontcg.io/neo1/6_hires.png",
+    "era": "WOTC 2000 Neo",
+    "kind": "typical"
+  },
+  {
+    "externalId": "ecard1-6",
+    "setCode": "EX",
+    "collectorNumber": "6",
+    "imageUrl": "https://images.pokemontcg.io/ecard1/6_hires.png",
+    "era": "2002 e-Card",
+    "kind": "typical"
+  },
+  {
+    "externalId": "ex1-6",
+    "setCode": "RS",
+    "collectorNumber": "6",
+    "imageUrl": "https://images.pokemontcg.io/ex1/6_hires.png",
+    "era": "2003 EX Ruby&Sapphire",
+    "kind": "typical"
+  },
+  {
+    "externalId": "ex7-6",
+    "setCode": "TRR",
+    "collectorNumber": "6",
+    "imageUrl": "https://images.pokemontcg.io/ex7/6_hires.png",
+    "era": "2005 EX",
+    "kind": "typical"
+  },
+  {
+    "externalId": "dp1-6",
+    "setCode": "DP",
+    "collectorNumber": "6",
+    "imageUrl": "https://images.pokemontcg.io/dp1/6_hires.png",
+    "era": "2007 Diamond&Pearl",
+    "kind": "typical"
+  },
+  {
+    "externalId": "pl1-6",
+    "setCode": "PL",
+    "collectorNumber": "6",
+    "imageUrl": "https://images.pokemontcg.io/pl1/6_hires.png",
+    "era": "2009 Platinum",
+    "kind": "typical"
+  },
+  {
+    "externalId": "hgss1-6",
+    "setCode": "HS",
+    "collectorNumber": "6",
+    "imageUrl": "https://images.pokemontcg.io/hgss1/6_hires.png",
+    "era": "2010 HGSS",
+    "kind": "typical"
+  },
+  {
+    "externalId": "bw1-6",
+    "setCode": "BLW",
+    "collectorNumber": "6",
+    "imageUrl": "https://images.pokemontcg.io/bw1/6_hires.png",
+    "era": "2011 Black&White",
+    "kind": "typical"
+  },
+  {
+    "externalId": "bw7-6",
+    "setCode": "BCR",
+    "collectorNumber": "6",
+    "imageUrl": "https://images.pokemontcg.io/bw7/6_hires.png",
+    "era": "2013 BW Boundaries",
+    "kind": "typical"
+  },
+  {
+    "externalId": "xy1-6",
+    "setCode": "XY",
+    "collectorNumber": "6",
+    "imageUrl": "https://images.pokemontcg.io/xy1/6_hires.png",
+    "era": "2014 XY",
+    "kind": "typical"
+  },
+  {
+    "externalId": "xy5-6",
+    "setCode": "PRC",
+    "collectorNumber": "6",
+    "imageUrl": "https://images.pokemontcg.io/xy5/6_hires.png",
+    "era": "2015 Primal Clash",
+    "kind": "typical"
+  },
+  {
+    "externalId": "sm1-6",
+    "setCode": "SUM",
+    "collectorNumber": "6",
+    "imageUrl": "https://images.pokemontcg.io/sm1/6_hires.png",
+    "era": "2017 Sun&Moon",
+    "kind": "typical"
+  },
+  {
+    "externalId": "sm12-6",
+    "setCode": "CEC",
+    "collectorNumber": "6",
+    "imageUrl": "https://images.pokemontcg.io/sm12/6_hires.png",
+    "era": "2019 Cosmic Eclipse",
+    "kind": "typical"
+  },
+  {
+    "externalId": "swsh1-6",
+    "setCode": "SSH",
+    "collectorNumber": "6",
+    "imageUrl": "https://images.pokemontcg.io/swsh1/6_hires.png",
+    "era": "2020 Sword&Shield",
+    "kind": "typical"
+  },
+  {
+    "externalId": "swsh8-6",
+    "setCode": "FST",
+    "collectorNumber": "6",
+    "imageUrl": "https://images.pokemontcg.io/swsh8/6_hires.png",
+    "era": "2021 Fusion Strike",
+    "kind": "typical"
+  },
+  {
+    "externalId": "sv1-6",
+    "setCode": "sv1",
+    "collectorNumber": "6",
+    "imageUrl": "https://images.pokemontcg.io/sv1/6_hires.png",
+    "era": "2023 Scarlet&Violet",
+    "kind": "typical"
+  },
+  {
+    "externalId": "sv3-6",
+    "setCode": "sv3",
+    "collectorNumber": "6",
+    "imageUrl": "https://images.pokemontcg.io/sv3/6_hires.png",
+    "era": "2023 Obsidian Flames",
+    "kind": "typical"
+  },
+  {
+    "externalId": "sv4pt5-6",
+    "setCode": "sv4pt5",
+    "collectorNumber": "6",
+    "imageUrl": "https://images.pokemontcg.io/sv4pt5/6_hires.png",
+    "era": "2024 Paldean Fates",
+    "kind": "typical"
+  },
+  {
+    "externalId": "sv8-6",
+    "setCode": "SSP",
+    "collectorNumber": "6",
+    "imageUrl": "https://images.pokemontcg.io/sv8/6_hires.png",
+    "era": "2024 Surging Sparks",
+    "kind": "typical"
+  },
+  {
+    "externalId": "sv1-258",
+    "setCode": "sv1",
+    "collectorNumber": "258",
+    "imageUrl": "https://images.pokemontcg.io/sv1/258_hires.png",
+    "era": "sv1 (secret/high#)",
+    "kind": "secret"
+  },
+  {
+    "externalId": "sv3-230",
+    "setCode": "sv3",
+    "collectorNumber": "230",
+    "imageUrl": "https://images.pokemontcg.io/sv3/230_hires.png",
+    "era": "sv3 (secret/high#)",
+    "kind": "secret"
+  },
+  {
+    "externalId": "sv8-252",
+    "setCode": "SSP",
+    "collectorNumber": "252",
+    "imageUrl": "https://images.pokemontcg.io/sv8/252_hires.png",
+    "era": "sv8 (secret/high#)",
+    "kind": "secret"
+  },
+  {
+    "externalId": "swsh8-284",
+    "setCode": "FST",
+    "collectorNumber": "284",
+    "imageUrl": "https://images.pokemontcg.io/swsh8/284_hires.png",
+    "era": "swsh8 (secret/high#)",
+    "kind": "secret"
+  },
+  {
+    "externalId": "sm12-271",
+    "setCode": "CEC",
+    "collectorNumber": "271",
+    "imageUrl": "https://images.pokemontcg.io/sm12/271_hires.png",
+    "era": "sm12 (secret/high#)",
+    "kind": "secret"
+  },
+  {
+    "externalId": "xy5-164",
+    "setCode": "PRC",
+    "collectorNumber": "164",
+    "imageUrl": "https://images.pokemontcg.io/xy5/164_hires.png",
+    "era": "xy5 (secret/high#)",
+    "kind": "secret"
+  },
+  {
+    "externalId": "ecard2-H1",
+    "setCode": "AQ",
+    "collectorNumber": "H1",
+    "imageUrl": "https://images.pokemontcg.io/ecard2/H1_hires.png",
+    "era": "alphanumeric collector#",
+    "kind": "special"
+  },
+  {
+    "externalId": "ecard2-H2",
+    "setCode": "AQ",
+    "collectorNumber": "H2",
+    "imageUrl": "https://images.pokemontcg.io/ecard2/H2_hires.png",
+    "era": "alphanumeric collector#",
+    "kind": "special"
+  }
+]

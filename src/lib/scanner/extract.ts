@@ -6,6 +6,7 @@
 import OpenAI from "openai";
 import { reading, SET_CN_CONFIDENCE, type FieldReading } from "@/lib/scanner/evidence";
 import { throttleVision } from "@/lib/scanner/vision-throttle";
+import { cropBottomStrip } from "@/lib/scanner/crop-strip";
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY || "dummy_build_key",
@@ -46,6 +47,15 @@ function logOcrCost(pass: string, imageUrl: string, detail: string, usage: any):
 // retries only fire on failure, never serially on the happy path.
 const OCR_TIMEOUT_MS = 15_000;
 const OCR_MAX_RETRIES = 2;
+
+// Image-detail for the strip-read (Phase M3-B). The pass now sends a tight
+// bottom-band crop, not the whole card. Measured against M3-A's 29-card ground
+// truth (docs/scanner-v2/m3-harness): crop + "high" LIFTS collector-number
+// accuracy 62%→79% (it stops the model bailing to empty on full-art secret
+// rares) AND cuts prompt tokens ~23% (16.5k→12.7k) and latency (1688→1315ms).
+// "auto" on the already-small crop collapses accuracy to 24% (the model
+// down-samples the strip away), so "high" stays. See docs/scanner-v2/M3-B-report.md.
+const STRIP_DETAIL = "high" as const;
 
 /** The fields OCR reads off a card, trimmed and normalized to strings. */
 export interface OcrFields {
@@ -161,6 +171,11 @@ export interface StripReadings {
 export async function extractBottomStrip(imageUrl: string): Promise<StripReadings> {
   try {
     console.log("[Scanner] Step 1c: Strip OCR — reading the set/collector strip...");
+    // M3-B: crop to the bottom set/CN band before the read. cropBottomStrip is
+    // best-effort — on any failure it returns the original image unchanged, so
+    // this line can only ever shrink the payload, never break the call.
+    const stripImage = await cropBottomStrip(imageUrl);
+    const cropped = stripImage !== imageUrl;
     const aiResponse = await throttleVision(() => openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
@@ -175,14 +190,14 @@ If the bottom strip is not legible, return every value as "". Return ONLY raw JS
         },
         {
           role: "user",
-          content: [{ type: "image_url", image_url: { url: imageUrl, detail: "high" } }]
+          content: [{ type: "image_url", image_url: { url: stripImage, detail: STRIP_DETAIL } }]
         }
       ],
       max_tokens: 80,
       temperature: 0.0,
     }, { timeout: OCR_TIMEOUT_MS, maxRetries: OCR_MAX_RETRIES }));
 
-    logOcrCost("strip", imageUrl, "high", aiResponse.usage);
+    logOcrCost(cropped ? "strip-crop" : "strip-full", stripImage, STRIP_DETAIL, aiResponse.usage);
     const raw = aiResponse.choices[0]?.message?.content || "{}";
     console.log("[Scanner] Strip OCR response:", raw);
 
