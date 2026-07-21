@@ -26,7 +26,11 @@ const CRON_SECRET = process.env.CRON_SECRET || "";
  * manually from the admin dashboard).
  */
 export async function GET(req: NextRequest) {
-  // Allow admin dashboard calls without secret, but protect external triggers
+  // Cron-only endpoint. When CRON_SECRET is configured, a matching Bearer token
+  // is required; when it is unset the guard is skipped (conditional pattern),
+  // which is why CRON_SECRET must be set in every deployed environment. No
+  // in-app/admin-dashboard caller triggers this today — it is invoked solely by
+  // the Vercel cron schedule in vercel.json.
   const authHeader = req.headers.get("authorization");
   if (CRON_SECRET && authHeader !== `Bearer ${CRON_SECRET}`) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
