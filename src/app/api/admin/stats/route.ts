@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/auth";
+import { checkAdmin } from "@/lib/admin-auth";
 // The scheduler's source of truth. Imported rather than retyped so a schedule
 // shown here cannot drift from the schedule Vercel actually runs.
 import vercelConfig from "../../../../../vercel.json";
@@ -79,9 +80,12 @@ async function checkDatabase(): Promise<HealthCheck> {
 export async function GET() {
   try {
     const session = await auth();
-    // In a real app, verify if session.user.role === "ADMIN"
-    if (!session?.user?.id) {
-      return NextResponse.json({ success: false, message: "Unauthorized" }, { status: 401 });
+    // Admin-only. A signed-in non-admin gets 403 (authenticated but not
+    // permitted), not 401 — see checkAdmin. Previously this only checked that
+    // *someone* was logged in, so any user could read platform-wide stats.
+    const gate = checkAdmin(session);
+    if (!gate.ok) {
+      return NextResponse.json({ success: false, message: gate.message }, { status: gate.status });
     }
 
     // Probed independently of the counts below so that a database failure
