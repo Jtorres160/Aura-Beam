@@ -28,6 +28,14 @@
 // "not found" rather than claim it less loudly.
 
 import { searchPokemonCards, searchPokemonBySetAndNumber, fetchAllPokemonPrintings, formatPokemonCard, fetchPokemonCardById } from "@/lib/services/pokemon";
+import {
+  CATALOG_LOCAL_ENABLED,
+  catalogSearchBySetAndNumber,
+  catalogFetchAllPrintings,
+  catalogSearchByName,
+  catalogFetchCardById,
+  type CatalogDb,
+} from "@/lib/services/pokemon-catalog";
 import { searchScryfallCardByName, fetchAllMTGPrintings, formatScryfallCard, searchScryfallBySetAndCollector, searchScryfallDeepFallback, fetchScryfallCardById } from "@/lib/services/scryfall";
 import { searchYugiohCards, getYugiohPrintings, formatYugiohCard, fetchYugiohCardById } from "@/lib/services/yugioh";
 import type { CandidatePrinting } from "@/lib/scanner/evidence";
@@ -359,6 +367,19 @@ async function lookupBySource(source: CandidateSourceId, externalId: string): Pr
     return card ? formatScryfallCard(card) : null;
   }
   if (source === "pokemon") {
+    // ─── Local catalog first (Scanner V2 · M-CATALOG · M4) ──────────────
+    // A catalog hit is the authoritative by-id answer without touching the live
+    // API. Fail-open: a catalog miss (null) OR any local error falls through to
+    // the live lookup. The error is swallowed HERE on purpose — an unhandled
+    // throw would surface up in fetchPrintingById() as provider_unavailable,
+    // which a mere local-DB hiccup must never do while the live API is reachable.
+    if (CATALOG_LOCAL_ENABLED) {
+      const local = await catalogFetchCardById(externalId).catch((err) => {
+        console.warn("[Scanner] Local catalog by-id lookup failed — falling back to live API:", (err as Error)?.message);
+        return null;
+      });
+      if (local) return local;
+    }
     const card = await fetchPokemonCardById(externalId);
     return card ? formatPokemonCard(card) : null;
   }
@@ -453,7 +474,92 @@ async function fetchMTGPrintings(cardName: string, setCode: string, collectorNum
   return classifyCandidateOutcome([], null, undefined, [scryfall.status()]);
 }
 
+/**
+ * Candidate generation for Pokémon. Local-first when CATALOG_LOCAL_ENABLED
+ * (Scanner V2 · M-CATALOG · M4): consult our own catalog_cards, and only on a
+ * total local miss OR a local error fall through to the live API path below.
+ *
+ * With the flag OFF this is a pass-through to fetchPokemonPrintingsLive — the
+ * exact former body — so behavior is byte-identical to before the repoint.
+ */
 async function fetchPokemonPrintings(cardName: string, setCode?: string, collectorNumber?: string): Promise<CandidateOutcome> {
+  if (CATALOG_LOCAL_ENABLED) {
+    const local = await fetchPokemonPrintingsLocal(cardName, setCode, collectorNumber);
+    // A CandidateOutcome means the catalog actually answered with a card; null
+    // means a local miss/error — defer to the live API rather than assert absence.
+    if (local) return local;
+  }
+  return fetchPokemonPrintingsLive(cardName, setCode, collectorNumber);
+}
+
+/**
+ * Local-catalog mirror of fetchPokemonPrintingsLive's tiering, reading
+ * catalog_cards instead of api.pokemontcg.io (Scanner V2 · M-CATALOG · M4).
+ *
+ * FAIL-OPEN — returns null, NOT a no_candidates outcome, for BOTH:
+ *   • a total local miss (the card isn't in our catalog yet — e.g. a set
+ *     released since the last sync), and
+ *   • ANY query error.
+ * Null tells fetchPokemonPrintings to fall through to the live API, so a local
+ * miss degrades to exactly today's behavior, never to a worse one. A
+ * CandidateOutcome is returned ONLY when the catalog produced a card; that
+ * outcome is shape-identical to the live path's because both converge on
+ * formatted CandidatePrintings.
+ *
+ * The decision tiering below is a deliberate line-for-line copy of the live
+ * function so a local hit ranks candidates exactly as the live path would; only
+ * the data source differs. `db` is injectable so the M4 invariant test can drive
+ * it without touching the production catalog.
+ */
+export async function fetchPokemonPrintingsLocal(
+  cardName: string,
+  setCode?: string,
+  collectorNumber?: string,
+  db?: CatalogDb,
+): Promise<CandidateOutcome | null> {
+  try {
+    // The catalog is our own data: a read that returns "completed" the source.
+    const pokemon = new SourceTracker("pokemon");
+
+    let directMatch: CandidatePrinting | null = null;
+    if (setCode && collectorNumber) {
+      const hits = await catalogSearchBySetAndNumber(setCode, collectorNumber, db);
+      if (hits.length === 1) {
+        directMatch = hits[0];
+        if (nameMatchesOcr(cardName, directMatch.name)) {
+          return classifyCandidateOutcome([], directMatch, "set-cn-verified", [pokemon.status()]);
+        }
+      }
+    }
+
+    const printings = await catalogFetchAllPrintings(cardName, db);
+    if (printings.length > 0) {
+      return classifyCandidateOutcome(printings, null, undefined, [pokemon.status()]);
+    }
+
+    // Name search empty → an unverified set/number hit is the best guess (same
+    // ordering as the live path: this returns before the fuzzy fallback).
+    if (directMatch) {
+      return classifyCandidateOutcome([], directMatch, "fallback-guess", [pokemon.status()]);
+    }
+
+    const results = await catalogSearchByName(cardName, db);
+    const exactMatch = results.find((c) => c.name?.toLowerCase() === cardName.toLowerCase());
+    const card = exactMatch || results[0];
+    if (card) {
+      return classifyCandidateOutcome([], card, "fallback-guess", [pokemon.status()]);
+    }
+
+    // Total local miss. The catalog simply doesn't have it (yet). This is NOT a
+    // "not found" — defer the verdict to the live API rather than assert absence.
+    return null;
+  } catch (err) {
+    console.warn("[Scanner] Local catalog candidate lookup failed — falling back to live API:", (err as Error)?.message);
+    return null;
+  }
+}
+
+async function fetchPokemonPrintingsLive(cardName: string, setCode?: string, collectorNumber?: string): Promise<CandidateOutcome> {
   const pokemon = new SourceTracker("pokemon");
 
   // ─── Set+number lookup — the Pokemon mirror of the MTG path ─────
