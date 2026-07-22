@@ -450,3 +450,51 @@ model CardFingerprint {
   @@index([game, setCode, collectorNumber])
   @@map("card_fingerprints")
 }
+
+// ─── Local card catalog (Scanner V2 · M-CATALOG) ────────────────────────────
+// Our own copy of the Pokémon card catalog, so candidate generation and the
+// selection re-fetch no longer depend on api.pokemontcg.io being up (see
+// docs/scanner-v2/M-CATALOG-investigation.md). Columns are exactly the fields
+// formatPokemonCard() produces, so a catalog row maps 1:1 to a CandidatePrinting.
+//
+// externalId is the shared join key across CatalogCard, CardFingerprint, and
+// Card. This table is REFERENCE data — read-only from the app's perspective and
+// populated by scripts/build-catalog.mjs; it deliberately carries none of Card's
+// user relations, which is why it is a separate table and not an extension of
+// Card. Unlike CardFingerprint it uses only native column types, so it is fully
+// expressible here and read through the typed Prisma client (no raw SQL).
+//
+// Every field except the price group is static. Prices are seeded at import and
+// refreshed by the M5 cron; a null/stale price never fails a scan (truth boundary).
+model CatalogCard {
+  id              String   @id @default(cuid())
+
+  externalId      String   @unique            // Pokémon TCG API card id, e.g. "sv3-125"
+  game            String   @default("POKEMON")
+
+  // Static identity/resolution fields (formatPokemonCard output).
+  name            String
+  setName         String
+  setCode         String?                      // set.ptcgoCode ("SV3") or set.id fallback
+  setPrintedSize  Int?                         // set.printedTotal ("/197")
+  collectorNumber String?                      // card.number
+  rarity          String   @default("Common")
+  imageUrl        String?                      // images.large || images.small
+  thumbnailUrl    String?                      // images.small
+
+  // Live price group — seeded at import, owned by the M5 refresh cron.
+  marketPrice     Float?
+  lowPrice        Float?
+  midPrice        Float?
+  highPrice       Float?
+  priceUpdatedAt  DateTime?
+
+  // Provenance / staleness for sync (mirrors CardFingerprint.sourceUpdatedAt).
+  sourceUpdatedAt DateTime?                    // set.updatedAt at import
+  importedAt      DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([game, setCode, collectorNumber])   // set/CN candidate lookup
+  @@index([game, name])                        // name candidate lookup
+  @@map("catalog_cards")
+}
