@@ -378,7 +378,13 @@ async function lookupBySource(source: CandidateSourceId, externalId: string): Pr
         console.warn("[Scanner] Local catalog by-id lookup failed — falling back to live API:", (err as Error)?.message);
         return null;
       });
-      if (local) return local;
+      // Explicit local-serve marker (M6): makes "which path served this by-id
+      // re-fetch" directly verifiable in logs, since both paths label the source
+      // "pokemon". No line here ⇒ a miss/error fell through to the live API below.
+      if (local) {
+        console.log(`[Scanner] served Pokémon by-id from local catalog (${externalId})`);
+        return local;
+      }
     }
     const card = await fetchPokemonCardById(externalId);
     return card ? formatPokemonCard(card) : null;
@@ -487,7 +493,13 @@ async function fetchPokemonPrintings(cardName: string, setCode?: string, collect
     const local = await fetchPokemonPrintingsLocal(cardName, setCode, collectorNumber);
     // A CandidateOutcome means the catalog actually answered with a card; null
     // means a local miss/error — defer to the live API rather than assert absence.
-    if (local) return local;
+    // Explicit local-serve marker (M6): "served ... from local catalog" makes the
+    // path directly verifiable in logs (both paths label the source "pokemon").
+    // No line ⇒ a local miss/error fell through to the live API below.
+    if (local) {
+      console.log(`[Scanner] served Pokémon candidates from local catalog ("${cardName}"${setCode ? ` ${setCode}` : ""}${collectorNumber ? ` #${collectorNumber}` : ""})`);
+      return local;
+    }
   }
   return fetchPokemonPrintingsLive(cardName, setCode, collectorNumber);
 }
