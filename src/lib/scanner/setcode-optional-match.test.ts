@@ -212,6 +212,27 @@ describe("fetchPokemonPrintingsLocal — the new tier in context", () => {
     }
   });
 
+  test("flag OFF ⇒ resolveByNameNumberTotal is never CALLED, not called-and-discarded", async () => {
+    // The distinction is not pedantic. A call whose RESULT is discarded under a
+    // flag check is still a live production query on every Pokémon scan, buying
+    // nothing — that is materially different from "off", and it is not what
+    // flag-off means anywhere else in this codebase.
+    //
+    // Proven by call log rather than by reading the `&&`: the new tier's query
+    // is the only one that carries a setPrintedSize predicate, so its absence
+    // from the log is proof the code path was never entered.
+    const db = fakeDb([vulpix]);
+    await fetchPokemonPrintingsLocal("Vulpix", "ME01", "138/132", db);
+    const tierQueries = db.calls.filter((w: any) => w?.setPrintedSize !== undefined);
+
+    if (SETCODE_OPTIONAL_MATCH_ENABLED) {
+      assert.ok(tierQueries.length > 0, "flag on ⇒ the tier must actually query");
+    } else {
+      assert.equal(tierQueries.length, 0, "flag off ⇒ the tier must issue ZERO queries");
+      assert.ok(db.calls.length > 0, "…while the existing path still queried as it does today");
+    }
+  });
+
   test("a set/CN direct hit still outranks the new tier", async () => {
     // set-cn-verified (0.97) is stronger and already trusted; the new tier must
     // not shadow it when the set code happened to be right.
