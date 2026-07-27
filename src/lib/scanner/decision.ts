@@ -17,6 +17,7 @@ export { nameMatchesOcr } from "@/lib/scanner/evidence";
 
 export type MatchMethod =
   | "set-cn-verified"    // set+collector lookup whose name also matches the OCR name
+  | "name-cn-total-verified" // name + collector number + printed total resolved to exactly one printing
   | "single-printing"    // the identified card has exactly one printing
   | "single-art-group"   // evidence narrowed candidates to one printing without vision
   | "art-group-vision"   // vision picked an art group; that group has one printing
@@ -25,6 +26,17 @@ export type MatchMethod =
 
 export const METHOD_CONFIDENCE: Record<MatchMethod, Confidence> = {
   "set-cn-verified": 0.97,
+  // Deliberately BELOW set-cn-verified, and below ACCEPT_THRESHOLD_AUTOSCAN.
+  //
+  // As a DISCRIMINATOR the two are near-equals: measured over all 20,479
+  // Pokémon catalog rows, name+CN+printedTotal resolves to exactly one printing
+  // for 99.8% of keys (41 ambiguous keys, worst collision 3) against 100.0% for
+  // setCode+CN. What is NOT equal is how well we know the SENSOR: the set-code
+  // read has been measured against ground truth, this key's has not been, at
+  // any meaningful sample size. So it auto-accepts in interactive scanning
+  // (where a review screen still stands between it and the collection) and
+  // stays out of bulk auto-save until real hit-rate data exists.
+  "name-cn-total-verified": 0.9,
   "single-printing": 0.9,
   "single-art-group": 0.85,
   // A confident vision match to a single UNIQUE-art printing auto-accepts in
