@@ -31,6 +31,7 @@ import { searchPokemonCards, searchPokemonBySetAndNumber, fetchAllPokemonPrintin
 import {
   CATALOG_LOCAL_ENABLED,
   catalogSearchBySetAndNumber,
+  catalogSearchByNumberAndPrintedTotal,
   catalogFetchAllPrintings,
   catalogSearchByName,
   catalogFetchCardById,
@@ -38,9 +39,15 @@ import {
 } from "@/lib/services/pokemon-catalog";
 import { searchScryfallCardByName, fetchAllMTGPrintings, formatScryfallCard, searchScryfallBySetAndCollector, searchScryfallDeepFallback, fetchScryfallCardById } from "@/lib/services/scryfall";
 import { searchYugiohCards, getYugiohPrintings, formatYugiohCard, fetchYugiohCardById } from "@/lib/services/yugioh";
-import type { CandidatePrinting } from "@/lib/scanner/evidence";
+import { collectorNumberKey, foldName, type CandidatePrinting } from "@/lib/scanner/evidence";
 import { type MatchMethod, nameMatchesOcr } from "@/lib/scanner/decision";
 import { ProviderError, type ProviderFailureReason } from "@/lib/providers/http";
+
+// ─── Set-code-optional matching (Scanner V2) ────────────────────────────────
+// Off unless explicitly enabled — same discipline as CATALOG_LOCAL_ENABLED and
+// FINGERPRINT_SHADOW_ENABLED. Unset ⇒ resolveByNameNumberTotal() is never
+// consulted and Pokémon candidate generation is byte-identical to today's.
+export const SETCODE_OPTIONAL_MATCH_ENABLED = process.env.SETCODE_OPTIONAL_MATCH_ENABLED === "1";
 
 /** The card databases candidate generation can consult. Deliberately the same
  *  ids the search layer uses (SearchSourceId minus "local"), so a source is
@@ -523,6 +530,87 @@ async function fetchPokemonPrintings(cardName: string, setCode?: string, collect
  * the data source differs. `db` is injectable so the M4 invariant test can drive
  * it without touching the production catalog.
  */
+/**
+ * The printed total in a collector number — the "132" of "138/132".
+ *
+ * Returns null for anything that isn't a positive integer denominator, INCLUDING
+ * a bare "138" with no slash. That null is load-bearing: no total means no key,
+ * and no key means this whole match path stands down rather than guessing one.
+ */
+export function printedTotalFromCollectorNumber(collectorNumber: string): number | null {
+  const denominator = collectorNumber.split("/")[1];
+  if (denominator === undefined) return null;
+  const digits = denominator.trim();
+  if (!/^\d+$/.test(digits)) return null;
+  const total = Number.parseInt(digits, 10);
+  return total > 0 ? total : null;
+}
+
+/**
+ * Resolve a printing from name + collector number + printed total, WITHOUT
+ * gating on the OCR'd set code (Scanner V2 · set-code-optional matching).
+ *
+ * WHY THIS EXISTS. Candidate generation's strong path required the set code to
+ * be right, and it usually isn't: measured against user-selection ground truth,
+ * OCR's set-code read matched 3/14. Worse, it is unfixable by a correction
+ * table — real reads map one printed code to several distinct sets ("SV3" to 4
+ * of them), so there is no function from what OCR saw to the set it meant. Every
+ * card whose set code missed fell through to a 20-wide disambiguation grid even
+ * when the name and number were read perfectly.
+ *
+ * The number pair is the stronger key and it was already being thrown away.
+ * Measured over all 20,479 Pokémon rows in catalog_cards, foldName(name) +
+ * collectorNumberKey + setPrintedSize resolves to exactly one printing for
+ * 99.8% of keys — 41 ambiguous keys in the entire catalog, worst collision 3 —
+ * against 100.0% for the setCode+CN gate it stands beside.
+ *
+ * TRUTH BOUNDARY. This returns a printing or it returns null; it never returns
+ * a guess. Null on: no printed total read, no row at that number/total, no row
+ * whose folded name agrees, or 2+ rows still standing after the set-code
+ * tiebreak. In every one of those cases the caller continues to the existing
+ * all-printings path and the collector sees exactly today's behavior. This is
+ * the property that makes the path safe despite an unmeasured sensor: replayed
+ * over 18 labeled production scans, every hallucinated OCR read (e.g.
+ * "Diggersby 021/198", a card that does not exist) produced NO key match and
+ * fell through — 0 wrong answers, 0 ambiguous.
+ *
+ * SET CODE IS CORROBORATION, NOT A GATE. It is consulted in exactly one place:
+ * breaking a tie among 2+ otherwise-equal candidates (measured to fully
+ * disambiguate all 41 ambiguous keys when correct). A set code that DISAGREES
+ * with an otherwise-unique match is deliberately ignored rather than allowed to
+ * veto it — vetoing on a field that reads correctly 3 times in 14 would
+ * reintroduce the very gate this path exists to remove.
+ */
+export async function resolveByNameNumberTotal(
+  cardName: string,
+  collectorNumber: string,
+  setCode?: string,
+  db?: CatalogDb,
+): Promise<CandidatePrinting | null> {
+  const printedTotal = printedTotalFromCollectorNumber(collectorNumber);
+  if (printedTotal === null) return null;
+
+  const rows = await catalogSearchByNumberAndPrintedTotal(collectorNumber, printedTotal, db);
+
+  // Exact folded-name equality, NOT nameMatchesOcr's edit-distance tolerance.
+  // The 99.8% uniqueness figure above was measured on exact folding; widening
+  // the comparator here would silently invalidate it, so the looser predicate is
+  // left to the set-cn path that was calibrated with it.
+  const folded = foldName(cardName);
+  if (!folded) return null;
+  const named = rows.filter((row) => foldName(row.name) === folded);
+  if (named.length === 1) return named[0];
+  if (named.length === 0) return null;
+
+  // 2+ candidates: the only point where the set code speaks.
+  if (setCode) {
+    const code = setCode.trim().toLowerCase();
+    const corroborated = named.filter((row) => row.setCode?.trim().toLowerCase() === code);
+    if (corroborated.length === 1) return corroborated[0];
+  }
+  return null;
+}
+
 export async function fetchPokemonPrintingsLocal(
   cardName: string,
   setCode?: string,
@@ -541,6 +629,17 @@ export async function fetchPokemonPrintingsLocal(
         if (nameMatchesOcr(cardName, directMatch.name)) {
           return classifyCandidateOutcome([], directMatch, "set-cn-verified", [pokemon.status()]);
         }
+      }
+    }
+
+    // Set-code-optional tier. Sits BELOW set-cn-verified (which is stronger and
+    // already trusted) and ABOVE the all-printings grid — the grid is exactly
+    // what this exists to skip when the number pair already names one printing.
+    if (SETCODE_OPTIONAL_MATCH_ENABLED && collectorNumber) {
+      const resolved = await resolveByNameNumberTotal(cardName, collectorNumber, setCode, db);
+      if (resolved) {
+        console.log(`[Scanner] Pokémon resolved by name+number+printed-total: "${resolved.name}" (${resolved.setName} ${resolved.collectorNumber}/${resolved.setPrintedSize})`);
+        return classifyCandidateOutcome([], resolved, "name-cn-total-verified", [pokemon.status()]);
       }
     }
 

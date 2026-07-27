@@ -147,6 +147,50 @@ export async function catalogSearchBySetAndNumber(
 }
 
 /**
+ * Candidates sharing a collector number AND a set printed total — the "138" and
+ * the "132" of a printed "138/132" (Scanner V2 · set-code-optional matching).
+ *
+ * Name is deliberately NOT part of the SQL. The comparable name form is
+ * foldName() (accent/punctuation/case stripped), which Postgres cannot express,
+ * and a `name equals insensitive` predicate would silently drop the exact OCR
+ * noise foldName exists to absorb ("Poke Ball" vs "Poké Ball"). So the query
+ * narrows on the two numeric fields and the CALLER folds names over the handful
+ * of rows that come back — one folding function for the whole codebase, as
+ * foldName's own docstring requires.
+ *
+ * Cheap despite having no dedicated index: the planner serves this from the
+ * existing [game, setCode, collectorNumber] index by scanning on
+ * game+collectorNumber and filtering setPrintedSize (measured on production:
+ * 6.9ms execution, ~130 rows examined for a common number). `take` is a safety
+ * ceiling well above the worst real collision — the largest CN+printedTotal
+ * group in the entire catalog is 10 rows.
+ *
+ * Collector-number tolerance matches catalogSearchBySetAndNumber(): both the
+ * zero-padded and bare forms ("021" ⇄ "21").
+ */
+export async function catalogSearchByNumberAndPrintedTotal(
+  collectorNumber: string,
+  printedTotal: number,
+  db: CatalogDb = defaultDb,
+): Promise<CandidatePrinting[]> {
+  const num = collectorNumber.split("/")[0].trim();
+  const bare = num.replace(/^0+(?=\d)/, "");
+  const numbers = bare !== num ? [num, bare] : [num];
+  const rows = await dbRetry(() =>
+    db.catalogCard.findMany({
+      where: {
+        game: "POKEMON",
+        collectorNumber: { in: numbers },
+        setPrintedSize: printedTotal,
+      },
+      select: CATALOG_SELECT,
+      take: 25,
+    }),
+  );
+  return rows.map(formatCatalogCard);
+}
+
+/**
  * Local mirror of fetchAllPokemonPrintings(): every printing of an exact card
  * name, for visual comparison. Exact (case-insensitive) name match, capped at 20
  * — same contract as the live call, INCLUDING its newest-first ordering.
