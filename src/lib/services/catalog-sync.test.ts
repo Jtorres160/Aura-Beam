@@ -22,6 +22,7 @@ import {
   setNeedsSync,
   findSetSyncState,
   classifyFailure,
+  parseSetReleaseDate,
   type CatalogSyncDb,
   type CatalogSetMeta,
 } from "@/lib/services/catalog-sync";
@@ -177,6 +178,26 @@ describe("findSetSyncState — maps a catalog row to existence + newest timestam
       },
     };
     assert.deepEqual(await findSetSyncState(db, "sv1"), { exists: true, newestSourceUpdatedAt: when });
+  });
+});
+
+describe("parseSetReleaseDate — recency input for the newest-first cap (M7)", () => {
+  test("parses the API's YYYY/MM/DD form", () => {
+    assert.equal(parseSetReleaseDate("2025/09/26")?.toISOString().slice(0, 10), "2025-09-26");
+  });
+
+  test("orders correctly against another set — the property the cap depends on", () => {
+    const mega = parseSetReleaseDate("2025/09/26")!;   // Mega Evolution
+    const mcd = parseSetReleaseDate("2016/11/01")!;    // McDonald's Collection 2016
+    assert.ok(mega.getTime() > mcd.getTime(), "the newer set must sort ahead of the older one");
+  });
+
+  test("returns null for absent/unparseable input rather than inventing a date", () => {
+    // A guessed date would silently rank a card it has no business ranking; null
+    // sorts last instead. Same truth boundary as sourceUpdatedAt.
+    for (const bad of [undefined, null, "", "   ", "not-a-date", 20250926, {}]) {
+      assert.equal(parseSetReleaseDate(bad), null, `expected null for ${JSON.stringify(bad)}`);
+    }
   });
 });
 

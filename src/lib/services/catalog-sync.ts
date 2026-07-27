@@ -143,6 +143,19 @@ export async function fetchSetCards(
   return out;
 }
 
+/**
+ * set.releaseDate ("YYYY/MM/DD") → Date, for the recency ordering candidate
+ * generation depends on (M7). Unparseable/absent returns null rather than a
+ * guessed date: ordering places nulls last, so an unknown release date costs a
+ * card its position in the newest-first cap — it never invents a recency the
+ * source didn't state. Same truth boundary as sourceUpdatedAt above.
+ */
+export function parseSetReleaseDate(raw: unknown): Date | null {
+  if (typeof raw !== "string" || !raw.trim()) return null;
+  const d = new Date(raw.replace(/\//g, "-"));
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
 // ─── Per-card upsert ───────────────────────────────────────────────────────────
 // Stores formatPokemonCard()'s OWN output, so it cannot drift from what candidate
 // generation expects. Prices are (re-)seeded here with priceUpdatedAt=now; the
@@ -161,6 +174,7 @@ export async function upsertCatalogCard(db: CatalogSyncDb, card: any): Promise<v
     setName: p.setName,
     setCode: p.setCode ?? null,
     setPrintedSize: p.setPrintedSize ?? null,
+    setReleaseDate: parseSetReleaseDate(set.releaseDate),
     collectorNumber: p.collectorNumber ?? null,
     rarity: p.rarity,
     imageUrl: p.imageUrl ?? null,
