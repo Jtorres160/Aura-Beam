@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { auth } from "@/auth";
 import { fetchPrintingById, fetchPrintingByIdAcrossGames } from "@/lib/scanner/candidates";
 import { messageForUnavailableAdd } from "@/lib/scanner/failure";
+import { recordScanConfirmation } from "@/lib/scanner/scan-outcome-label";
 
 /**
  * Resolve an external card reference to a normalized printing. If the caller
@@ -30,6 +31,10 @@ export async function POST(req: NextRequest) {
     const cardId: string | undefined = body?.cardId;
     // Optional — lets us skip straight to the right source instead of probing.
     const game: string | undefined = typeof body?.game === "string" ? body.game : undefined;
+    // Optional — the scan this add came from, so an auto-accepted match learns
+    // whether the collector kept it. Absent for adds from search, the card page,
+    // or anywhere else that isn't a scan review screen.
+    const scanId: string | undefined = typeof body?.scanId === "string" ? body.scanId : undefined;
 
     if (!cardId) {
       return NextResponse.json({ success: false, message: "Card ID is required" }, { status: 400 });
@@ -150,6 +155,24 @@ export async function POST(req: NextRequest) {
       archive = { totalCards: agg._sum.quantity ?? 0, quantity: entry.quantity };
     } catch {
       /* non-fatal */
+    }
+
+    // Confirmation label (Scanner V2): the collector kept what the scan
+    // accepted. Strictly observational and strictly last — it runs after the
+    // add has fully succeeded, updates only that scan's telemetry JSON, and can
+    // neither create a ScanHistory row nor fail this response. `card.externalId`
+    // is what was ACTUALLY added; comparing it to the scan's own
+    // acceptedExternalId is what separates a confirmation from an overturn.
+    // A locally-created Card without an externalId cannot be compared against
+    // the scan's accepted printing, so there is nothing truthful to record —
+    // skip rather than write a label that names no card.
+    if (scanId && card.externalId) {
+      await recordScanConfirmation({
+        scanId,
+        userId,
+        externalId: card.externalId,
+        game: card.game,
+      });
     }
 
     return NextResponse.json({ success: true, data: entry, archive, message }, { status: 201 });

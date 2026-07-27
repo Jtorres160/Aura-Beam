@@ -25,6 +25,52 @@ export interface SelectionLabel {
 }
 
 /**
+ * The collector KEPT what the scanner auto-accepted (Scanner V2 · confirmation
+ * telemetry). Written when they add an accepted match to their collection.
+ *
+ * This is the positive half of the only ground truth an ACCEPT path can
+ * produce. A disambiguation grid yields a SelectionLabel because the user makes
+ * an explicit choice; an accept yields nothing at all — the scanner decided, and
+ * whether the collector agreed left no trace anywhere. That gap made the
+ * accuracy of every auto-accepting method (set-cn-verified, single-printing,
+ * art-group-vision …) permanently unmeasurable in production.
+ *
+ * `externalId` is what the collector actually added, NOT what the scan accepted.
+ * They are normally the same and the difference is the entire point: comparing
+ * them to `acceptedExternalId` is what distinguishes a confirmation from an
+ * overturn, so this must record the observed value, never the expected one.
+ */
+export interface ConfirmationLabel {
+  externalId: string;
+  game?: string;
+  /** ISO timestamp of the add. */
+  at: string;
+}
+
+/**
+ * The collector REJECTED what the scanner auto-accepted — the negative half.
+ *
+ * Distinguished from simply never confirming, which is why an explicit
+ * affordance exists rather than inferring rejection from silence: a scan with no
+ * confirmation may mean the collector disagreed, or that they closed the tab,
+ * got interrupted, or were only checking a price. Treating that silence as
+ * rejection would manufacture a disagreement rate out of absent data.
+ *
+ * `replacedByExternalId` is present only when the collector went on to add a
+ * different card for the same scan; it is the strongest form of this label,
+ * because it names what the card actually was rather than only what it wasn't.
+ */
+export interface RejectionLabel {
+  /** The printing the scanner accepted and the collector declined. */
+  rejectedExternalId?: string;
+  /** What they added instead, when they did. */
+  replacedByExternalId?: string;
+  game?: string;
+  /** ISO timestamp of the rejection. */
+  at: string;
+}
+
+/**
  * A save attempt that did NOT produce a label, because the source database
  * wouldn't confirm the pick (Phase 5.13C).
  *
@@ -164,8 +210,24 @@ export interface ScanTelemetryV1 {
   /** Per-stage wall-clock timings in ms (ocrMs, candidatesMs, scoreMs, …) —
    *  Phase 5.2.5 black-box data for latency/failure analysis. */
   timings?: Record<string, number>;
+  /**
+   * The printing this scan ACCEPTED, when it accepted one.
+   *
+   * Previously computed in the scan route and handed only to the recognition-
+   * memory shadow record, never persisted here — so telemetry recorded that an
+   * accept happened and at what confidence, but not WHICH card it accepted. A
+   * confirmation or rejection has nothing to compare against without it, which
+   * makes it a prerequisite for measuring any auto-accept method rather than a
+   * nice-to-have. Absent on disambiguate/not-found: those accept nothing.
+   * Optional and additive — older records omit it, so v stays 1.
+   */
+  acceptedExternalId?: string;
   /** Present once the user picked from the disambiguation grid. */
   selection?: SelectionLabel;
+  /** Present once the user ADDED an auto-accepted match (see ConfirmationLabel). */
+  confirmation?: ConfirmationLabel;
+  /** Present once the user DECLINED an auto-accepted match (see RejectionLabel). */
+  rejection?: RejectionLabel;
   /** Save attempts that failed because a source wouldn't confirm the pick
    *  (Phase 5.13C). Appended, never overwritten — several retries against a
    *  flapping provider all belong to the same scan. Optional and additive:
@@ -277,6 +339,9 @@ export function buildScanTelemetry(input: {
     evidenceCoverage: scored.evidenceSignals.length ? scored.evidenceCoverage : undefined,
     printingsCount,
     presentedCount: decision.candidates?.length ?? (decision.printing ? 1 : 0),
+    // Only on an accept: on any other action nothing was accepted, and writing
+    // the highlighted candidate here would record a decision never made.
+    acceptedExternalId: decision.action === "accept" ? decision.printing?.externalId : undefined,
     ocr,
     game,
     isAutoScan,
@@ -304,6 +369,61 @@ export function withSelection(rawJson: string | null | undefined, selection: Omi
     }
   }
   return JSON.stringify({ v: 1, selection: label });
+}
+
+/**
+ * Append the collector's CONFIRMATION of an auto-accepted match. Same tolerance
+ * contract as withSelection(): a missing/corrupt original never loses the label.
+ *
+ * Deliberately does NOT clear an existing `rejection`. A collector who declines
+ * a match and then adds it anyway has produced two real, ordered facts about
+ * one scan, and the second does not unmake the first — collapsing them would
+ * discard exactly the hesitation an accuracy review wants to see. The reader
+ * decides how to weigh both; this layer only records.
+ */
+export function withConfirmation(
+  rawJson: string | null | undefined,
+  confirmation: Omit<ConfirmationLabel, "at">,
+): string {
+  const label: ConfirmationLabel = { ...confirmation, at: new Date().toISOString() };
+  if (rawJson) {
+    try {
+      const parsed = JSON.parse(rawJson);
+      if (parsed && typeof parsed === "object") {
+        parsed.confirmation = label;
+        return JSON.stringify(parsed);
+      }
+    } catch {
+      /* fall through to the minimal record */
+    }
+  }
+  return JSON.stringify({ v: 1, confirmation: label });
+}
+
+/**
+ * Append the collector's REJECTION of an auto-accepted match. Same tolerance
+ * contract as withSelection().
+ *
+ * Symmetric to withConfirmation(): an existing `confirmation` is preserved, for
+ * the same reason.
+ */
+export function withRejection(
+  rawJson: string | null | undefined,
+  rejection: Omit<RejectionLabel, "at">,
+): string {
+  const label: RejectionLabel = { ...rejection, at: new Date().toISOString() };
+  if (rawJson) {
+    try {
+      const parsed = JSON.parse(rawJson);
+      if (parsed && typeof parsed === "object") {
+        parsed.rejection = label;
+        return JSON.stringify(parsed);
+      }
+    } catch {
+      /* fall through to the minimal record */
+    }
+  }
+  return JSON.stringify({ v: 1, rejection: label });
 }
 
 /**
