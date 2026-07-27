@@ -116,12 +116,18 @@ for (const row of rows) {
   const rejection = isObj(p.rejection) ? p.rejection : undefined;
   const selection = isObj(p.selection) ? s(p.selection.externalId) : undefined;
 
+  // An overturn is ANY signal naming a card other than the one this tier chose
+  // — including a confirmation, because /api/collections/add records what the
+  // collector ACTUALLY added, which is not always what was proposed. Treating
+  // every confirmation as agreement would silently score those as successes.
+  const namedInstead = [confirmation, selection].find((id) => id && chosen && id !== chosen);
+
   if (rejection) {
     stat.tierOverturned++;
-    stat.overturnDetail.push({ scanId: row.id, chose: chosen, then: "rejected" });
-  } else if (selection && chosen && selection !== chosen) {
+    stat.overturnDetail.push({ scanId: row.id, chose: chosen, then: rejection.replacedByExternalId ?? "rejected" });
+  } else if (namedInstead) {
     stat.tierOverturned++;
-    stat.overturnDetail.push({ scanId: row.id, chose: chosen, then: selection });
+    stat.overturnDetail.push({ scanId: row.id, chose: chosen, then: namedInstead });
   } else if (confirmation || selection) {
     stat.tierConfirmed++;
   } else {
