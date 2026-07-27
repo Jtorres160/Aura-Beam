@@ -149,10 +149,20 @@ export async function catalogSearchBySetAndNumber(
 /**
  * Local mirror of fetchAllPokemonPrintings(): every printing of an exact card
  * name, for visual comparison. Exact (case-insensitive) name match, capped at 20
- * — same contract as the live call. The live call orders by release date, which
- * the catalog does not store; ordering only decides WHICH 20 survive the cap for
- * a name with more than 20 printings (rare), and never affects an exact-name
- * membership test, so a stable set/number ordering is used instead.
+ * — same contract as the live call, INCLUDING its newest-first ordering.
+ *
+ * That ordering is load-bearing, not cosmetic. For a name with more than 20
+ * printings the cap decides which candidates the user is ever offered, so
+ * ordering decides whether the right card is reachable at all. This originally
+ * ordered by setName asc on the reasoning that >20 printings was rare; it isn't
+ * (Vulpix has 35, Pikachu far more), and alphabetical ordering systematically
+ * buried the NEWEST sets — the ones people actually scan. A real Vulpix from
+ * Mega Evolution (me1-138) was cut at position 21+ behind "McDonald's
+ * Collection 2016" and could not be picked. Newest-first restores parity with
+ * the live path this replaced.
+ *
+ * Nulls sort last: a card whose set has no stored release date is still
+ * reachable, but never displaces one whose recency we actually know.
  */
 export async function catalogFetchAllPrintings(
   name: string,
@@ -162,7 +172,11 @@ export async function catalogFetchAllPrintings(
     db.catalogCard.findMany({
       where: { game: "POKEMON", name: { equals: name, mode: "insensitive" } },
       select: CATALOG_SELECT,
-      orderBy: [{ setName: "asc" }, { collectorNumber: "asc" }],
+      orderBy: [
+        { setReleaseDate: { sort: "desc", nulls: "last" } },
+        { setName: "asc" },
+        { collectorNumber: "asc" },
+      ],
       take: 20,
     }),
   );

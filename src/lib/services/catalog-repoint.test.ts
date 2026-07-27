@@ -31,6 +31,7 @@ import {
   CATALOG_LOCAL_ENABLED,
   formatCatalogCard,
   catalogSearchBySetAndNumber,
+  catalogFetchAllPrintings,
   catalogFetchCardById,
   type CatalogCardRow,
   type CatalogDb,
@@ -99,11 +100,12 @@ function fakeDb(opts: {
   findMany?: (args: any) => CatalogCardRow[];
   findUnique?: (args: any) => CatalogCardRow | null;
   throwOn?: "findMany" | "findUnique";
-}): CatalogDb & { lastWhere?: any } {
+}): CatalogDb & { lastWhere?: any; lastArgs?: any } {
   const db: any = {
     catalogCard: {
       findMany: async (args: any) => {
         db.lastWhere = args?.where;
+        db.lastArgs = args;
         if (opts.throwOn === "findMany") throw new Error("simulated catalog DB error");
         return opts.findMany ? opts.findMany(args) : [];
       },
@@ -253,6 +255,46 @@ describe("fetchPokemonPrintingsLocal — fail-open, never a fabricated absence",
     const outcome = await fetchPokemonPrintingsLocal("Alakazam", "BS", "1", db);
     assert.equal(outcome!.sources[0].source, "pokemon");
     assert.equal(outcome!.sources[0].availability, "completed");
+  });
+});
+
+// ─── 3b. M7: the 20-cap must keep the NEWEST printings ───────────────────────
+//
+// catalogFetchAllPrintings caps at 20. For a name with more printings than that,
+// the cap decides which candidates the user is ever shown — so the ORDER is what
+// determines whether the right card is reachable at all, not merely how the list
+// looks. This shipped ordering by setName asc, which sorts alphabetically and
+// buried the newest sets: a real Vulpix from Mega Evolution (me1-138) landed at
+// position 21+ behind "McDonald's Collection 2016" and could not be picked.
+// Across the production catalog that hid a recent printing for 131 of the 134
+// names with 20+ printings. These tests pin the newest-first contract so the
+// regression cannot return silently.
+
+describe("catalogFetchAllPrintings — newest-first ordering (M7)", () => {
+  test("orders by set release date DESC before anything else", async () => {
+    const db = fakeDb({ findMany: () => [] });
+    await catalogFetchAllPrintings("Vulpix", db);
+    const orderBy = (db as any).lastArgs?.orderBy;
+    assert.ok(Array.isArray(orderBy), "expected an ordered (array) orderBy");
+    assert.deepEqual(
+      orderBy[0],
+      { setReleaseDate: { sort: "desc", nulls: "last" } },
+      "recency must be the PRIMARY sort key — a secondary key cannot rescue a card the cap already dropped",
+    );
+  });
+
+  test("still caps at 20 — the cap is the live-path contract, only the order changed", async () => {
+    const db = fakeDb({ findMany: () => [] });
+    await catalogFetchAllPrintings("Vulpix", db);
+    assert.equal((db as any).lastArgs?.take, 20);
+  });
+
+  test("a set with no known release date sorts last, not first", async () => {
+    // nulls:"last" is the truth boundary here — an unknown release date must
+    // never be treated as "brand new" and displace a printing we can date.
+    const db = fakeDb({ findMany: () => [] });
+    await catalogFetchAllPrintings("Vulpix", db);
+    assert.equal((db as any).lastArgs?.orderBy[0].setReleaseDate.nulls, "last");
   });
 });
 

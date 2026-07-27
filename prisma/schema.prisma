@@ -477,6 +477,7 @@ model CatalogCard {
   setName         String
   setCode         String?                      // set.ptcgoCode ("SV3") or set.id fallback
   setPrintedSize  Int?                         // set.printedTotal ("/197")
+  setReleaseDate  DateTime?                    // set.releaseDate — recency ordering (M7)
   collectorNumber String?                      // card.number
   rarity          String   @default("Common")
   imageUrl        String?                      // images.large || images.small
@@ -496,5 +497,6 @@ model CatalogCard {
 
   @@index([game, setCode, collectorNumber])   // set/CN candidate lookup
   @@index([game, name])                        // name candidate lookup
+  @@index([game, name, setReleaseDate])        // name lookup ordered newest-first (M7)
   @@map("catalog_cards")
 }
