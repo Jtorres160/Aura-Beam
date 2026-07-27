@@ -119,6 +119,7 @@ export default function ScannerPage() {
   // as a small caption in the error state so field reports say WHERE it broke.
   const [errorStage, setErrorStage] = useState<string | null>(null);
   const [isAdding, setIsAdding] = useState(false);
+  const [isRejecting, setIsRejecting] = useState(false);
   const [addSuccess, setAddSuccess] = useState(false);
   // Post-add archive totals (Phase 5 · Batch 2) — returned by the add routes.
   const [postAddArchive, setPostAddArchive] = useState<PostAddArchive | null>(null);
@@ -982,7 +983,10 @@ export default function ScannerPage() {
       const res = await fetch(`/api/collections/add`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cardId: scanResult.id }),
+        // scanId links this add back to the scan that proposed the card, so an
+        // auto-accepted match learns whether the collector kept it. Purely
+        // observational on the server — it never affects whether the add works.
+        body: JSON.stringify({ cardId: scanResult.id, scanId: scanResult.historyId }),
       });
       if (!res.ok) throw new Error("Failed to add to collection");
       const json = await res.json().catch(() => null);
@@ -993,6 +997,38 @@ export default function ScannerPage() {
       alert("Failed to add card to collection.");
     } finally {
       setIsAdding(false);
+    }
+  };
+
+  // ─── "Not this card" — reject an auto-accepted match ──────────────────────
+  // The counterpart to Add to Collection on the review screen. Until this
+  // existed, a collector who disagreed with an auto-accept had only "Scan Next",
+  // which is indistinguishable from walking away — so the accuracy of every
+  // auto-accepting method was unmeasurable in production.
+  //
+  // Best-effort by design: the record is observational, so a failed POST must
+  // not trap the collector on a card they've already told us is wrong. Either
+  // way they end up rescanning, which is what they wanted.
+  const handleRejectMatch = async () => {
+    const scanId = scanResult?.historyId;
+    setIsRejecting(true);
+    try {
+      if (scanId) {
+        // Only the scan id: WHICH printing was rejected is already on that
+        // scan's telemetry as acceptedExternalId, written server-side when the
+        // decision was made. Re-sending it from the client would let the client
+        // assert a fact the server already knows better.
+        await fetch("/api/scanner/reject-match", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ scanId, game: scanResult?.game }),
+        });
+      }
+    } catch (error) {
+      console.error("Failed to record match rejection:", error);
+    } finally {
+      setIsRejecting(false);
+      resetScan();
     }
   };
 
@@ -1537,6 +1573,23 @@ export default function ScannerPage() {
                   <p className="text-center font-mono text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
                     {archiveCaption(scanResult.archive)}
                   </p>
+                )}
+
+                {/* "Not this card" is the only way a collector can tell us an
+                    auto-accepted match was wrong. Without it, disagreement and
+                    walking away leave identical traces, and the accuracy of
+                    every auto-accepting method stays unmeasurable. Shown only
+                    before an add — once the card is in the collection, the
+                    honest correction is removing it, not relabelling the scan. */}
+                {!addSuccess && (
+                  <button
+                    type="button"
+                    onClick={handleRejectMatch}
+                    disabled={isRejecting || isAdding}
+                    className="w-full pt-2 text-center font-mono text-[11px] uppercase tracking-[0.14em] text-muted-foreground underline underline-offset-4 transition-colors hover:text-foreground disabled:opacity-50"
+                  >
+                    {isRejecting ? "Recording…" : "Not this card?"}
+                  </button>
                 )}
 
                 <div className="flex gap-3 pt-2">
