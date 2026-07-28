@@ -7,10 +7,6 @@
     {
       "path": "/api/cron/analyze-scans",
       "schedule": "30 6 * * *"
-    },
-    {
-      "path": "/api/cron/refresh-catalog",
-      "schedule": "0 7 * * *"
     }
   ]
 }

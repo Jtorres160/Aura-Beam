@@ -1,182 +1,100 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getPokemonCardById, formatPokemonCard } from "@/lib/services/pokemon";
-import { getScryfallCardById, formatScryfallCard } from "@/lib/services/scryfall";
-import { getYugiohCardById, formatYugiohCard } from "@/lib/services/yugioh";
+import { allocateRunDeadlines, TOTAL_BUDGET_MS } from "@/lib/services/cron-budget";
+import { refreshOwnedPrices, type OwnedPriceDb } from "@/lib/services/owned-price-refresh";
+import {
+  syncNewSets,
+  refreshCatalogPrices,
+  type CatalogRefreshDb,
+} from "@/lib/services/catalog-refresh";
 
-// This endpoint is meant to be called by a cron job (e.g., Vercel Cron)
+// ─── Combined nightly maintenance cron ───────────────────────────────────────
+// Three phases, one invocation, one clock.
+//
+// They share a slot because the Vercel Hobby plan allows exactly two cron
+// entries and this project needs both this and analyze-scans. They do NOT share
+// internals: each phase lives in its own module with its own tests, because they
+// remain conceptually distinct jobs (a collector's archive vs. the scanner's
+// reference mirror) that merely happen to run back to back.
+//
+// Phase order is by user impact, and the allocator reserves time for the phases
+// that follow, so slack flows FORWARD: a fast phase hands its leftover window to
+// the next one, and a slow phase can never starve them. That property is the fix
+// for the M5 budget bug, where new-set enumeration consumed an entire 55s window
+// and the price sweep reported "examined: 0" while looking successful.
+//
+// See docs/scanner-v2/M-CATALOG-M5-budget-bug-proposal.md.
+
+// The Vercel Hobby ceiling. TOTAL_BUDGET_MS (45s) sits well inside it, and
+// because the deadline now reaches into the transport layer, overrun past the
+// budget is bounded by one clamped attempt rather than a full retry sequence.
+export const maxDuration = 60;
+
 export async function GET(request: Request) {
+  // Mandatory cron-secret guard (Vercel's recommended pattern). Vercel sends
+  // `Authorization: Bearer $CRON_SECRET` on its own scheduled invocations.
+  const authHeader = request.headers.get("authorization");
+  if (!process.env.CRON_SECRET || authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+    return NextResponse.json({ success: false, message: "Unauthorized" }, { status: 401 });
+  }
+
+  // ?dry=1 → exercise every read and upstream fetch, perform NO writes.
+  const dryRun = new URL(request.url).searchParams.get("dry") === "1";
+  const startedAt = Date.now();
+  const deadlines = allocateRunDeadlines(startedAt);
+
+  console.log(`[CRON] nightly maintenance starting${dryRun ? " (dry run)" : ""}…`);
+
   try {
-    // Mandatory cron-secret guard (Vercel's recommended pattern). CRON_SECRET
-    // MUST be set in every deployed environment: a missing secret now returns
-    // 401 rather than silently allowing unauthenticated requests through. Vercel
-    // automatically sends `Authorization: Bearer $CRON_SECRET` on its own
-    // scheduled invocations, so this check passes for the real cron and fails
-    // for everyone else.
-    const authHeader = request.headers.get("authorization");
-    if (!process.env.CRON_SECRET || authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-      return NextResponse.json({ success: false, message: "Unauthorized" }, { status: 401 });
-    }
+    // Sequential on purpose: they contend for the same upstream and the same
+    // connection pool, and a shared budget is only meaningful if spending is
+    // ordered. Each phase isolates its own failures and returns a report.
+    const ownedPrices = await refreshOwnedPrices(
+      prisma as unknown as OwnedPriceDb,
+      deadlines.ownedPrices,
+      dryRun,
+    );
+    const newSets = await syncNewSets(
+      prisma as unknown as CatalogRefreshDb,
+      deadlines.newSets,
+      dryRun,
+    );
+    const catalogPrices = await refreshCatalogPrices(
+      prisma as unknown as CatalogRefreshDb,
+      deadlines.catalogPrices,
+      dryRun,
+    );
 
-    console.log("[CRON] Starting price update job...");
+    // `complete` is the health signal, NOT `success`. `success` only ever meant
+    // "the handler didn't throw"; conflating the two is how a run that examined
+    // 3 of 174 sets reported itself as a clean bill of health.
+    const phases = [ownedPrices, newSets, catalogPrices];
+    const complete = phases.every((p) => p.status === "complete");
+    const durationMs = Date.now() - startedAt;
 
-    // 1. Build the set of cards worth refreshing: everything any user OWNS
-    // (so collection value stays true and PriceHistory accrues for the movers
-    // + portfolio chart) UNION everything under an active price alert. Owned
-    // cards were previously never refreshed after scan time — that was the
-    // root cause of stale collection values.
-    const [ownedCardLinks, activeWatchlists] = await Promise.all([
-      prisma.collectionCard.findMany({
-        distinct: ["cardId"],
-        select: { card: { select: { id: true, externalId: true, game: true } } },
-      }),
-      prisma.watchlist.findMany({
-        where: {
-          alertEnabled: true,
-          OR: [{ alertAbove: { not: null } }, { alertBelow: { not: null } }],
-        },
-        include: { card: true, user: true },
-      }),
-    ]);
+    const summary =
+      `owned ${ownedPrices.examined}/${ownedPrices.total} (${ownedPrices.status}), ` +
+      `sets ${newSets.examined}/${newSets.total} (${newSets.status}), ` +
+      `catalog ${catalogPrices.examined}/${catalogPrices.total} (${catalogPrices.status}), ` +
+      `${durationMs}ms of ${TOTAL_BUDGET_MS}ms`;
 
-    // Alerts to evaluate, grouped by card.
-    const watchlistsByCard = activeWatchlists.reduce((acc, watchlist) => {
-      (acc[watchlist.cardId] ??= []).push(watchlist);
-      return acc;
-    }, {} as Record<string, typeof activeWatchlists>);
-
-    // Union of card records to refresh, de-duplicated by id.
-    const cardsById = new Map<string, { id: string; externalId: string | null; game: string }>();
-    for (const link of ownedCardLinks) {
-      if (link.card) cardsById.set(link.card.id, link.card);
-    }
-    for (const w of activeWatchlists) {
-      cardsById.set(w.card.id, { id: w.card.id, externalId: w.card.externalId, game: w.card.game });
-    }
-
-    if (cardsById.size === 0) {
-      return NextResponse.json({ success: true, message: "No owned or watched cards to process." });
-    }
-
-    // 2. Prioritize the stalest prices so repeated runs make steady progress
-    // and one run never fans out to an unbounded number of external calls.
-    const MAX_CARDS_PER_RUN = 250;
-    const priceRows = await prisma.cardPrice.findMany({
-      where: { cardId: { in: Array.from(cardsById.keys()) } },
-      select: { cardId: true, lastUpdated: true },
-    });
-    const lastUpdatedByCard = new Map(priceRows.map((p) => [p.cardId, p.lastUpdated]));
-
-    const orderedCards = Array.from(cardsById.values())
-      .filter((c) => c.externalId)
-      .sort((a, b) => {
-        // Never-priced cards first, then oldest lastUpdated first.
-        const ta = lastUpdatedByCard.get(a.id)?.getTime() ?? 0;
-        const tb = lastUpdatedByCard.get(b.id)?.getTime() ?? 0;
-        return ta - tb;
-      })
-      .slice(0, MAX_CARDS_PER_RUN);
-
-    let updatedCount = 0;
-    let alertsTriggered = 0;
-
-    // 3. Iterate through each unique card and fetch its latest price
-    for (const card of orderedCards) {
-      if (!card.externalId) continue;
-
-      let newPriceData = null;
-
-      try {
-        if (card.game === "Pokemon") {
-          const externalCard = await getPokemonCardById(card.externalId);
-          if (externalCard) newPriceData = formatPokemonCard(externalCard).price;
-        } else if (card.game === "MTG") {
-          const externalCard = await getScryfallCardById(card.externalId);
-          if (externalCard) newPriceData = formatScryfallCard(externalCard).price;
-        } else if (card.game === "YUGIOH" || card.game === "Yugioh") {
-          const externalCard = await getYugiohCardById(card.externalId);
-          if (externalCard) newPriceData = formatYugiohCard(externalCard).price;
-        }
-      } catch (err) {
-        console.error(`[CRON] Failed to fetch external price for card ${card.id}:`, err);
-        continue;
-      }
-
-      if (!newPriceData || newPriceData.marketPrice === undefined || newPriceData.marketPrice === null) continue;
-
-      const newMarketPrice = newPriceData.marketPrice;
-
-      // Update the CardPrice in our database
-      await prisma.cardPrice.upsert({
-        where: { cardId: card.id },
-        update: {
-          marketPrice: newMarketPrice,
-          lastUpdated: new Date(),
-        },
-        create: {
-          cardId: card.id,
-          marketPrice: newMarketPrice,
-        }
-      });
-
-      // Record in price history — this is what powers real price movers.
-      await prisma.priceHistory.create({
-        data: {
-          cardId: card.id,
-          marketPrice: newMarketPrice,
-        }
-      });
-
-      updatedCount++;
-
-      // 4. Check alerts for each user watching this card
-      const watchlists = watchlistsByCard[card.id] ?? [];
-      for (const watchlist of watchlists) {
-        let triggered = false;
-        let alertMessage = "";
-
-        if (watchlist.alertAbove && newMarketPrice >= watchlist.alertAbove) {
-          triggered = true;
-          alertMessage = `${watchlist.card.name} has risen above $${watchlist.alertAbove.toFixed(2)}! Current price: $${newMarketPrice.toFixed(2)}`;
-        } else if (watchlist.alertBelow && newMarketPrice <= watchlist.alertBelow) {
-          triggered = true;
-          alertMessage = `${watchlist.card.name} has dropped below $${watchlist.alertBelow.toFixed(2)}! Current price: $${newMarketPrice.toFixed(2)}`;
-        }
-
-        if (triggered) {
-          // Create Notification
-          await prisma.notification.create({
-            data: {
-              userId: watchlist.userId,
-              title: "Price Alert Triggered",
-              message: alertMessage,
-              type: "price_alert",
-              data: JSON.stringify({ cardId: card.id, newPrice: newMarketPrice }),
-            }
-          });
-
-          // Disable the alert so it doesn't fire endlessly
-          await prisma.watchlist.update({
-            where: { id: watchlist.id },
-            data: { alertEnabled: false }
-          });
-          
-          alertsTriggered++;
-        }
-      }
-    }
-
-    console.log(`[CRON] Job complete. Cards updated: ${updatedCount}. Alerts triggered: ${alertsTriggered}.`);
+    // An incomplete run is a WARN, so it is greppable in Vercel logs without
+    // anyone having to run a dry run to discover it.
+    if (complete) console.log(`[CRON] nightly maintenance complete — ${summary}`);
+    else console.warn(`[CRON] nightly maintenance INCOMPLETE — ${summary}`);
 
     return NextResponse.json({
       success: true,
-      message: `Successfully processed prices for ${updatedCount} cards. Triggered ${alertsTriggered} alerts.`,
-      updatedCount,
-      alertsTriggered
+      complete,
+      dryRun,
+      durationMs,
+      ownedPrices,
+      newSets,
+      catalogPrices,
     });
-
   } catch (error) {
-    console.error("[CRON] Error during price update:", error);
+    // Only reached on a truly unexpected error; each phase isolates its own.
+    console.error("[CRON] nightly maintenance fatal:", error);
     return NextResponse.json({ success: false, message: "Internal server error" }, { status: 500 });
   }
 }

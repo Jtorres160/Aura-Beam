@@ -82,9 +82,15 @@ const DELAY_MS = Number(flag("delay") ?? 300);
 const RESUME = SCOPED ? has("resume") : !has("no-resume");
 
 // The per-set list call is the flaky point (see fp builder); be patient with it.
+// This is a long-running MANUAL import with a human watching, not a serverless
+// function — so it passes a deliberately generous ProviderFetchBudget and, unlike
+// the cron, no `deadline` at all. Same code path, opposite patience.
 const LIST_RETRIES = Number(flag("list-retries") ?? 6);
 const LIST_BACKOFF_MS = Number(flag("list-backoff") ?? 2000);
-const listRetry = { tries: LIST_RETRIES, baseMs: LIST_BACKOFF_MS };
+const listRetry = {
+  maxAttempts: LIST_RETRIES,
+  budgetMs: LIST_RETRIES * LIST_BACKOFF_MS,
+};
 
 const nfmt = (n) => n.toLocaleString("en-US");
 
@@ -123,7 +129,7 @@ const failedSets = [];
 for (const [idx, setId] of setIds.entries()) {
   const n = `${idx + 1}/${setIds.length}`;
   try {
-    const s = await syncSet(prisma, setId, { resume: RESUME, delayMs: DELAY_MS, retry: listRetry });
+    const s = await syncSet(prisma, setId, { resume: RESUME, delayMs: DELAY_MS, budget: listRetry });
     running.listed += s.listed;
     running.upserted += s.upserted;
     running.skipped += s.skipped;

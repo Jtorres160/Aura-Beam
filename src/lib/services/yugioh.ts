@@ -1,5 +1,6 @@
 import type { CandidatePrinting } from "@/lib/scanner/evidence";
 import { fetchProviderJson } from "@/lib/providers/http";
+import type { ProviderFetchBudget } from "@/lib/providers/http";
 
 const BASE_URL = "https://db.ygoprodeck.com/api/v7/cardinfo.php";
 
@@ -39,22 +40,25 @@ export async function searchYugiohCards(query: string, setCode?: string) {
  * answer. YGOPRODeck answers 400 for an id it has no card for — that is a real
  * answer, so it resolves to null rather than a failure.
  */
-export async function fetchYugiohCardById(id: string) {
+export async function fetchYugiohCardById(id: string, budget: ProviderFetchBudget = {}) {
   // Scanner ids for alternate-art cards are variant-qualified ("cardId:imageId")
   // so each artwork gets its own local Card row; the API only knows the base id.
   const baseId = id.split(":")[0];
   const json = await fetchProviderJson<{ data?: any[] }>(
     `${BASE_URL}?id=${encodeURIComponent(baseId)}`,
-    { emptyStatuses: [400] },
+    { emptyStatuses: [400], ...budget },
   );
   return json?.data?.[0] ?? null;
 }
 
 /** Lenient adapter: null on ANY failure. Only for callers that would rather
- *  skip a card than know why it's missing (price cron, card route). */
-export async function getYugiohCardById(id: string) {
+ *  skip a card than know why it's missing (price cron, card route).
+ *
+ *  `budget` lets a batched caller impose the RUN's clock and a fail-fast retry
+ *  profile; omitting it keeps the scan-path defaults exactly as they were. */
+export async function getYugiohCardById(id: string, budget: ProviderFetchBudget = {}) {
   try {
-    return await fetchYugiohCardById(id);
+    return await fetchYugiohCardById(id, budget);
   } catch (error) {
     console.error(`Failed to fetch Yugioh card by ID ${id}:`, error);
     return null;
