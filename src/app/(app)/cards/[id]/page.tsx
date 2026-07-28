@@ -12,11 +12,12 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { ArrowLeft, Sparkles, Heart, Check, Loader2, Library } from "lucide-react";
+import { ArrowLeft, Sparkles, Heart, Check, Loader2, Library, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useSession } from "next-auth/react";
 import { formatMarketPrice } from "@/lib/cards/market-price";
+import { addCardToCollection } from "@/lib/collections/add-to-collection";
 import { PriceHistoryChart, type PriceHistoryPoint } from "./price-history-chart";
 
 /** One row of the specification block. Rendered only when the field has a
@@ -37,7 +38,7 @@ function Spec({ label, value }: { label: string; value?: string | null }) {
 export default function CardDetailsPage() {
   const params = useParams();
   const router = useRouter();
-  const { data: session } = useSession();
+  const { data: session, status: sessionStatus } = useSession();
 
   const [card, setCard] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -45,6 +46,9 @@ export default function CardDetailsPage() {
   const [inWatchlist, setInWatchlist] = useState(false);
   const [addingToCollection, setAddingToCollection] = useState(false);
   const [inCollection, setInCollection] = useState(false);
+  /** Why the last action on this screen didn't happen. Null when nothing has
+   *  failed. A click must always produce either a state change or one of these. */
+  const [actionError, setActionError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!params.id) return;
@@ -82,8 +86,30 @@ export default function CardDetailsPage() {
     }
   }, [params.id, session]);
 
+  /**
+   * Why a click can't proceed yet, or null if it can.
+   *
+   * This used to be `if (!session?.user?.id || !card) return;` — a bare return
+   * that produced no state change, no message and no console line. A collector
+   * who clicked before `useSession()` resolved saw the button sit there doing
+   * literally nothing, which is indistinguishable from a broken feature. The
+   * session gate is real and must stay; what it must not be is invisible.
+   */
+  const blockedReason = (): string | null => {
+    if (!card) return "This card is still loading — try again in a moment.";
+    if (sessionStatus === "loading") {
+      return "Still confirming your session — try again in a second.";
+    }
+    if (!session?.user?.id) {
+      return "You're signed out, so nothing was saved. Sign in and try again.";
+    }
+    return null;
+  };
+
   const handleAddToWatchlist = async () => {
-    if (!session?.user?.id || !card) return;
+    const blocked = blockedReason();
+    if (blocked) return setActionError(blocked);
+    setActionError(null);
     setAddingToWatchlist(true);
     try {
       // The watchlist/add route resolves the card by local id OR externalId,
@@ -93,33 +119,38 @@ export default function CardDetailsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cardId: card.id || card.externalId }),
       });
-      if (res.ok) setInWatchlist(true);
-    } catch (err) {
-      console.error(err);
+      if (res.ok) {
+        setInWatchlist(true);
+      } else {
+        const json = await res.json().catch(() => null);
+        setActionError(json?.message || "We couldn't add this card to your watchlist. Try again in a moment.");
+      }
+    } catch {
+      setActionError("We couldn't reach Aura to add this card, so nothing was saved. Check your connection.");
     } finally {
       setAddingToWatchlist(false);
     }
   };
 
   const handleAddToCollection = async () => {
-    if (!session?.user?.id || !card) return;
+    const blocked = blockedReason();
+    if (blocked) return setActionError(blocked);
+    setActionError(null);
     setAddingToCollection(true);
-    try {
-      // Same contract as the scanner's "Add to Collection": the collections/add
-      // route resolves by id OR externalId and owns the upsert. We pass `game`
-      // so a card not yet in the local DB is re-fetched from the RIGHT source
-      // (Pokémon / MTG / Yu-Gi-Oh), never assumed to be Pokémon.
-      const res = await fetch(`/api/collections/add`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cardId: card.id || card.externalId, game: card.game }),
-      });
-      if (res.ok) setInCollection(true);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setAddingToCollection(false);
-    }
+
+    // Same contract as the scanner's "Add to Collection": the collections/add
+    // route resolves by id OR externalId and owns the upsert. We pass `game` so
+    // a card not yet in the local DB is re-fetched from the RIGHT source
+    // (Pokémon / MTG / Yu-Gi-Oh), never assumed to be Pokémon.
+    const result = await addCardToCollection({
+      cardId: card.id || card.externalId,
+      game: card.game,
+    });
+
+    // "In Collection" is only ever shown for an add the server confirmed.
+    if (result.ok) setInCollection(true);
+    else setActionError(result.message);
+    setAddingToCollection(false);
   };
 
   if (isLoading) {
@@ -285,7 +316,20 @@ export default function CardDetailsPage() {
           </section>
 
           {/* Actions */}
-          <div className="mt-auto pt-6 flex flex-col sm:flex-row gap-3 border-t border-border">
+          <div className="mt-auto pt-6 border-t border-border">
+            {/* A refused or failed action says so, in place, every time. The
+                screen never shows a saved state it hasn't been told about. */}
+            {actionError && (
+              <div
+                role="status"
+                className="mb-3 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-xs text-amber-600 dark:text-amber-500"
+              >
+                <AlertTriangle className="h-4 w-4 shrink-0 mt-px" />
+                <span>{actionError}</span>
+              </div>
+            )}
+
+            <div className="flex flex-col sm:flex-row gap-3">
             <Button
               className="flex-1 h-12"
               onClick={handleAddToCollection}
@@ -302,6 +346,7 @@ export default function CardDetailsPage() {
             >
               {addingToWatchlist ? <Loader2 className="h-5 w-5 animate-spin" /> : inWatchlist ? <><Check className="h-5 w-5 mr-2" /> In Watchlist</> : <><Heart className="h-5 w-5 mr-2" /> Add to Watchlist</>}
             </Button>
+            </div>
           </div>
         </motion.div>
       </div>

@@ -8,12 +8,13 @@
 import { useState, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
 import { useSession } from "next-auth/react";
-import { Search as SearchIcon, Sparkles, SlidersHorizontal, Loader2, Heart, Check, AlertTriangle } from "lucide-react";
+import { Search as SearchIcon, Sparkles, SlidersHorizontal, Loader2, Heart, Check, Library, AlertTriangle } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
+import { addCardToCollection } from "@/lib/collections/add-to-collection";
 import { useDebounce } from "@/hooks/use-debounce";
 import type { GameId } from "@/lib/scanner/evidence";
 import { GAME_SHORT_LABELS } from "@/lib/search/identity";
@@ -63,7 +64,7 @@ function SourceList({ sources }: { sources: SearchSourceStatus[] }) {
 }
 
 export default function SearchPage() {
-  const { data: session } = useSession();
+  const { data: session, status: sessionStatus } = useSession();
   const [query, setQuery] = useState("");
   const debouncedQuery = useDebounce(query, 300);
 
@@ -73,15 +74,38 @@ export default function SearchPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [addingToWatchlist, setAddingToWatchlist] = useState<string | null>(null);
   const [addedToWatchlist, setAddedToWatchlist] = useState<Set<string>>(new Set());
+  const [addingToCollection, setAddingToCollection] = useState<string | null>(null);
+  const [addedToCollection, setAddedToCollection] = useState<Set<string>>(new Set());
+  /** Per-row failure copy, keyed by card id. A row action that doesn't happen
+   *  explains itself on that row — never in a console the collector can't see. */
+  const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
+
+  const setRowError = (cardId: string, message: string | null) =>
+    setRowErrors((prev) => {
+      const next = { ...prev };
+      if (message) next[cardId] = message;
+      else delete next[cardId];
+      return next;
+    });
 
   // Guards against out-of-order responses: a slow request for an earlier query
   // must never overwrite the results of a later one.
   const requestSeq = useRef(0);
 
+  /** Why a row action can't proceed yet, or null if it can. Never a bare
+   *  `return` — a click that does nothing reads as a broken feature. */
+  const blockedReason = (): string | null => {
+    if (sessionStatus === "loading") return "Still confirming your session — try again in a second.";
+    if (!session?.user?.id) return "You're signed out, so nothing was saved. Sign in and try again.";
+    return null;
+  };
+
   const handleAddToWatchlist = async (e: React.MouseEvent, cardId: string) => {
     e.preventDefault();
     e.stopPropagation();
-    if (!session?.user?.id) return;
+    const blocked = blockedReason();
+    if (blocked) return setRowError(cardId, blocked);
+    setRowError(cardId, null);
 
     setAddingToWatchlist(cardId);
     try {
@@ -90,13 +114,44 @@ export default function SearchPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cardId }),
       });
-      if (!res.ok) throw new Error("Failed to add to watchlist");
-      setAddedToWatchlist((prev) => new Set(prev).add(cardId));
-    } catch (error) {
-      console.error(error);
+      if (res.ok) {
+        setAddedToWatchlist((prev) => new Set(prev).add(cardId));
+      } else {
+        const json = await res.json().catch(() => null);
+        setRowError(cardId, json?.message || "We couldn't add this card to your watchlist. Try again in a moment.");
+      }
+    } catch {
+      setRowError(cardId, "We couldn't reach Aura, so nothing was saved. Check your connection.");
     } finally {
       setAddingToWatchlist(null);
     }
+  };
+
+  /**
+   * Add straight from a search result — the action this page was missing.
+   *
+   * Until now the only route into a collection from here was to open the card
+   * detail page and add it there, which is why "search for a card and add it"
+   * read as broken: there was nothing on this screen to click.
+   *
+   * `game` matters. A search result is usually an EXTERNAL id for a printing
+   * that isn't in the local database yet, so the route has to re-fetch it — and
+   * without the game it would probe every source in turn instead of asking the
+   * one that owns the card.
+   */
+  const handleAddToCollection = async (e: React.MouseEvent, card: CardSearchResult) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const blocked = blockedReason();
+    if (blocked) return setRowError(card.id, blocked);
+    setRowError(card.id, null);
+
+    setAddingToCollection(card.id);
+    const result = await addCardToCollection({ cardId: card.id, game: card.game });
+    // The check only turns on for an add the server actually confirmed.
+    if (result.ok) setAddedToCollection((prev) => new Set(prev).add(card.id));
+    else setRowError(card.id, result.message);
+    setAddingToCollection(null);
   };
 
   useEffect(() => {
@@ -284,29 +339,75 @@ export default function SearchPage() {
                         </>
                       )}
                     </div>
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      className={`h-8 w-8 rounded-full ${
-                        addedToWatchlist.has(card.id)
-                          ? "bg-pink-500/10 border-pink-500/50 text-pink-500"
-                          : "hover:text-pink-500 hover:border-pink-500/50 hover:bg-pink-500/10"
-                      }`}
-                      onClick={(e) => handleAddToWatchlist(e, card.id)}
-                      disabled={addingToWatchlist === card.id || addedToWatchlist.has(card.id)}
-                    >
-                      {addingToWatchlist === card.id ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : addedToWatchlist.has(card.id) ? (
-                        <Check className="h-4 w-4" />
-                      ) : (
-                        <Heart className="h-4 w-4" />
-                      )}
-                    </Button>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        aria-label={
+                          addedToCollection.has(card.id)
+                            ? `${card.name} is in your collection`
+                            : `Add ${card.name} to collection`
+                        }
+                        title="Add to collection"
+                        className={`h-8 w-8 rounded-full ${
+                          addedToCollection.has(card.id)
+                            ? "bg-brass/10 border-brass/50 text-brass"
+                            : "hover:text-brass hover:border-brass/50 hover:bg-brass/10"
+                        }`}
+                        onClick={(e) => handleAddToCollection(e, card)}
+                        disabled={addingToCollection === card.id || addedToCollection.has(card.id)}
+                      >
+                        {addingToCollection === card.id ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : addedToCollection.has(card.id) ? (
+                          <Check className="h-4 w-4" />
+                        ) : (
+                          <Library className="h-4 w-4" />
+                        )}
+                      </Button>
+
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        aria-label={
+                          addedToWatchlist.has(card.id)
+                            ? `${card.name} is on your watchlist`
+                            : `Add ${card.name} to watchlist`
+                        }
+                        title="Add to watchlist"
+                        className={`h-8 w-8 rounded-full ${
+                          addedToWatchlist.has(card.id)
+                            ? "bg-pink-500/10 border-pink-500/50 text-pink-500"
+                            : "hover:text-pink-500 hover:border-pink-500/50 hover:bg-pink-500/10"
+                        }`}
+                        onClick={(e) => handleAddToWatchlist(e, card.id)}
+                        disabled={addingToWatchlist === card.id || addedToWatchlist.has(card.id)}
+                      >
+                        {addingToWatchlist === card.id ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : addedToWatchlist.has(card.id) ? (
+                          <Check className="h-4 w-4" />
+                        ) : (
+                          <Heart className="h-4 w-4" />
+                        )}
+                      </Button>
+                    </div>
                   </div>
                 </CardContent>
               </Card>
             </Link>
+
+            {/* Sits OUTSIDE the Link so reading why an add failed can't navigate
+                away from the row it belongs to. */}
+            {rowErrors[card.id] && (
+              <div
+                role="status"
+                className="mt-1 mb-1 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-2 text-xs text-amber-600 dark:text-amber-500"
+              >
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px" />
+                <span>{rowErrors[card.id]}</span>
+              </div>
+            )}
           </motion.div>
         ))}
       </div>
