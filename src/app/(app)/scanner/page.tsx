@@ -37,6 +37,8 @@ import {
   type AHash,
 } from "@/lib/scanner/smart-capture";
 import { CaptureGuidance } from "./capture-guidance";
+import { ExaminingStatus } from "./examining-status";
+import { confirmationTick } from "./haptics";
 // TEMPORARY dev-only calibration overlay — remove with Phase 4.5 cleanup.
 import { LiveMetricsDebugOverlay } from "./live-metrics-debug-overlay";
 import { formatMarketPrice } from "@/lib/cards/market-price";
@@ -101,15 +103,6 @@ function archiveCaption(archive: ArchiveContext | null): string | null {
   return "New to your archive · first from this set";
 }
 
-const LOADING_STATUSES = [
-  "Detecting card borders...",
-  "Analyzing card artwork...",
-  "Extracting text with AI OCR...",
-  "Querying database records...",
-  "Comparing card variants...",
-  "Calculating market prices..."
-];
-
 export default function ScannerPage() {
   const { data: session } = useSession();
   const { setIsActivelyScanningOrProcessing } = useScannerState();
@@ -119,13 +112,14 @@ export default function ScannerPage() {
   // Pipeline stage the server blamed for a failed scan (Phase 5.2.5) — shown
   // as a small caption in the error state so field reports say WHERE it broke.
   const [errorStage, setErrorStage] = useState<string | null>(null);
+  // Transient "just caught this" confirmation for bulk mode (presentational).
+  const [bulkCatch, setBulkCatch] = useState<{ name: string; at: number } | null>(null);
   const [isAdding, setIsAdding] = useState(false);
   const [isRejecting, setIsRejecting] = useState(false);
   const [addSuccess, setAddSuccess] = useState(false);
   // Post-add archive totals (Phase 5 · Batch 2) — returned by the add routes.
   const [postAddArchive, setPostAddArchive] = useState<PostAddArchive | null>(null);
   const [selectedGame, setSelectedGame] = useState<string>("All");
-  const [loadingStatusIndex, setLoadingStatusIndex] = useState(0);
   const [disambiguationCandidates, setDisambiguationCandidates] = useState<DisambiguationCandidate[]>([]);
   const [disambiguationCardName, setDisambiguationCardName] = useState("");
   // ScanHistory row of the attempt that triggered disambiguation — echoed to
@@ -507,6 +501,11 @@ export default function ScannerPage() {
           lastBulkAddRef.current = { id: card.id, at: now };
           console.log("[BulkScan] Added to queue:", card.name);
           setBulkQueue((prev) => [...prev, card]);
+          // Presentational only — names what was just caught so rapid bulk
+          // scanning still reads as individual captures. Does not gate, delay,
+          // or otherwise touch the queue.
+          setBulkCatch({ name: card.name, at: now });
+          confirmationTick();
         }
       } else {
         // Normal Mode logic: Stop auto-scan and show result
@@ -888,18 +887,6 @@ export default function ScannerPage() {
     };
   }, [state, isAutoScan, cameraReady, legacyTimedAuto, captureBestFrame, processScanRequest]);
 
-  // Cycling loading message effect
-  useEffect(() => {
-    if (state !== "processing") {
-      setLoadingStatusIndex(0);
-      return;
-    }
-    const interval = setInterval(() => {
-      setLoadingStatusIndex((prev) => (prev + 1) % LOADING_STATUSES.length);
-    }, 1500);
-    return () => clearInterval(interval);
-  }, [state]);
-
   // ─── Reset / Add to Collection ────────────────────────────────────────
   const resetScan = useCallback(() => {
     setScanResult(null);
@@ -1067,6 +1054,20 @@ export default function ScannerPage() {
     if (state !== "scanning") setAutoSkipNotice(null);
   }, [state]);
 
+  // Bulk catch confirmation self-clears. Keyed on `at` so a rapid second catch
+  // restarts the window rather than inheriting the first one's remaining time.
+  useEffect(() => {
+    if (!bulkCatch) return;
+    const id = setTimeout(() => setBulkCatch(null), 1400);
+    return () => clearTimeout(id);
+  }, [bulkCatch]);
+
+  // Confirmation tick for a single (non-bulk) identification. Bulk fires its
+  // own per-card tick at the point of queueing.
+  useEffect(() => {
+    if (state === "result") confirmationTick();
+  }, [state]);
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
@@ -1120,14 +1121,39 @@ export default function ScannerPage() {
                     always reachable without dragging the whole page, which also
                     avoids the mobile-Safari toolbar collapse/relayout on release. */}
                 <div className="min-h-full flex flex-col items-center justify-center py-6">
-                {/* Empty archive slot — the card is the object being captured */}
+                {/* Empty archive slot — the card is the object being captured.
+                    The outer .card-frame keeps the 63:88 aspect untouched: it is
+                    the same geometry the live viewfinder guide uses for ROI
+                    capture, so only what's drawn INSIDE it changes here. */}
                 <div className="card-frame w-32 sm:w-40 border border-border bg-card shadow-[0_16px_32px_-24px_rgba(19,18,16,0.5)] mb-5 relative">
-                  <div className="absolute inset-2 rounded-[inherit] border border-dashed border-border flex flex-col items-center justify-center gap-3">
-                    <Camera className="h-7 w-7 text-muted-foreground" />
-                    <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Empty slot</span>
+                  {/* Corner-bracket reticle — echoes the brass brackets on the
+                      live guide frame (see the scanning state) so idle and
+                      active read as the same instrument. */}
+                  <div className="absolute inset-3">
+                    <div className="absolute top-0 left-0 h-4 w-4 border-t border-l border-brass/45" />
+                    <div className="absolute top-0 right-0 h-4 w-4 border-t border-r border-brass/45" />
+                    <div className="absolute bottom-0 left-0 h-4 w-4 border-b border-l border-brass/45" />
+                    <div className="absolute bottom-0 right-0 h-4 w-4 border-b border-r border-brass/45" />
+                  </div>
+                  {/* Focus reticle — drawn hairline, not a filled camera glyph. */}
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <svg
+                      viewBox="0 0 32 32"
+                      className="h-7 w-7 text-muted-foreground/35"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1"
+                      aria-hidden="true"
+                    >
+                      <circle cx="16" cy="16" r="6.5" />
+                      <path d="M16 4v4.5M16 23.5V28M4 16h4.5M23.5 16H28" strokeLinecap="round" />
+                    </svg>
                   </div>
                 </div>
-                <h2 className="font-serif text-2xl mb-1">Ready to scan</h2>
+                <h2 className="font-serif text-2xl">Ready to scan</h2>
+                {/* Foil rule — this state's single foil moment. (The result state
+                    carries its own; the two are mutually exclusive.) */}
+                <div className="foil-edge h-px w-16 my-3" />
                 <p className="text-sm text-muted-foreground">Place a card in the viewfinder to identify it.</p>
                 <div className="flex flex-wrap items-center justify-center gap-2 mb-6 mt-4">
                   {["All", "Pokemon", "MTG", "Yugioh"].map((g) => {
@@ -1142,8 +1168,8 @@ export default function ScannerPage() {
                         className={cn(
                           "rounded-full px-4 font-medium transition-all border",
                           isActive
-                            ? "bg-secondary text-foreground border-brass/50 font-semibold"
-                            : "text-muted-foreground border-border hover:bg-muted"
+                            ? "bg-brass/15 text-foreground border-brass font-semibold"
+                            : "text-muted-foreground border-border/60 hover:bg-muted hover:text-foreground"
                         )}
                       >
                         {label}
@@ -1151,7 +1177,10 @@ export default function ScannerPage() {
                     );
                   })}
                 </div>
-                <Button onClick={startCamera} className="h-12 px-8 font-medium text-base w-full max-w-xs">
+                <Button
+                  onClick={startCamera}
+                  className="h-12 px-8 font-medium text-base w-full max-w-xs ring-1 ring-brass/35 ring-offset-2 ring-offset-background hover:ring-brass/60 shadow-[0_10px_24px_-16px_rgba(19,18,16,0.7)]"
+                >
                   <Camera className="h-5 w-5 mr-2" /> Open Camera
                 </Button>
                 </div>
@@ -1269,6 +1298,31 @@ export default function ScannerPage() {
                         )}
                       </div>
                     </div>
+
+                    {/* Bulk catch confirmation — names the card that just entered
+                        the queue so a fast run reads as a series of individual
+                        captures rather than a blur. Anchored inside the video
+                        region (not the outer panel) so it clears the game-filter
+                        row and capture controls below. Non-blocking and
+                        pointer-transparent: the queue advances on its own
+                        schedule whether this is showing or not. */}
+                    <AnimatePresence>
+                      {isBulkMode && bulkCatch && (
+                        <motion.div
+                          key={bulkCatch.at}
+                          initial={{ opacity: 0, y: 8, scale: 0.96 }}
+                          animate={{ opacity: 1, y: 0, scale: 1 }}
+                          exit={{ opacity: 0, y: -6, scale: 0.98 }}
+                          transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+                          className="pointer-events-none absolute left-1/2 bottom-5 z-10 -translate-x-1/2"
+                        >
+                          <div className="flex max-w-[80vw] items-center gap-2 rounded-full border border-brass/60 bg-black/75 px-3 py-1.5 shadow-lg backdrop-blur-sm">
+                            <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-brass" />
+                            <span className="truncate text-[12px] font-medium text-white">{bulkCatch.name}</span>
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
                   </div>
 
                   <div className="px-4 pt-3 pb-1 bg-card border-t border-border flex items-center justify-center gap-2">
@@ -1358,10 +1412,30 @@ export default function ScannerPage() {
                 exit={{ opacity: 0, y: -15 }} 
                 className="flex flex-col items-center justify-center py-12"
               >
-                {/* Card under examination — flat card-frame with a brass read line */}
-                <div className="relative card-frame w-36 sm:w-40 border border-border bg-card shadow-[0_16px_32px_-24px_rgba(19,18,16,0.5)] mb-8">
-                  <div className="absolute inset-2 rounded-[inherit] border border-dashed border-border" />
-                  <div className="absolute left-0 right-0 h-px bg-gradient-to-r from-transparent via-brass to-transparent animate-scan-line" />
+                {/* Card under examination. Same 63:88 .card-frame and the same
+                    corner-bracket reticle as the idle slot — the brackets snap
+                    INWARD on entry, so the transition from idle reads as a
+                    viewfinder locking focus rather than a screen swap. */}
+                <div className="relative card-frame w-36 sm:w-40 border border-border bg-card shadow-[0_16px_32px_-24px_rgba(19,18,16,0.5)] mb-8 overflow-hidden">
+                  <motion.div
+                    className="absolute"
+                    initial={{ top: 2, right: 2, bottom: 2, left: 2, opacity: 0.5 }}
+                    animate={{ top: 12, right: 12, bottom: 12, left: 12, opacity: 1 }}
+                    transition={{ duration: 0.34, ease: [0.22, 1, 0.36, 1] }}
+                  >
+                    <div className="absolute top-0 left-0 h-4 w-4 border-t border-l border-brass" />
+                    <div className="absolute top-0 right-0 h-4 w-4 border-t border-r border-brass" />
+                    <div className="absolute bottom-0 left-0 h-4 w-4 border-b border-l border-brass" />
+                    <div className="absolute bottom-0 right-0 h-4 w-4 border-b border-r border-brass" />
+                  </motion.div>
+
+                  {/* Read-head: a brass line with a soft trailing glow, sweeping
+                      one direction on a loop. Purely decorative — it reports
+                      that work is happening, never how far along it is. */}
+                  <div className="absolute left-0 right-0 h-10 animate-scan-sweep">
+                    <div className="absolute inset-x-0 bottom-0 h-full bg-gradient-to-b from-transparent to-brass/20" />
+                    <div className="absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-brass to-transparent" />
+                  </div>
                 </div>
 
                 <div className="space-y-2 text-center">
@@ -1369,21 +1443,7 @@ export default function ScannerPage() {
                     <Loader2 className="h-4 w-4 animate-spin text-brass" />
                     Examining card
                   </h2>
-                  <AnimatePresence mode="wait">
-                    <motion.p
-                      key={loadingStatusIndex}
-                      initial={{ opacity: 0, y: 5 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -5 }}
-                      transition={{ duration: 0.2 }}
-                      className="font-mono text-xs uppercase tracking-[0.14em] text-muted-foreground min-h-[20px]"
-                    >
-                      {LOADING_STATUSES[loadingStatusIndex]}
-                    </motion.p>
-                  </AnimatePresence>
-                  <p className="text-xs text-muted-foreground pt-1">
-                    Identifying the printing and pulling live market pricing.
-                  </p>
+                  <ExaminingStatus />
                 </div>
               </motion.div>
             )}
@@ -1538,9 +1598,15 @@ export default function ScannerPage() {
 
                 {/* The card itself, entering the archive */}
                 <motion.div
-                  initial={{ opacity: 0, y: 18, scale: 0.97 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
+                  initial={{ opacity: 0, y: 18, scale: 0.94 }}
+                  animate={{ opacity: 1, y: 0, scale: [0.94, 1.015, 1] }}
+                  transition={{
+                    duration: 0.55,
+                    ease: [0.22, 1, 0.36, 1],
+                    // Slight overshoot then settle — the card "lands" in the
+                    // archive instead of simply fading up.
+                    scale: { duration: 0.55, times: [0, 0.62, 1], ease: [0.22, 1, 0.36, 1] },
+                  }}
                   className="mx-auto w-44 sm:w-52"
                 >
                   <div className="card-frame border border-border bg-muted shadow-[0_24px_48px_-24px_rgba(19,18,16,0.5)]">
@@ -1555,8 +1621,14 @@ export default function ScannerPage() {
                   </div>
                 </motion.div>
 
-                {/* Foil rule — the screen's single foil moment */}
-                <div className="foil-edge h-px w-24 mx-auto" />
+                {/* Foil rule — the screen's single foil moment. Now draws itself
+                    out from the centre as the card settles, so the confirmation
+                    lands as one gesture. Still the same one --foil element. */}
+                <motion.div
+                  initial={{ scaleX: 0, opacity: 0 }}
+                  animate={{ scaleX: 1, opacity: 1 }}
+                  transition={{ duration: 0.45, delay: 0.28, ease: [0.22, 1, 0.36, 1] }}
+                  className="foil-edge h-px w-24 mx-auto" />
 
                 {/* Catalog details */}
                 <div className="text-center space-y-1">
