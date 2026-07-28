@@ -75,7 +75,11 @@ export async function GET(request: Request) {
     const summary =
       `owned ${ownedPrices.examined}/${ownedPrices.total} (${ownedPrices.status}), ` +
       `sets ${newSets.examined}/${newSets.total} (${newSets.status}), ` +
-      `catalog ${catalogPrices.examined}/${catalogPrices.total} (${catalogPrices.status}), ` +
+      // Catalog prices are swept per SET, so its examined/total count sets while
+      // the neighbouring phases count rows. Spelled out rather than left to look
+      // like a card count next to them.
+      `catalog ${catalogPrices.examined}/${catalogPrices.total} sets ` +
+      `(${catalogPrices.refreshed} priced, ${catalogPrices.status}), ` +
       `${durationMs}ms of ${TOTAL_BUDGET_MS}ms`;
 
     // An incomplete run is a WARN, so it is greppable in Vercel logs without

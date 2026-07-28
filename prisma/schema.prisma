@@ -488,7 +488,17 @@ model CatalogCard {
   lowPrice        Float?
   midPrice        Float?
   highPrice       Float?
+  // When a PRICE was last actually written. This is the freshness a collector is
+  // shown, so it moves ONLY when upstream gave us a real price.
   priceUpdatedAt  DateTime?
+  // When we last ASKED about the price, regardless of whether we got one. This is
+  // the sweep's rotation key, and it must be separate from priceUpdatedAt or the
+  // sweep starves: a card upstream has no price for keeps its old priceUpdatedAt
+  // forever, stays permanently "stalest", and is re-fetched every single run while
+  // the rest of the catalog is never reached. Ordering rotation by "when did we
+  // last ask" advances past such cards; ordering by "when did the price change"
+  // cannot. Null = never asked since this column existed, so those rows lead.
+  priceCheckedAt  DateTime?
 
   // Provenance / staleness for sync (mirrors CardFingerprint.sourceUpdatedAt).
   sourceUpdatedAt DateTime?                    // set.updatedAt at import
@@ -498,5 +508,6 @@ model CatalogCard {
   @@index([game, setCode, collectorNumber])   // set/CN candidate lookup
   @@index([game, name])                        // name candidate lookup
   @@index([game, name, setReleaseDate])        // name lookup ordered newest-first (M7)
+  @@index([game, priceCheckedAt])              // price sweep rotation, stalest-first
   @@map("catalog_cards")
 }
