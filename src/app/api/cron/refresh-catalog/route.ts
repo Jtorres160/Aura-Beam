@@ -30,9 +30,9 @@ import {
 //      never zeroed by a non-answer. A stale/missing price degrades a scan to the
 //      live path; it never fails one.
 //
-// NOTE: intentionally NOT wired in vercel.json yet — same discipline as
-// CATALOG_LOCAL_ENABLED. Build + verify; the schedule goes live only on explicit
-// sign-off (see docs/scanner-v2/M-CATALOG-M5-report.md for the entry to add).
+// Scheduled daily at 07:00 UTC in vercel.json, after update-prices (06:00) and
+// analyze-scans (06:30) — the three crons stay staggered so they never contend
+// for the same DB/upstream budget.
 
 // Give the platform room; each phase self-limits well under this via the budget.
 export const maxDuration = 60;
