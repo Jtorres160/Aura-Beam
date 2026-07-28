@@ -77,6 +77,59 @@ function fakeDb(opts: { failUpsertIds?: Set<string>; existing?: string[] } = {})
   };
 }
 
+// ─── 0. Deadline (M5 budget bug — bug D) ──────────────────────────────────────
+//
+// A set can hold ~250 cards and the delay between upserts alone can exceed a
+// whole serverless window (3 sets × 250 cards × 250ms ≈ 187s against a 60s
+// maxDuration). So the import MUST be able to stop mid-set — and it is only safe
+// to do so because the result says it did.
+
+describe("syncSet — the run's clock can stop an import mid-set, honestly", () => {
+  test("stops at the deadline and marks the result incomplete", async () => {
+    stubListPage([apiCard("sv1-1"), apiCard("sv1-2"), apiCard("sv1-3")]);
+    const db = fakeDb();
+
+    // Deadline lands after the list call but before the card loop can finish.
+    const r = await syncSet(db, "sv1", {
+      delayMs: 8,
+      budget: { maxAttempts: 1, deadline: Date.now() + 12 },
+    });
+
+    assert.equal(r.incomplete, true, "a truncated import must say so");
+    assert.ok(r.upserted < 3, `expected a partial import, got ${r.upserted}`);
+  });
+
+  test("a completed import is NOT marked incomplete", async () => {
+    stubListPage([apiCard("sv1-1"), apiCard("sv1-2")]);
+    const db = fakeDb();
+
+    const r = await syncSet(db, "sv1", {
+      delayMs: 0,
+      budget: { maxAttempts: 1, deadline: Date.now() + 10_000 },
+    });
+
+    assert.equal(r.upserted, 2);
+    assert.notEqual(r.incomplete, true);
+  });
+
+  test("a resumed run continues rather than restarting", async () => {
+    // What makes stopping mid-set safe: the next run skips what already landed,
+    // so repeated bounded runs converge on a complete set.
+    stubListPage([apiCard("sv1-1"), apiCard("sv1-2"), apiCard("sv1-3")]);
+    const db = fakeDb({ existing: ["sv1-1", "sv1-2"] });
+
+    const r = await syncSet(db, "sv1", {
+      resume: true,
+      delayMs: 0,
+      budget: { maxAttempts: 1, deadline: Date.now() + 10_000 },
+    });
+
+    assert.equal(r.skipped, 2, "already-imported cards are not re-fetched");
+    assert.deepEqual(db.upserted, ["sv1-3"], "only the remainder is imported");
+    assert.notEqual(r.incomplete, true);
+  });
+});
+
 // ─── 1. Failure isolation ─────────────────────────────────────────────────────
 
 describe("syncSet — one bad card never aborts the set", () => {
@@ -84,7 +137,7 @@ describe("syncSet — one bad card never aborts the set", () => {
     stubListPage([apiCard("sv1-1"), apiCard("sv1-2"), apiCard("sv1-3")]);
     const db = fakeDb({ failUpsertIds: new Set(["sv1-2"]) });
 
-    const r = await syncSet(db, "sv1", { delayMs: 0, retry: { tries: 1 } });
+    const r = await syncSet(db, "sv1", { delayMs: 0, budget: { maxAttempts: 1 } });
 
     assert.equal(r.upserted, 2);
     assert.equal(r.failed, 1);
@@ -99,7 +152,7 @@ describe("syncSet — one bad card never aborts the set", () => {
     const db = fakeDb();
 
     await assert.rejects(
-      () => syncSet(db, "sv1", { delayMs: 0, retry: { tries: 1 } }),
+      () => syncSet(db, "sv1", { delayMs: 0, budget: { maxAttempts: 1 } }),
       /Upstream responded 500/,
     );
     assert.equal(db.upserted.length, 0);
@@ -113,7 +166,7 @@ describe("syncSet — resume skips already-imported cards", () => {
     stubListPage([apiCard("sv1-1"), apiCard("sv1-2")]);
     const db = fakeDb({ existing: ["sv1-1"] });
 
-    const r = await syncSet(db, "sv1", { resume: true, delayMs: 0, retry: { tries: 1 } });
+    const r = await syncSet(db, "sv1", { resume: true, delayMs: 0, budget: { maxAttempts: 1 } });
 
     assert.equal(r.skipped, 1);
     assert.equal(r.upserted, 1);
@@ -124,7 +177,7 @@ describe("syncSet — resume skips already-imported cards", () => {
     stubListPage([apiCard("sv1-1"), apiCard("sv1-2")]);
     const db = fakeDb({ existing: ["sv1-1"] });
 
-    const r = await syncSet(db, "sv1", { resume: false, delayMs: 0, retry: { tries: 1 } });
+    const r = await syncSet(db, "sv1", { resume: false, delayMs: 0, budget: { maxAttempts: 1 } });
 
     assert.equal(r.skipped, 0);
     assert.equal(r.upserted, 2);

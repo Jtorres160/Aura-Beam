@@ -1,5 +1,6 @@
 import type { CandidatePrinting } from "@/lib/scanner/evidence";
 import { fetchProviderJson } from "@/lib/providers/http";
+import type { ProviderFetchBudget } from "@/lib/providers/http";
 
 const SEARCH_URL = "https://api.scryfall.com/cards/search";
 const NAMED_URL = "https://api.scryfall.com/cards/named";
@@ -163,18 +164,21 @@ export async function fetchAllMTGPrintings(name: string): Promise<any[]> {
  * answer. Unlike the Pokémon API, Scryfall's 404 on /cards/{id} is a real
  * answer — "no card has this id" — so it resolves to null, not a failure.
  */
-export async function fetchScryfallCardById(id: string) {
+export async function fetchScryfallCardById(id: string, budget: ProviderFetchBudget = {}) {
   return await fetchProviderJson<any>(
     `https://api.scryfall.com/cards/${encodeURIComponent(id)}`,
-    { headers: SCRYFALL_HEADERS, emptyStatuses: [404] },
+    { headers: SCRYFALL_HEADERS, emptyStatuses: [404], ...budget },
   );
 }
 
 /** Lenient adapter: null on ANY failure. Only for callers that would rather
- *  skip a card than know why it's missing (price cron, card route). */
-export async function getScryfallCardById(id: string) {
+ *  skip a card than know why it's missing (price cron, card route).
+ *
+ *  `budget` lets a batched caller impose the RUN's clock and a fail-fast retry
+ *  profile; omitting it keeps the scan-path defaults exactly as they were. */
+export async function getScryfallCardById(id: string, budget: ProviderFetchBudget = {}) {
   try {
-    return await fetchScryfallCardById(id);
+    return await fetchScryfallCardById(id, budget);
   } catch (error) {
     console.error(`Failed to fetch Scryfall card by ID ${id}:`, error);
     return null;

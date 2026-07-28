@@ -1,5 +1,6 @@
 import type { CandidatePrinting } from "@/lib/scanner/evidence";
 import { fetchProviderJson } from "@/lib/providers/http";
+import type { ProviderFetchBudget } from "@/lib/providers/http";
 
 const BASE_URL = "https://api.pokemontcg.io/v2/cards";
 
@@ -99,19 +100,22 @@ export async function fetchAllPokemonPrintings(name: string): Promise<any[]> {
  * picked it off a grid it populated), so a 404 for an id it just issued is far
  * more likely illness than absence.
  */
-export async function fetchPokemonCardById(id: string) {
+export async function fetchPokemonCardById(id: string, budget: ProviderFetchBudget = {}) {
   const json = await fetchProviderJson<{ data?: any }>(
     `${BASE_URL}/${encodeURIComponent(id)}`,
-    { headers: getHeaders() },
+    { headers: getHeaders(), ...budget },
   );
   return json?.data ?? null;
 }
 
 /** Lenient adapter: null on ANY failure. Only for callers that would rather
- *  skip a card than know why it's missing (price cron, watchlist, card route). */
-export async function getPokemonCardById(id: string) {
+ *  skip a card than know why it's missing (price cron, watchlist, card route).
+ *
+ *  `budget` lets a batched caller impose the RUN's clock and a fail-fast retry
+ *  profile; omitting it keeps the scan-path defaults exactly as they were. */
+export async function getPokemonCardById(id: string, budget: ProviderFetchBudget = {}) {
   try {
-    return await fetchPokemonCardById(id);
+    return await fetchPokemonCardById(id, budget);
   } catch (error) {
     console.error(`Failed to fetch card by ID ${id}:`, error);
     return null;

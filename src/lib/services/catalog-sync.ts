@@ -21,6 +21,7 @@
 // what lets the cron run unattended.
 
 import { fetchProviderJson } from "@/lib/providers/http";
+import type { ProviderFetchBudget } from "@/lib/providers/http";
 import { formatPokemonCard } from "@/lib/services/pokemon";
 
 const API_CARDS = "https://api.pokemontcg.io/v2/cards";
@@ -41,30 +42,17 @@ function pokemonHeaders(): Record<string, string> {
   return key ? { "X-Api-Key": key } : {};
 }
 
-// ─── Retry (the per-set list call is the flaky point — see the fp builder) ────
-export interface RetryOpts {
-  tries?: number;
-  baseMs?: number;
-  label?: string;
-}
-
-export async function withRetry<T>(fn: () => Promise<T>, opts: RetryOpts = {}): Promise<T> {
-  const { tries = 4, baseMs = 1000, label = "request" } = opts;
-  let lastErr: unknown;
-  for (let attempt = 1; attempt <= tries; attempt++) {
-    try {
-      return await fn();
-    } catch (err) {
-      lastErr = err;
-      if (attempt < tries) {
-        const wait = baseMs * attempt;
-        console.log(`    …${label} attempt ${attempt} failed (${errMsg(err)}); retrying in ${wait}ms`);
-        await sleep(wait);
-      }
-    }
-  }
-  throw lastErr;
-}
+// ─── Retry ───────────────────────────────────────────────────────────────────
+// There is deliberately NO retry wrapper here any more. One used to sit around
+// every fetchProviderJson call (withRetry, tries:3, 1.5s backoff) — and once
+// PR #2 gave fetchProviderJson its OWN 8-attempt/16s retry, the two layers
+// MULTIPLIED: a single "list sets" call could consume ~52s, eating a whole
+// serverless window before the caller checked its budget even once. That is the
+// M5 budget bug. One retry layer, one clock.
+//
+// Callers express patience through ProviderFetchBudget instead, so the manual
+// importer can be generous (many attempts, no deadline) and the cron can be
+// strict (few attempts, run deadline) over the exact same code path.
 
 export function errMsg(err: unknown): string {
   return (err as { message?: string })?.message ?? String(err);
@@ -103,12 +91,12 @@ export interface CatalogSetMeta {
 /** All sets, oldest release first (stable import order). Throws on a non-answer
  *  so a flaky enumeration is retried/surfaced, never silently treated as "no
  *  sets exist" (which would look like the whole catalog vanished). */
-export async function fetchAllSets(retry: RetryOpts = {}): Promise<CatalogSetMeta[]> {
+export async function fetchAllSets(budget: ProviderFetchBudget = {}): Promise<CatalogSetMeta[]> {
   const url = `${API_SETS}?pageSize=250&select=${SET_SELECT}`;
-  const json = await withRetry(
-    () => fetchProviderJson<{ data?: any[] }>(url, { headers: pokemonHeaders() }),
-    { label: "list sets", ...retry },
-  );
+  const json = await fetchProviderJson<{ data?: any[] }>(url, {
+    headers: pokemonHeaders(),
+    ...budget,
+  });
   const sets = json?.data ?? [];
   sets.sort((a, b) => String(a.releaseDate ?? "").localeCompare(String(b.releaseDate ?? "")));
   return sets.map((s) => ({
@@ -122,19 +110,19 @@ export async function fetchAllSets(retry: RetryOpts = {}): Promise<CatalogSetMet
  *  treats a set whose card list can't be fetched as a failed set and moves on. */
 export async function fetchSetCards(
   setId: string,
-  opts: { delayMs?: number; retry?: RetryOpts } = {},
+  opts: { delayMs?: number; budget?: ProviderFetchBudget } = {},
 ): Promise<any[]> {
-  const { delayMs = 300, retry = {} } = opts;
+  const { delayMs = 300, budget = {} } = opts;
   const pageSize = 250;
   const out: any[] = [];
   for (let page = 1; ; page++) {
     const url =
       `${API_CARDS}?q=${encodeURIComponent(`set.id:${setId}`)}` +
       `&pageSize=${pageSize}&page=${page}&select=${CARD_SELECT}`;
-    const json = await withRetry(
-      () => fetchProviderJson<{ data?: any[] }>(url, { headers: pokemonHeaders() }),
-      { label: `${setId} list page ${page}`, ...retry },
-    );
+    const json = await fetchProviderJson<{ data?: any[] }>(url, {
+      headers: pokemonHeaders(),
+      ...budget,
+    });
     const batch = json?.data ?? [];
     out.push(...batch);
     if (batch.length < pageSize) break;
@@ -142,6 +130,14 @@ export async function fetchSetCards(
   }
   return out;
 }
+// NOTE on the deadline here: pagination deliberately has NO "stop early and
+// return what we have" branch. A truncated page walk that returned normally would
+// let syncSet record a partially-listed set as fully synced — and because
+// setNeedsSync compares the stored sourceUpdatedAt against upstream, that set
+// would then look CURRENT forever while missing cards. Instead the next page's
+// fetch throws ProviderDeadlineExceeded on its own deadline check, syncSet lets
+// it propagate, and the caller records a failed/incomplete set that gets retried.
+// A set is either listed in full or not claimed at all.
 
 /**
  * set.releaseDate ("YYYY/MM/DD") → Date, for the recency ordering candidate
@@ -242,6 +238,9 @@ export interface SetSyncFailure {
 }
 export interface SetSyncResult {
   setId: string;
+  /** True when the run's clock stopped the import part-way. The set was NOT fully
+   *  imported and must not be treated as current — a resumed run finishes it. */
+  incomplete?: boolean;
   listed: number;
   upserted: number;
   skipped: number;
@@ -262,14 +261,23 @@ export interface SetSyncResult {
 export async function syncSet(
   db: CatalogSyncDb,
   setId: string,
-  opts: { resume?: boolean; delayMs?: number; retry?: RetryOpts } = {},
+  opts: { resume?: boolean; delayMs?: number; budget?: ProviderFetchBudget } = {},
 ): Promise<SetSyncResult> {
-  const { resume = false, delayMs = 300, retry = {} } = opts;
-  const cards = await fetchSetCards(setId, { delayMs, retry }); // throws → failed set
+  const { resume = false, delayMs = 300, budget = {} } = opts;
+  const deadline = budget.deadline;
+  const cards = await fetchSetCards(setId, { delayMs, budget }); // throws → failed set
   const result: SetSyncResult = { setId, listed: cards.length, upserted: 0, skipped: 0, failed: 0, failures: [] };
   const skip = resume ? await existingIdsForSet(db, setId) : new Set<string>();
 
   for (const [i, card] of cards.entries()) {
+    // A set can hold ~250 cards and the delay between upserts alone can exceed a
+    // whole serverless window, so the import must be able to stop mid-set. It is
+    // safe to do so ONLY because the result says it did: `incomplete` keeps the
+    // caller from marking the set synced, and a resumed run skips what landed.
+    if (deadline !== undefined && Date.now() >= deadline) {
+      result.incomplete = true;
+      break;
+    }
     if (skip.has(card.id)) {
       result.skipped++;
       continue;

@@ -39,6 +39,23 @@ export type ProviderFailureReason =
   | "not_configured" // we lack the credentials to ask
   | "unexpected";    // anything else — still a failure, never a zero
 
+/**
+ * We stopped asking because the RUN ran out of clock — not because the source
+ * failed. Deliberately NOT a ProviderFailureReason: that union reaches collectors
+ * and describes what a *source* did, while this describes what *we* did. Conflating
+ * the two is exactly how a budget-exhausted catalog sweep reported "no sets need
+ * syncing" (see docs/scanner-v2/M-CATALOG-M5-budget-bug-proposal.md, bug B).
+ *
+ * Only ever thrown when a caller passes `deadline`, so no scan-path caller can
+ * observe it.
+ */
+export class ProviderDeadlineExceeded extends Error {
+  constructor(message = "Run deadline reached before the source answered") {
+    super(message);
+    this.name = "ProviderDeadlineExceeded";
+  }
+}
+
 /** A source failed to answer. Carries a reason the UI is allowed to show.
  *
  *  Written without a TypeScript parameter property on purpose: the test runner
@@ -131,6 +148,41 @@ function backoffDelay(attempt: number): number {
 }
 
 /**
+ * Options for a provider fetch.
+ *
+ * `headers`/`emptyStatuses` describe the REQUEST. The remaining four describe the
+ * CALLER'S PATIENCE, and every one of them defaults to the scan-path tuning above
+ * — so a caller that passes none gets byte-identical behaviour to before these
+ * existed. That default is deliberate: the 8-attempt/16s profile was measured for
+ * a single interactive scan where a collector is waiting, and it must not drift
+ * just because a batch job needed something different.
+ *
+ * A batch job wants the opposite trade — fail fast, skip the item, come back
+ * tomorrow — so it passes its own smaller profile plus `deadline`, the shared
+ * run clock. See CATALOG_FETCH in services/cron-budget.ts.
+ */
+export interface ProviderFetchOptions {
+  headers?: Record<string, string>;
+  emptyStatuses?: number[];
+  /** Epoch ms. The RUN's clock: clamps per-attempt timeouts AND stops retries. */
+  deadline?: number;
+  /** Per-attempt ceiling. Defaults to PROVIDER_TIMEOUT_MS. */
+  timeoutMs?: number;
+  /** Total attempts including the first. Defaults to RETRY_MAX_ATTEMPTS. */
+  maxAttempts?: number;
+  /** Wall ceiling across all attempts of THIS call. Defaults to RETRY_BUDGET_MS. */
+  budgetMs?: number;
+}
+
+/** Just the patience half of ProviderFetchOptions — what a batched caller passes
+ *  down through a service getter without wanting a say in headers or empty
+ *  statuses (those belong to the source, not the caller). */
+export type ProviderFetchBudget = Pick<
+  ProviderFetchOptions,
+  "deadline" | "timeoutMs" | "maxAttempts" | "budgetMs"
+>;
+
+/**
  * Fetch JSON from a card database, converting every non-answer into a
  * classified ProviderError.
  *
@@ -147,12 +199,22 @@ function backoffDelay(attempt: number): number {
  */
 export async function fetchProviderJson<T = any>(
   url: string,
-  opts: { headers?: Record<string, string>; emptyStatuses?: number[] } = {},
+  opts: ProviderFetchOptions = {},
 ): Promise<T | null> {
   const startedAt = Date.now();
+  const {
+    deadline,
+    maxAttempts = RETRY_MAX_ATTEMPTS,
+    budgetMs = RETRY_BUDGET_MS,
+  } = opts;
   let lastError: ProviderError | undefined;
 
-  for (let attempt = 1; attempt <= RETRY_MAX_ATTEMPTS; attempt++) {
+  // Never issue a request we already know we have no time to hear back from.
+  if (deadline !== undefined && Date.now() >= deadline) {
+    throw new ProviderDeadlineExceeded(`No time left to request ${url}`);
+  }
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       // A real answer — a value OR a null from an emptyStatus — returns straight
       // through. Only a ProviderError (the source did not answer) reaches catch.
@@ -161,9 +223,15 @@ export async function fetchProviderJson<T = any>(
       if (!(err instanceof ProviderError)) throw err;
       lastError = err;
 
-      const budgetLeft = RETRY_BUDGET_MS - (Date.now() - startedAt);
+      // Two clocks bound a retry: this call's own budget, and (when supplied) the
+      // RUN's deadline. Honouring the tighter of the two is what makes a caller's
+      // wall-clock budget actually interruptible rather than merely advisory.
+      const callBudgetLeft = budgetMs - (Date.now() - startedAt);
+      const runBudgetLeft = deadline === undefined ? Infinity : deadline - Date.now();
+      const budgetLeft = Math.min(callBudgetLeft, runBudgetLeft);
+
       const retryable = RETRYABLE_REASONS.has(err.reason);
-      const hasAttemptsLeft = attempt < RETRY_MAX_ATTEMPTS;
+      const hasAttemptsLeft = attempt < maxAttempts;
       // Stop if it's not worth retrying, we're out of tries, or the budget can't
       // even fit a backoff. Throwing the LAST error preserves its reason for the
       // truth layer, so a card is still never called "not found" on a failure.
@@ -171,7 +239,7 @@ export async function fetchProviderJson<T = any>(
 
       const delay = Math.min(backoffDelay(attempt), budgetLeft);
       console.warn(
-        `[Provider] ${err.reason} on attempt ${attempt}/${RETRY_MAX_ATTEMPTS} — retrying in ${delay}ms: ${url}`,
+        `[Provider] ${err.reason} on attempt ${attempt}/${maxAttempts} — retrying in ${delay}ms: ${url}`,
       );
       if (delay > 0) await new Promise((r) => setTimeout(r, delay));
     }
@@ -185,21 +253,30 @@ export async function fetchProviderJson<T = any>(
  *  retry wrapper above decides whether that failure is worth another try. */
 async function fetchProviderJsonOnce<T = any>(
   url: string,
-  opts: { headers?: Record<string, string>; emptyStatuses?: number[] } = {},
+  opts: ProviderFetchOptions = {},
 ): Promise<T | null> {
-  const { headers, emptyStatuses = [] } = opts;
+  const { headers, emptyStatuses = [], deadline, timeoutMs = PROVIDER_TIMEOUT_MS } = opts;
+
+  // The attempt gets the tighter of its own ceiling and whatever the run has
+  // left, so an in-flight request is genuinely aborted at the run deadline rather
+  // than merely abandoned by a caller who has already given up waiting.
+  const effectiveTimeout =
+    deadline === undefined ? timeoutMs : Math.min(timeoutMs, deadline - Date.now());
+  if (effectiveTimeout <= 0) {
+    throw new ProviderDeadlineExceeded(`No time left to request ${url}`);
+  }
 
   let response: Response;
   try {
     response = await fetch(url, {
       headers,
-      signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
+      signal: AbortSignal.timeout(effectiveTimeout),
     });
   } catch (err: any) {
     // AbortSignal.timeout rejects with a TimeoutError DOMException.
     const name = err?.name ?? "";
     if (name === "TimeoutError" || name === "AbortError") {
-      throw new ProviderError("timeout", `No response within ${PROVIDER_TIMEOUT_MS}ms`);
+      throw new ProviderError("timeout", `No response within ${effectiveTimeout}ms`);
     }
     throw new ProviderError("network", err?.message ?? "Network error");
   }

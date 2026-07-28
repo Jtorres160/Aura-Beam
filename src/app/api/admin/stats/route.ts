@@ -36,7 +36,10 @@ export interface ScheduledJob {
 
 /** Human labels for cron paths. A path with no label renders as itself. */
 const JOB_LABELS: Record<string, string> = {
-  "/api/cron/update-prices": "Price History Update",
+  // Three phases share this slot (owned/watched prices, catalog new-set sync,
+  // catalog price refresh) because the Hobby plan allows two cron entries. The
+  // label says so rather than naming only the first phase.
+  "/api/cron/update-prices": "Nightly Maintenance — prices + catalog",
   "/api/cron/analyze-scans": "Scan Analysis",
 };
 
