@@ -13,9 +13,12 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ViewToggle } from "@/components/ui/view-toggle";
 import Link from "next/link";
 import { addCardToCollection } from "@/lib/collections/add-to-collection";
 import { useDebounce } from "@/hooks/use-debounce";
+import { useCardView } from "@/hooks/use-card-view";
+import { CARD_VIEW_KEYS } from "@/lib/ui/card-view";
 import type { GameId } from "@/lib/scanner/evidence";
 import { GAME_SHORT_LABELS } from "@/lib/search/identity";
 import type { CardSearchResult, SearchOutcome, SearchSourceStatus } from "@/lib/search/types";
@@ -63,12 +66,162 @@ function SourceList({ sources }: { sources: SearchSourceStatus[] }) {
   );
 }
 
+/**
+ * Card artwork at true card proportions (`card-frame` = 63:88), or the
+ * placeholder when the source shipped no image. `children` is for overlays
+ * pinned to the frame, e.g. the game badge in grid mode.
+ */
+function ResultArtwork({
+  card,
+  className,
+  children,
+}: {
+  card: CardSearchResult;
+  className?: string;
+  children?: React.ReactNode;
+}) {
+  const src = card.artwork.thumbnailUrl || card.artwork.imageUrl;
+  return (
+    <div className={`card-frame bg-aura-purple/10 flex items-center justify-center overflow-hidden relative ${className ?? ""}`}>
+      {src ? (
+        /* eslint-disable-next-line @next/next/no-img-element */
+        <img src={src} alt={card.name} className="w-full h-full object-cover" />
+      ) : (
+        <Sparkles className="h-5 w-5 text-aura-purple/40" />
+      )}
+      {children}
+    </div>
+  );
+}
+
+/** A card with no quoted price is not a card worth $0.00. */
+function ResultPrice({ card, align }: { card: CardSearchResult; align: "right" | "left" }) {
+  const alignment = align === "right" ? "text-right" : "text-left";
+  if (card.metadata.marketPrice === null) {
+    return (
+      <div className={alignment}>
+        <p className="text-sm font-medium leading-none text-muted-foreground">—</p>
+        <p className="text-xs text-muted-foreground mt-1">No price</p>
+      </div>
+    );
+  }
+  return (
+    <div className={alignment}>
+      <p className="text-lg font-bold leading-none">
+        ${card.metadata.marketPrice.toLocaleString(undefined, {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        })}
+      </p>
+      <p className="text-xs text-muted-foreground mt-1">Market</p>
+    </div>
+  );
+}
+
+/**
+ * The add-to-collection / add-to-watchlist pair from PR #9.
+ *
+ * Hoisted out of the list row unchanged — same markup, same states, same
+ * handlers — purely so grid mode shows the identical control instead of a
+ * second copy that could drift. Nothing about the behaviour moved.
+ */
+function ResultActions({
+  card,
+  addingToCollection,
+  addedToCollection,
+  addingToWatchlist,
+  addedToWatchlist,
+  onAddToCollection,
+  onAddToWatchlist,
+  className,
+}: {
+  card: CardSearchResult;
+  addingToCollection: string | null;
+  addedToCollection: Set<string>;
+  addingToWatchlist: string | null;
+  addedToWatchlist: Set<string>;
+  onAddToCollection: (e: React.MouseEvent, card: CardSearchResult) => void;
+  onAddToWatchlist: (e: React.MouseEvent, cardId: string) => void;
+  className?: string;
+}) {
+  return (
+    <div className={`flex items-center gap-2 ${className ?? ""}`}>
+      <Button
+        variant="outline"
+        size="icon"
+        aria-label={
+          addedToCollection.has(card.id)
+            ? `${card.name} is in your collection`
+            : `Add ${card.name} to collection`
+        }
+        title="Add to collection"
+        className={`h-8 w-8 rounded-full ${
+          addedToCollection.has(card.id)
+            ? "bg-brass/10 border-brass/50 text-brass"
+            : "hover:text-brass hover:border-brass/50 hover:bg-brass/10"
+        }`}
+        onClick={(e) => onAddToCollection(e, card)}
+        disabled={addingToCollection === card.id || addedToCollection.has(card.id)}
+      >
+        {addingToCollection === card.id ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : addedToCollection.has(card.id) ? (
+          <Check className="h-4 w-4" />
+        ) : (
+          <Library className="h-4 w-4" />
+        )}
+      </Button>
+
+      <Button
+        variant="outline"
+        size="icon"
+        aria-label={
+          addedToWatchlist.has(card.id)
+            ? `${card.name} is on your watchlist`
+            : `Add ${card.name} to watchlist`
+        }
+        title="Add to watchlist"
+        className={`h-8 w-8 rounded-full ${
+          addedToWatchlist.has(card.id)
+            ? "bg-pink-500/10 border-pink-500/50 text-pink-500"
+            : "hover:text-pink-500 hover:border-pink-500/50 hover:bg-pink-500/10"
+        }`}
+        onClick={(e) => onAddToWatchlist(e, card.id)}
+        disabled={addingToWatchlist === card.id || addedToWatchlist.has(card.id)}
+      >
+        {addingToWatchlist === card.id ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : addedToWatchlist.has(card.id) ? (
+          <Check className="h-4 w-4" />
+        ) : (
+          <Heart className="h-4 w-4" />
+        )}
+      </Button>
+    </div>
+  );
+}
+
+/** Why a row action didn't happen, on the row it belongs to. */
+function RowError({ message }: { message: string }) {
+  return (
+    <div
+      role="status"
+      className="mt-1 mb-1 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-2 text-xs text-amber-600 dark:text-amber-500"
+    >
+      <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px" />
+      <span>{message}</span>
+    </div>
+  );
+}
+
 export default function SearchPage() {
   const { data: session, status: sessionStatus } = useSession();
   const [query, setQuery] = useState("");
   const debouncedQuery = useDebounce(query, 300);
 
   const [gameFilter, setGameFilter] = useState<GameId | null>(null);
+  // Same control, same persistence as the collection page — see @/hooks/use-card-view.
+  const [view, setView] = useCardView(CARD_VIEW_KEYS.search, "list");
   const [outcome, setOutcome] = useState<SearchOutcome | null>(null);
   const [requestFailed, setRequestFailed] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -212,22 +365,25 @@ export default function SearchPage() {
         </div>
       </motion.div>
 
-      <div className="flex items-center gap-2 flex-wrap">
-        <Button variant="outline" size="sm" className="rounded-lg text-xs" onClick={() => setGameFilter(null)}>
-          <SlidersHorizontal className="h-3.5 w-3.5 mr-1.5" />
-          All Games
-        </Button>
-        {GAME_FILTERS.map((g) => (
-          <Button
-            key={g}
-            variant={gameFilter === g ? "default" : "outline"}
-            size="sm"
-            className={`rounded-lg text-xs ${gameFilter === g ? "gradient-bg text-white border-0" : ""}`}
-            onClick={() => setGameFilter(gameFilter === g ? null : g)}
-          >
-            {GAME_SHORT_LABELS[g]}
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button variant="outline" size="sm" className="rounded-lg text-xs" onClick={() => setGameFilter(null)}>
+            <SlidersHorizontal className="h-3.5 w-3.5 mr-1.5" />
+            All Games
           </Button>
-        ))}
+          {GAME_FILTERS.map((g) => (
+            <Button
+              key={g}
+              variant={gameFilter === g ? "default" : "outline"}
+              size="sm"
+              className={`rounded-lg text-xs ${gameFilter === g ? "gradient-bg text-white border-0" : ""}`}
+              onClick={() => setGameFilter(gameFilter === g ? null : g)}
+            >
+              {GAME_SHORT_LABELS[g]}
+            </Button>
+          ))}
+        </div>
+        <ViewToggle view={view} onChange={setView} />
       </div>
 
       <div className="space-y-2">
@@ -287,129 +443,105 @@ export default function SearchPage() {
           </div>
         )}
 
-        {cards.map((card, i) => (
-          <motion.div
-            key={card.id}
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.25, delay: Math.min(i, 8) * 0.03 }}
-          >
-            <Link href={`/cards/${encodeURIComponent(card.id)}`}>
-              <Card className="glass border-border/50 card-hover cursor-pointer overflow-hidden transition-all hover:-translate-y-1">
-                <CardContent className="p-4 flex items-center gap-4">
-                  <div className="h-20 w-16 sm:h-24 sm:w-16 rounded-lg bg-aura-purple/10 flex items-center justify-center shrink-0 overflow-hidden relative shadow-md">
-                    {card.artwork.thumbnailUrl || card.artwork.imageUrl ? (
-                      /* eslint-disable-next-line @next/next/no-img-element */
-                      <img
-                        src={(card.artwork.thumbnailUrl || card.artwork.imageUrl) as string}
-                        alt={card.name}
-                        className="w-full h-full object-cover"
-                      />
-                    ) : (
-                      <Sparkles className="h-5 w-5 text-aura-purple/40" />
-                    )}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="font-semibold truncate text-base sm:text-lg">{card.name}</p>
-                    <p className="text-sm text-muted-foreground truncate">
-                      {card.set.name}
-                      {card.collectorNumber ? ` · #${card.collectorNumber}` : ""} · {card.rarity}
-                    </p>
-                  </div>
-                  <Badge variant="secondary" className={`text-xs shrink-0 hidden sm:inline-flex ${gameColors[card.game]}`}>
-                    {GAME_SHORT_LABELS[card.game]}
-                  </Badge>
-                  <div className="text-right shrink-0 flex flex-col items-end gap-2">
-                    <div>
-                      {/* A card with no quoted price is not a card worth $0.00. */}
-                      {card.metadata.marketPrice !== null ? (
-                        <>
-                          <p className="text-lg font-bold leading-none">
-                            ${card.metadata.marketPrice.toLocaleString(undefined, {
-                              minimumFractionDigits: 2,
-                              maximumFractionDigits: 2,
-                            })}
-                          </p>
-                          <p className="text-xs text-muted-foreground mt-1">Market</p>
-                        </>
-                      ) : (
-                        <>
-                          <p className="text-sm font-medium leading-none text-muted-foreground">—</p>
-                          <p className="text-xs text-muted-foreground mt-1">No price</p>
-                        </>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Button
-                        variant="outline"
-                        size="icon"
-                        aria-label={
-                          addedToCollection.has(card.id)
-                            ? `${card.name} is in your collection`
-                            : `Add ${card.name} to collection`
-                        }
-                        title="Add to collection"
-                        className={`h-8 w-8 rounded-full ${
-                          addedToCollection.has(card.id)
-                            ? "bg-brass/10 border-brass/50 text-brass"
-                            : "hover:text-brass hover:border-brass/50 hover:bg-brass/10"
-                        }`}
-                        onClick={(e) => handleAddToCollection(e, card)}
-                        disabled={addingToCollection === card.id || addedToCollection.has(card.id)}
-                      >
-                        {addingToCollection === card.id ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : addedToCollection.has(card.id) ? (
-                          <Check className="h-4 w-4" />
-                        ) : (
-                          <Library className="h-4 w-4" />
-                        )}
-                      </Button>
-
-                      <Button
-                        variant="outline"
-                        size="icon"
-                        aria-label={
-                          addedToWatchlist.has(card.id)
-                            ? `${card.name} is on your watchlist`
-                            : `Add ${card.name} to watchlist`
-                        }
-                        title="Add to watchlist"
-                        className={`h-8 w-8 rounded-full ${
-                          addedToWatchlist.has(card.id)
-                            ? "bg-pink-500/10 border-pink-500/50 text-pink-500"
-                            : "hover:text-pink-500 hover:border-pink-500/50 hover:bg-pink-500/10"
-                        }`}
-                        onClick={(e) => handleAddToWatchlist(e, card.id)}
-                        disabled={addingToWatchlist === card.id || addedToWatchlist.has(card.id)}
-                      >
-                        {addingToWatchlist === card.id ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : addedToWatchlist.has(card.id) ? (
-                          <Check className="h-4 w-4" />
-                        ) : (
-                          <Heart className="h-4 w-4" />
-                        )}
-                      </Button>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            </Link>
-
-            {/* Sits OUTSIDE the Link so reading why an add failed can't navigate
-                away from the row it belongs to. */}
-            {rowErrors[card.id] && (
-              <div
-                role="status"
-                className="mt-1 mb-1 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-2 text-xs text-amber-600 dark:text-amber-500"
+        {/* ─── Grid: the artwork is the object, metadata is a caption ─────
+            Same binder-page geometry as the collection grid, so a collector
+            moving between the two screens sees one layout, not two. */}
+        {view === "grid" && cards.length > 0 && (
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-x-4 gap-y-6">
+            {cards.map((card, i) => (
+              <motion.div
+                key={card.id}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.25, delay: Math.min(i, 8) * 0.03 }}
               >
-                <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px" />
-                <span>{rowErrors[card.id]}</span>
-              </div>
-            )}
-          </motion.div>
-        ))}
+                <Link href={`/cards/${encodeURIComponent(card.id)}`} className="group block cursor-pointer">
+                  <ResultArtwork card={card} className="w-full border border-border card-hover">
+                    <Badge
+                      variant="secondary"
+                      className={`absolute top-2 right-2 text-[10px] shadow-sm ${gameColors[card.game]}`}
+                    >
+                      {GAME_SHORT_LABELS[card.game]}
+                    </Badge>
+                  </ResultArtwork>
+                  <div className="mt-2 px-0.5">
+                    <p className="text-sm font-medium truncate">{card.name}</p>
+                    <p className="text-xs text-muted-foreground truncate">
+                      {card.set.name}
+                      {card.collectorNumber ? ` · #${card.collectorNumber}` : ""}
+                    </p>
+                    <p className="text-xs text-muted-foreground truncate">{card.rarity}</p>
+                  </div>
+                </Link>
+
+                {/* Outside the Link: an add must never navigate. */}
+                <div className="mt-1.5 px-0.5 flex items-end justify-between gap-2">
+                  <ResultPrice card={card} align="left" />
+                  <ResultActions
+                    card={card}
+                    addingToCollection={addingToCollection}
+                    addedToCollection={addedToCollection}
+                    addingToWatchlist={addingToWatchlist}
+                    addedToWatchlist={addedToWatchlist}
+                    onAddToCollection={handleAddToCollection}
+                    onAddToWatchlist={handleAddToWatchlist}
+                  />
+                </div>
+
+                {rowErrors[card.id] && <RowError message={rowErrors[card.id]} />}
+              </motion.div>
+            ))}
+          </div>
+        )}
+
+        {/* ─── List: the scannable ledger, unchanged apart from a thumbnail
+            large enough to actually recognise the card by. ───────────────── */}
+        {view === "list" &&
+          cards.map((card, i) => (
+            <motion.div
+              key={card.id}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.25, delay: Math.min(i, 8) * 0.03 }}
+            >
+              <Link href={`/cards/${encodeURIComponent(card.id)}`}>
+                <Card className="glass border-border/50 card-hover cursor-pointer overflow-hidden transition-all hover:-translate-y-1">
+                  <CardContent className="p-4 flex items-center gap-4">
+                    {/* Was a fixed 64×96 box, so art was letterboxed and small.
+                        Now a true 63:88 frame, wide enough to recognise a
+                        printing by its artwork without leaving list mode. */}
+                    <ResultArtwork card={card} className="w-16 sm:w-20 shrink-0 shadow-md" />
+                    <div className="flex-1 min-w-0">
+                      <p className="font-semibold truncate text-base sm:text-lg">{card.name}</p>
+                      <p className="text-sm text-muted-foreground truncate">
+                        {card.set.name}
+                        {card.collectorNumber ? ` · #${card.collectorNumber}` : ""} · {card.rarity}
+                      </p>
+                    </div>
+                    <Badge variant="secondary" className={`text-xs shrink-0 hidden sm:inline-flex ${gameColors[card.game]}`}>
+                      {GAME_SHORT_LABELS[card.game]}
+                    </Badge>
+                    <div className="shrink-0 flex flex-col items-end gap-2">
+                      <ResultPrice card={card} align="right" />
+                      <ResultActions
+                        card={card}
+                        addingToCollection={addingToCollection}
+                        addedToCollection={addedToCollection}
+                        addingToWatchlist={addingToWatchlist}
+                        addedToWatchlist={addedToWatchlist}
+                        onAddToCollection={handleAddToCollection}
+                        onAddToWatchlist={handleAddToWatchlist}
+                      />
+                    </div>
+                  </CardContent>
+                </Card>
+              </Link>
+
+              {/* Sits OUTSIDE the Link so reading why an add failed can't navigate
+                  away from the row it belongs to. */}
+              {rowErrors[card.id] && <RowError message={rowErrors[card.id]} />}
+            </motion.div>
+          ))}
       </div>
     </div>
   );

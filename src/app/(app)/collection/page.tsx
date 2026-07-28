@@ -4,12 +4,15 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { useSession } from "next-auth/react";
-import { Library, Grid3X3, List, Plus, Search, Filter, Sparkles } from "lucide-react";
+import { Library, Plus, Search, Filter, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ViewToggle } from "@/components/ui/view-toggle";
 import { displayMarketPrice, formatMarketPrice } from "@/lib/cards/market-price";
+import { useCardView } from "@/hooks/use-card-view";
+import { CARD_VIEW_KEYS } from "@/lib/ui/card-view";
 
 export default function CollectionPage() {
   // `status` ("loading" | "authenticated" | "unauthenticated") is NextAuth's
@@ -19,7 +22,9 @@ export default function CollectionPage() {
   // then skipped the fetch and the page rendered its empty "0 cards" state.
   // The API authenticates via the server session cookie, so no token is needed.
   const { status } = useSession();
-  const [view, setView] = useState<"grid" | "list">("grid");
+  // Was local state, so the choice was lost on every navigation away. Now the
+  // same persisted hook the search page uses, keyed per surface.
+  const [view, setView] = useCardView(CARD_VIEW_KEYS.collection, "grid");
   const [search, setSearch] = useState("");
   const [collection, setCollection] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -99,24 +104,7 @@ export default function CollectionPage() {
             <TabsTrigger value="decks" className="rounded-lg text-xs">Decks</TabsTrigger>
             <TabsTrigger value="folders" className="rounded-lg text-xs">Folders</TabsTrigger>
           </TabsList>
-          <div className="flex items-center gap-2">
-            <Button
-              variant={view === "grid" ? "default" : "outline"}
-              size="icon"
-              className="h-9 w-9 rounded-lg"
-              onClick={() => setView("grid")}
-            >
-              <Grid3X3 className="h-4 w-4" />
-            </Button>
-            <Button
-              variant={view === "list" ? "default" : "outline"}
-              size="icon"
-              className="h-9 w-9 rounded-lg"
-              onClick={() => setView("list")}
-            >
-              <List className="h-4 w-4" />
-            </Button>
-          </div>
+          <ViewToggle view={view} onChange={setView} />
         </div>
 
         {/* Search */}
