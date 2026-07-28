@@ -6,6 +6,7 @@
 // A provider must never return [] to mean "I broke".
 
 import { formatPokemonCard } from "@/lib/services/pokemon";
+import { CATALOG_LOCAL_ENABLED, catalogSearchForQuery } from "@/lib/services/pokemon-catalog";
 import { formatScryfallCard } from "@/lib/services/scryfall";
 import { formatYugiohCard } from "@/lib/services/yugioh";
 import type { GameId } from "@/lib/scanner/evidence";
@@ -52,7 +53,9 @@ export const scryfallProvider: SearchProvider = {
 
 const POKEMON_URL = "https://api.pokemontcg.io/v2/cards";
 
-export const pokemonProvider: SearchProvider = {
+/** The live upstream, unchanged. Still the fallback, and still the only path
+ *  when the local catalog is disabled or genuinely doesn't have the card. */
+export const pokemonLiveProvider: SearchProvider = {
   id: "pokemon",
   game: "POKEMON",
   async search(parsed) {
@@ -91,6 +94,96 @@ export const pokemonProvider: SearchProvider = {
     const rows = json?.data ?? [];
     return rows.map((r) => fromCandidatePrinting(formatPokemonCard(r), "pokemon"));
   },
+};
+
+// ─── Pokémon: local catalog first ───────────────────────────────────────────
+// The scan path was repointed off the live API and onto our own catalog_cards in
+// M-CATALOG · M4. Search never was, and went on asking api.pokemontcg.io for
+// every query. Measured on 2026-07-28, through this exact provider:
+//
+//     pokemon    p50 1903ms   p95 7644ms   max 11786ms   (~55% of requests 500)
+//     scryfall   p50   27ms   p95  140ms
+//     ygoprodeck p50  290ms   p95  442ms
+//
+// and those pokemon figures are a FLOOR — the harness zeroes the retry backoff
+// that production pays. Because CardSearchService fans out with Promise.all, an
+// unfiltered search is as slow as this one source.
+//
+// Meanwhile the catalog already holds the answer. Over ten sampled names, 452 of
+// 452 cards the live API returned were already in catalog_cards, with prices.
+//
+// FAIL-OPEN, and it is the whole safety argument for this change:
+//
+//     catalog has cards  → serve them, never touch the live API
+//     catalog has none   → ask the live API, exactly as before
+//     catalog ERRORS     → ask the live API, exactly as before
+//
+// So a card in a set newer than the last sync is still findable, and a local DB
+// hiccup degrades to today's behaviour rather than to a worse one. What it can
+// never do is turn a local miss into "no such card" — the empty list is handed
+// to the live provider as a question, not returned as an answer.
+//
+// The truth boundary is untouched. This provider throws SearchProviderError from
+// the live path exactly as before, and a catalog hit is a source that ANSWERED,
+// so `provider_unavailable` still means what it has always meant.
+
+/** The three collaborators the local-first path needs, injectable so the
+ *  fail-open behaviour can be tested without a database, without the network,
+ *  and without juggling a module-load-time env flag. */
+export interface PokemonSearchDeps {
+  enabled: boolean;
+  catalogSearch: typeof catalogSearchForQuery;
+  live: SearchProvider["search"];
+}
+
+const defaultPokemonDeps: PokemonSearchDeps = {
+  enabled: CATALOG_LOCAL_ENABLED,
+  catalogSearch: catalogSearchForQuery,
+  live: (parsed) => pokemonLiveProvider.search(parsed),
+};
+
+export async function searchPokemonLocalFirst(
+  parsed: ParsedQuery,
+  deps: PokemonSearchDeps = defaultPokemonDeps,
+): Promise<CardSearchResult[]> {
+  if (!parsed.name && !parsed.collectorNumber) return [];
+
+  if (deps.enabled) {
+    // Errors are swallowed HERE deliberately. Letting one propagate would surface
+    // as a FAILED pokemon source — i.e. "we couldn't reach the Pokémon database" —
+    // which a local Postgres hiccup must never claim while the live API is sitting
+    // there reachable. Same reasoning as lookupBySource() in candidates.ts.
+    const local = await deps
+      .catalogSearch(parsed.name, parsed.collectorNumber)
+      .catch((err: unknown) => {
+        console.warn(
+          "[Search] Local Pokémon catalog failed — falling back to the live API:",
+          (err as Error)?.message,
+        );
+        return [];
+      });
+
+    if (local.length > 0) {
+      // Explicit local-serve marker, matching the scan path's (candidates.ts):
+      // both paths label the source "pokemon", so without this line there is no
+      // way to tell from logs which one answered.
+      console.log(
+        `[Search] served Pokémon from local catalog (${local.length} cards for "${parsed.raw}")`,
+      );
+      return local.map((c) => fromCandidatePrinting(c, "pokemon"));
+    }
+  }
+
+  // A local miss is a QUESTION passed to the live API, never an answer returned
+  // to the collector. Whatever the live provider does — cards, a real zero, or a
+  // thrown SearchProviderError — is what search sees, exactly as before.
+  return deps.live(parsed);
+}
+
+export const pokemonProvider: SearchProvider = {
+  id: "pokemon",
+  game: "POKEMON",
+  search: (parsed) => searchPokemonLocalFirst(parsed),
 };
 
 // ─── YGOPRODeck (Yu-Gi-Oh!) ─────────────────────────────────────────────────

@@ -29,6 +29,12 @@ import { dbRetry, prisma } from "@/lib/prisma";
  *  (M6), never a side effect of shipping this code. */
 export const CATALOG_LOCAL_ENABLED = process.env.CATALOG_LOCAL_ENABLED === "1";
 
+/** Rows a catalog-backed SEARCH may return before ranking. See
+ *  catalogSearchForQuery for why this is wider than the live pageSize it
+ *  mirrors — measured at no latency cost, and 400/400 result parity instead
+ *  of 230/400. */
+export const CATALOG_SEARCH_TAKE = 250;
+
 /** The catalog_cards columns a CandidatePrinting is rebuilt from. Exactly the
  *  fields formatPokemonCard() emits — nothing else is read on the scan path. */
 export interface CatalogCardRow {
@@ -244,6 +250,82 @@ export async function catalogSearchByName(
       select: CATALOG_SELECT,
       orderBy: [{ name: "asc" }, { setName: "asc" }, { collectorNumber: "asc" }],
       take: 50,
+    }),
+  );
+  return rows.map(formatCatalogCard);
+}
+
+/**
+ * Local mirror of the SEARCH provider's Pokémon query (registry.ts).
+ *
+ * The scan path was repointed at this catalog in M4; search never was, and went
+ * on asking api.pokemontcg.io for every keystroke. Measured on 2026-07-28 that
+ * cost a p50 of 1903ms and a p95 of 7644ms against Scryfall's 27ms, with ~55% of
+ * individual upstream requests returning HTTP 500 — while 452 of 452 results the
+ * live API returned for a sample of ten names were already sitting in these rows.
+ *
+ * Deliberately mirrors the live query's SHAPE, not just its data:
+ *  - name recall is a CONTAINS match, the local equivalent of the live
+ *    `name:"*X*"` wildcard. Precision is match.ts's job, here as there — a
+ *    narrower predicate would delete cards the ranker exists to order.
+ *  - a number-ONLY query pushes the number down instead, matching both the
+ *    zero-padded and bare spellings ("006" ⇄ "6"), exactly as the live provider
+ *    does when it has no name to recall on.
+ *
+ * THE CAP IS DELIBERATELY WIDER THAN THE LIVE ONE, and this is the one place the
+ * mirror should NOT copy the original. The live pageSize of 50 is a NETWORK
+ * economy — 50 cards is a payload crossing the internet. Locally the cost is one
+ * round trip regardless: measured against production, take=50 and take=250 both
+ * ran in ~356ms, because the time is the trip, not the rows.
+ *
+ * Keeping 50 was measurably harmful. Both queries cap at 50 but ORDER
+ * differently, so they select different 50s out of a larger pool — "Charizard"
+ * has 108 catalog matches — and the repoint returned only 230 of the 400 cards
+ * the live API did across eight sampled names. At take=250 the overlap is
+ * 400/400: every card the live API would have surfaced is still reachable, plus
+ * the ones its own cap was hiding. CardSearchService ranks and slices to 40
+ * afterwards, so a collector sees no more rows — only better ones.
+ *
+ * Ordering is newest-first because the cap DECIDES REACHABILITY: whatever falls
+ * past it cannot be found at all. That is the same lesson M7 learned on
+ * catalogFetchAllPrintings, where alphabetical ordering buried a real Mega
+ * Evolution Vulpix behind "McDonald's Collection 2016". Nulls sort last: a card
+ * whose set has no stored release date stays reachable but never displaces one
+ * whose recency we actually know.
+ *
+ * Returns [] for a genuine local miss. The CALLER decides what that means — and
+ * it means "ask the live API", never "no such card".
+ */
+export async function catalogSearchForQuery(
+  name: string,
+  collectorNumber: string | null,
+  db: CatalogDb = defaultDb,
+): Promise<CandidatePrinting[]> {
+  const where: Record<string, unknown> = { game: "POKEMON" };
+
+  if (name) {
+    where.name = { contains: name, mode: "insensitive" };
+  } else if (collectorNumber) {
+    const bare = collectorNumber.replace(/^0+(?=\d)/, "");
+    where.collectorNumber = {
+      in: bare !== collectorNumber ? [collectorNumber, bare] : [collectorNumber],
+    };
+  } else {
+    // No name and no number is not a question. Answering it with 50 arbitrary
+    // rows would be worse than answering it with nothing.
+    return [];
+  }
+
+  const rows = await dbRetry(() =>
+    db.catalogCard.findMany({
+      where,
+      select: CATALOG_SELECT,
+      orderBy: [
+        { setReleaseDate: { sort: "desc", nulls: "last" } },
+        { setName: "asc" },
+        { collectorNumber: "asc" },
+      ],
+      take: CATALOG_SEARCH_TAKE,
     }),
   );
   return rows.map(formatCatalogCard);
