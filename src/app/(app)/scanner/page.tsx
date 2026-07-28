@@ -106,6 +106,30 @@ function archiveCaption(archive: ArchiveContext | null): string | null {
   return "New to your archive · first from this set";
 }
 
+/**
+ * Width of the card-sized frames on the paper states (idle slot, processing).
+ *
+ * Width is the ONLY driver: `.card-frame` derives height from its 63:88
+ * aspect-ratio, so capping width — never height — is what keeps that ratio
+ * exact. The svh term is the vertical budget expressed as a width:
+ * `height * 63/88`, so a short viewport shrinks the frame instead of pushing
+ * the controls below the fold, and the proportions never change.
+ */
+const SCAN_FRAME_W =
+  "w-[min(52vw,calc(36svh*63/88))] sm:w-[min(208px,calc(46svh*63/88))]";
+
+/**
+ * Same idea for the live camera guide, at 2.5:3.5 (the same 63:88 in the units
+ * that markup was written in). Replaces a flat `max-w-[280px]`, which ignored
+ * how much vertical room a tall phone actually has and left the frame stranded
+ * in dead space. Width still drives; the svh term is `height * 5/7`.
+ *
+ * This element's live bounding rect is what computeCaptureRoi() maps into
+ * source-video space, so it can be any SIZE — but the aspect ratio is
+ * load-bearing for the crop and must not be touched.
+ */
+const GUIDE_W = "w-[min(86%,calc(64svh*5/7))]";
+
 export default function ScannerPage() {
   const { data: session } = useSession();
   const { setIsActivelyScanningOrProcessing } = useScannerState();
@@ -1162,7 +1186,7 @@ export default function ScannerPage() {
                     The outer .card-frame keeps the 63:88 aspect untouched: it is
                     the same geometry the live viewfinder guide uses for ROI
                     capture, so only what's drawn INSIDE it changes here. */}
-                <div className="card-frame w-32 sm:w-40 border border-border bg-card shadow-[0_16px_32px_-24px_rgba(19,18,16,0.5)] mb-5 relative">
+                <div className={cn("card-frame border border-border bg-card shadow-[0_16px_32px_-24px_rgba(19,18,16,0.5)] mb-5 relative", SCAN_FRAME_W)}>
                   {/* Corner-bracket reticle — echoes the brass brackets on the
                       live guide frame (see the scanning state) so idle and
                       active read as the same instrument. */}
@@ -1191,6 +1215,7 @@ export default function ScannerPage() {
                 {/* Foil rule — this state's single foil moment. (The result state
                     carries its own; the two are mutually exclusive.) */}
                 <div className="foil-edge h-px w-16 my-3" />
+
                 <div className="flex flex-wrap items-center justify-center gap-2 mb-6 mt-4">
                   {["All", "Pokemon", "MTG", "Yugioh"].map((g) => {
                     const label = g === "Pokemon" ? "Pokémon" : g === "MTG" ? "Magic (MTG)" : g === "Yugioh" ? "Yu-Gi-Oh!" : g;
@@ -1326,7 +1351,7 @@ export default function ScannerPage() {
                     <div className="absolute inset-0 flex items-center justify-center">
                       {/* Guide frame at true trading-card proportions. Aspect kept
                           identical to before — this box drives ROI capture. */}
-                      <div ref={guideRef} className="relative w-[70%] max-w-[280px] aspect-[2.5/3.5] border border-white/25 rounded-lg transition-all duration-1000">
+                      <div ref={guideRef} className={cn("relative aspect-[2.5/3.5] border border-white/25 rounded-lg transition-all duration-1000", GUIDE_W)}>
                         <div className="absolute -top-px -left-px w-8 h-8 border-t-2 border-l-2 rounded-tl-lg border-brass" />
                         <div className="absolute -top-px -right-px w-8 h-8 border-t-2 border-r-2 rounded-tr-lg border-brass" />
                         <div className="absolute -bottom-px -left-px w-8 h-8 border-b-2 border-l-2 rounded-bl-lg border-brass" />
@@ -1453,13 +1478,20 @@ export default function ScannerPage() {
                 // bar's own exit rides this same window.
                 exit={{ opacity: 0, y: -15, transition: { duration: SCAN_BAR_EXIT_MS / 1000 } }}
                 transition={{ duration: 0.28 }}
-                className="flex flex-col items-center justify-center py-12"
+                // flex-1 so this actually fills the scroll region and centres in
+                // it. Without it the block sat at its natural height near the
+                // top, stranding the frame above a screenful of dead space on a
+                // tall phone.
+                className="flex-1 min-h-0 flex flex-col items-center justify-center py-8"
               >
                 {/* Card under examination. Same 63:88 .card-frame and the same
                     corner-bracket reticle as the idle slot — the brackets snap
                     INWARD on entry, so the transition from idle reads as a
                     viewfinder locking focus rather than a screen swap. */}
-                <div className="relative card-frame w-36 sm:w-40 border border-border bg-card shadow-[0_16px_32px_-24px_rgba(19,18,16,0.5)] mb-6 overflow-hidden">
+                {/* Frame and bar share one width container so the bar always
+                    reads as the frame's own readout, at every viewport. */}
+                <div className={cn("flex flex-col items-center", SCAN_FRAME_W)}>
+                <div className="relative card-frame w-full border border-border bg-card shadow-[0_16px_32px_-24px_rgba(19,18,16,0.5)] mb-6 overflow-hidden">
                   <motion.div
                     className="absolute"
                     initial={{ top: 2, right: 2, bottom: 2, left: 2, opacity: 0.5 }}
@@ -1485,6 +1517,7 @@ export default function ScannerPage() {
                     Everything a screen reader needs is in the live region at
                     the top of the scanner, which does not render visibly. */}
                 <ScanProgressBar />
+                </div>
               </motion.div>
             )}
 
