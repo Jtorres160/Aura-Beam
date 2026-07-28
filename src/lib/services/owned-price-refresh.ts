@@ -144,7 +144,7 @@ export async function refreshOwnedPrices(
     if (!card.externalId) continue;
     examined++;
 
-    let newPriceData: { marketPrice: number } | null = null;
+    let newPriceData: { marketPrice: number | null } | null = null;
     try {
       const game = normalizeGame(card.game);
       if (game === "POKEMON") {

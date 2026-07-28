@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { displayMarketPrice, formatMarketPrice } from "@/lib/cards/market-price";
 
 export default function CollectionPage() {
   // `status` ("loading" | "authenticated" | "unauthenticated") is NextAuth's
@@ -41,7 +42,10 @@ export default function CollectionPage() {
             cardId: c.card.id,
             name: c.card.name,
             set: c.card.setName,
-            price: c.card.prices?.marketPrice || 0,
+            // null = no market data. Kept distinct from a real figure all the
+            // way to the row; only the archive total folds it to 0, because an
+            // unknown price can't contribute anything else to a sum.
+            price: displayMarketPrice(c.card.prices?.marketPrice),
             game: c.card.game,
             rarity: c.card.rarity,
             qty: c.quantity,
@@ -60,7 +64,10 @@ export default function CollectionPage() {
     c.set.toLowerCase().includes(search.toLowerCase())
   );
 
-  const totalValue = collection.reduce((sum, c) => sum + (c.price * c.qty), 0);
+  // An unpriced card contributes nothing to the archive total — there is no
+  // honest alternative to omitting an unknown from a sum. The per-card rows
+  // still say "no market data" so the omission is visible, not silent.
+  const totalValue = collection.reduce((sum, c) => sum + ((c.price ?? 0) * c.qty), 0);
 
   return (
     <div className="p-4 sm:p-6 lg:p-8 space-y-6">
@@ -181,7 +188,9 @@ export default function CollectionPage() {
                       <p className="text-sm font-medium truncate">{card.name}</p>
                       <p className="text-xs text-muted-foreground truncate">{card.set}</p>
                       <div className="flex items-baseline justify-between mt-1">
-                        <span className="font-mono text-sm">${(card.price || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                        <span className="font-mono text-sm">
+                          {formatMarketPrice(card.price) ?? <span className="text-xs text-muted-foreground">No market data</span>}
+                        </span>
                         <span className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground">{card.game}</span>
                       </div>
                     </div>
@@ -216,7 +225,9 @@ export default function CollectionPage() {
                       {card.game}
                     </span>
                     <div className="text-right shrink-0">
-                      <p className="font-mono text-sm whitespace-nowrap">${(card.price || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                      <p className="font-mono text-sm whitespace-nowrap">
+                        {formatMarketPrice(card.price) ?? <span className="text-xs text-muted-foreground">No market data</span>}
+                      </p>
                       <p className="font-mono text-[10px] text-muted-foreground">×{card.qty}</p>
                     </div>
                   </Link>

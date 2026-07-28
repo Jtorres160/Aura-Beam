@@ -185,6 +185,14 @@ export async function getScryfallCardById(id: string, budget: ProviderFetchBudge
   }
 }
 
+/** A Scryfall price string → a real number, or null when the field is absent
+ *  or unparseable. Never 0-as-a-stand-in-for-missing. */
+function scryfallPrice(raw: unknown): number | null {
+  if (typeof raw !== "string" && typeof raw !== "number") return null;
+  const value = typeof raw === "number" ? raw : parseFloat(raw);
+  return Number.isFinite(value) && value > 0 ? value : null;
+}
+
 export function formatScryfallCard(externalCard: any): CandidatePrinting {
   // Double-faced cards keep images and illustration on the faces
   const front = externalCard.card_faces?.[0] || {};
@@ -201,10 +209,13 @@ export function formatScryfallCard(externalCard: any): CandidatePrinting {
     imageUrl: imageUris.large || imageUris.normal || imageUris.png || null,
     thumbnailUrl: imageUris.small || imageUris.normal || null,
     price: {
-      marketPrice: parseFloat(externalCard.prices?.usd || externalCard.prices?.usd_foil || "0"),
+      // Scryfall omits `usd` entirely for cards it has no price for (and quotes
+      // foil-only prices for foil-only printings). An absent quote stays null —
+      // see PrintingPrice.marketPrice — so "unpriced" never becomes "$0.00".
+      marketPrice: scryfallPrice(externalCard.prices?.usd) ?? scryfallPrice(externalCard.prices?.usd_foil),
       lowPrice: null,
       midPrice: null,
-      highPrice: parseFloat(externalCard.prices?.usd_foil || "0") || null,
+      highPrice: scryfallPrice(externalCard.prices?.usd_foil),
     },
     // Printing evidence — same illustrationId means identical artwork, so the
     // decision layer forbids artwork-based disambiguation between them.

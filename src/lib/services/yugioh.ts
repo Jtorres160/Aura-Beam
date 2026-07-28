@@ -86,8 +86,18 @@ export function getYugiohPrintings(externalCard: any): any[] {
     setName: sets[idx]?.set_name || sets[0]?.set_name || "Unknown Set",
     setCode: sets[idx]?.set_code || sets[0]?.set_code || null,
     rarity: sets[idx]?.set_rarity || sets[0]?.set_rarity || "Common",
-    price: parseFloat(prices[0]?.tcgplayer_price || "0"),
+    price: yugiohPrice(prices[0]?.tcgplayer_price),
   }));
+}
+
+/** A YGOPRODeck price string → a real number, or null when the API quotes no
+ *  price. YGOPRODeck literally sends "0.00" for cards it has no TCGplayer data
+ *  for, which is why a bare parseFloat is not enough: that string is a
+ *  non-answer, not a valuation. See PrintingPrice.marketPrice. */
+function yugiohPrice(raw: unknown): number | null {
+  if (typeof raw !== "string" && typeof raw !== "number") return null;
+  const value = typeof raw === "number" ? raw : parseFloat(raw);
+  return Number.isFinite(value) && value > 0 ? value : null;
 }
 
 export function formatYugiohCard(externalCard: any, setCode?: string): CandidatePrinting {
@@ -121,7 +131,7 @@ export function formatYugiohCard(externalCard: any, setCode?: string): Candidate
     imageUrl: cardImage?.image_url || null,
     thumbnailUrl: cardImage?.image_url_small || null,
     price: {
-      marketPrice: parseFloat(cardPrice?.tcgplayer_price || "0")
+      marketPrice: yugiohPrice(cardPrice?.tcgplayer_price)
     }
   };
 }

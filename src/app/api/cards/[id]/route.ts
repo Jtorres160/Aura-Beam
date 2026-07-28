@@ -17,7 +17,23 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         ]
       },
       include: {
-        prices: true
+        prices: true,
+        // Recorded snapshots only — the detail page's price chart plots stored
+        // history and nothing else. There is no interpolation, no synthesized
+        // baseline, and no "since launch" filler: a card with one snapshot gets
+        // an honest "not enough history yet" state, not a flat line.
+        //
+        // Windowed to a year and capped so a long-tracked card can't return an
+        // unbounded payload. Ascending so the client plots left-to-right
+        // without re-sorting.
+        priceHistory: {
+          where: {
+            recordedAt: { gte: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000) },
+          },
+          orderBy: { recordedAt: "asc" },
+          take: 400,
+          select: { marketPrice: true, recordedAt: true },
+        },
       }
     });
 
@@ -34,21 +50,22 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     ];
 
     const results = await Promise.allSettled(promises);
-    
-    console.log("External APIs results:", results);
 
     for (const result of results) {
       if (result.status === "fulfilled" && result.value) {
         // We found a match in one of the APIs!
         const cardData = result.value;
         // Mock the structure to match our DB for the frontend
-        return NextResponse.json({ 
-          success: true, 
+        return NextResponse.json({
+          success: true,
           data: {
             id: cardData.externalId,
             ...cardData,
-            prices: cardData.price
-          } 
+            prices: cardData.price,
+            // A card we've never stored has no recorded history, and a live
+            // lookup cannot invent one. Empty, explicitly.
+            priceHistory: [],
+          }
         });
       }
     }

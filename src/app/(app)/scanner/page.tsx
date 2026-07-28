@@ -39,6 +39,7 @@ import {
 import { CaptureGuidance } from "./capture-guidance";
 // TEMPORARY dev-only calibration overlay — remove with Phase 4.5 cleanup.
 import { LiveMetricsDebugOverlay } from "./live-metrics-debug-overlay";
+import { formatMarketPrice } from "@/lib/cards/market-price";
 import type { SavedCard, DisambiguationCandidate, PostAddArchive } from "@/types/card";
 import type { ArchiveContext } from "@/types";
 
@@ -1500,8 +1501,12 @@ export default function ScannerPage() {
                           {candidate.rarity && (
                             <span className="text-[10px] text-muted-foreground truncate">{candidate.rarity}</span>
                           )}
+                          {/* An unpriced printing says so — inventing "$0.00"
+                              here would make silence look like a valuation. */}
                           <span className="font-mono text-[11px] font-semibold text-foreground shrink-0">
-                            ${candidate.price?.marketPrice?.toFixed(2) || "0.00"}
+                            {formatMarketPrice(candidate.price?.marketPrice) ?? (
+                              <span className="font-normal text-muted-foreground">No price</span>
+                            )}
                           </span>
                         </div>
                       </div>
@@ -1615,8 +1620,8 @@ export default function ScannerPage() {
                     className="text-center font-mono text-[11px] uppercase tracking-[0.14em] text-muted-foreground"
                   >
                     Archive · {postAddArchive.totalCards} {postAddArchive.totalCards === 1 ? "card" : "cards"}
-                    {(scanResult.prices?.marketPrice ?? 0) > 0 &&
-                      ` · +$${scanResult.prices.marketPrice.toFixed(2)}`}
+                    {formatMarketPrice(scanResult.prices?.marketPrice) &&
+                      ` · +${formatMarketPrice(scanResult.prices?.marketPrice)}`}
                   </motion.p>
                 )}
               </motion.div>

@@ -202,7 +202,13 @@ export function reconcileSetCn(
 // Pokemon/Yugioh fill what their data sources expose until the Phase 5 mirror.
 
 export interface PrintingPrice {
-  marketPrice: number;
+  /** `null` means the source quoted NO price — not that the card is worth $0.
+   *  These are different facts and the contract must keep them apart: a card
+   *  that has never been priced and a card genuinely worth nothing look
+   *  identical the moment either one is coalesced to 0. Every extractor is
+   *  required to pass the absence through; only the render layer decides how
+   *  to say "no market data". */
+  marketPrice: number | null;
   lowPrice?: number | null;
   midPrice?: number | null;
   highPrice?: number | null;

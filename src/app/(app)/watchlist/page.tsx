@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import Link from "next/link";
 import { Bell, BellOff, Save } from "lucide-react";
+import { formatMarketPrice } from "@/lib/cards/market-price";
 
 const gameColors: Record<string, string> = {
   "POKEMON": "bg-yellow-500/10 text-yellow-500 border-yellow-500/20",
@@ -201,7 +202,11 @@ function WatchlistItemCard({ item, index, onRemove, removingId }: { item: any, i
                 <div>
                   <p className="text-xs text-muted-foreground mb-1">Market Price</p>
                   <div className="flex items-center gap-2">
-                    <p className="text-xl font-bold">${(card.prices?.marketPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                    <p className="text-xl font-bold">
+                      {formatMarketPrice(card.prices?.marketPrice) ?? (
+                        <span className="text-sm font-normal text-muted-foreground">No market data</span>
+                      )}
+                    </p>
                   </div>
                 </div>
                 

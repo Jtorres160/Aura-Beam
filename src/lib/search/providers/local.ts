@@ -2,6 +2,7 @@
 // Aura's own Prisma catalog. Queried alongside the remote card databases and
 // ranked first, because a local row carries our id and our price history.
 
+import { displayMarketPrice } from "@/lib/cards/market-price";
 import { dbRetry, prisma } from "@/lib/prisma";
 import type { GameId } from "@/lib/scanner/evidence";
 import { normalizeGame } from "@/lib/search/identity";
@@ -89,7 +90,7 @@ export async function searchLocalCards({
           source: "local",
           externalId: row.externalId ?? null,
           localId: row.id,
-          marketPrice: typeof market === "number" && market > 0 ? market : null,
+          marketPrice: displayMarketPrice(market),
         },
       },
     ];

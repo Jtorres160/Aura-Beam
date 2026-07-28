@@ -106,7 +106,7 @@ export async function POST(req: NextRequest) {
       await prisma.cardPrice.create({
         data: {
           cardId: card.id,
-          marketPrice: printing.price?.marketPrice ?? 0,
+          marketPrice: printing.price?.marketPrice ?? null,
         },
       });
     }

@@ -34,23 +34,27 @@ export async function persistPrinting(printing: CandidatePrinting): Promise<Card
     },
   }));
 
-  // Always refresh the stored price with what the card database returned just
-  // now — a card first scanned months ago must not keep its stale price.
+  // Refresh the stored price with what the card database returned just now — a
+  // card first scanned months ago must not keep its stale price. But a source
+  // that quoted NO price has not told us the card became worthless, so that
+  // non-answer must not overwrite a figure we already hold; it only fills the
+  // gap on a first insert. Same truth boundary the freshness cron enforces.
+  const marketPrice = printing.price?.marketPrice ?? null;
   await dbRetry(() => prisma.cardPrice.upsert({
     where: { cardId: localCard.id },
     update: {
-      marketPrice: printing.price?.marketPrice || 0,
-      lowPrice: printing.price?.lowPrice || null,
-      midPrice: printing.price?.midPrice || null,
-      highPrice: printing.price?.highPrice || null,
+      ...(marketPrice === null ? {} : { marketPrice }),
+      lowPrice: printing.price?.lowPrice ?? null,
+      midPrice: printing.price?.midPrice ?? null,
+      highPrice: printing.price?.highPrice ?? null,
       lastUpdated: new Date(),
     },
     create: {
       cardId: localCard.id,
-      marketPrice: printing.price?.marketPrice || 0,
-      lowPrice: printing.price?.lowPrice || null,
-      midPrice: printing.price?.midPrice || null,
-      highPrice: printing.price?.highPrice || null,
+      marketPrice,
+      lowPrice: printing.price?.lowPrice ?? null,
+      midPrice: printing.price?.midPrice ?? null,
+      highPrice: printing.price?.highPrice ?? null,
     },
   }));
 
