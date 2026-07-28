@@ -84,9 +84,10 @@ const CATALOG_SELECT = {
  * A catalog_cards row → CandidatePrinting: the exact inverse of
  * formatPokemonCard() (src/lib/services/pokemon.ts). Because build-catalog.mjs
  * stored formatPokemonCard()'s own output, this reconstruction reproduces the
- * same shape and the same defaults — notably `marketPrice` coalesces to 0 just
- * as extractPokemonPrice() does, so a null-priced catalog row and a live-fetched
- * unpriced card both surface `price.marketPrice === 0`.
+ * same shape and the same absences: a catalog row with no stored price surfaces
+ * `price.marketPrice === null`, exactly as a live-fetched unpriced card now
+ * does. (It used to coalesce to 0 on both paths, which is what made "never
+ * priced" and "worth nothing" the same value — see PrintingPrice.marketPrice.)
  */
 export function formatCatalogCard(row: CatalogCardRow): CandidatePrinting {
   return {
@@ -101,7 +102,7 @@ export function formatCatalogCard(row: CatalogCardRow): CandidatePrinting {
     imageUrl: row.imageUrl,
     thumbnailUrl: row.thumbnailUrl,
     price: {
-      marketPrice: row.marketPrice ?? 0,
+      marketPrice: row.marketPrice ?? null,
       lowPrice: row.lowPrice ?? null,
       midPrice: row.midPrice ?? null,
       highPrice: row.highPrice ?? null,

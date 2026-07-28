@@ -16,12 +16,12 @@ import type { GameId, PrintingPrice } from "@/lib/scanner/evidence";
 import type { ArchiveContext } from "@/types";
 
 /**
- * Price block on a saved card. serializeSavedCard() coerces every tier to a
- * number (falling back to 0), so unlike the source PrintingPrice these are all
- * required numbers — never null/undefined.
+ * Price block on a saved card. serializeSavedCard() coerces the unused low/mid/
+ * high tiers to 0, but `marketPrice` carries the source's absence through as
+ * null — consumers must render that as "no market data", never as $0.00.
  */
 export interface SavedCardPrices {
-  marketPrice: number;
+  marketPrice: number | null;
   lowPrice: number;
   midPrice: number;
   highPrice: number;

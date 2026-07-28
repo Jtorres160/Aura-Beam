@@ -133,11 +133,15 @@ describe("formatCatalogCard — lossless inverse of formatPokemonCard", () => {
     });
   }
 
-  test("a null-priced catalog row surfaces marketPrice 0, exactly like the live path", () => {
+  test("an unpriced card surfaces marketPrice null on BOTH paths — never 0", () => {
+    // The distinction this asserts: "no source quoted a price" is null, and a
+    // real valuation is a number. Coalescing to 0 (what both paths used to do)
+    // makes an unpriced card indistinguishable from a worthless one, and there
+    // is no way to recover the difference downstream.
     const live = formatPokemonCard(apiCards.unpriced);
-    assert.equal(live.price.marketPrice, 0); // extractPokemonPrice concedes 0
+    assert.equal(live.price.marketPrice, null);
     const local = formatCatalogCard(rowFromPrinting(live));
-    assert.equal(local.price.marketPrice, 0);
+    assert.equal(local.price.marketPrice, null);
     assert.deepEqual(local.price, live.price);
   });
 

@@ -28,7 +28,11 @@ export function serializeSavedCard(input: SerializeSavedCardInput): SavedCard {
     game: localCard.game,
     archive,
     prices: {
-      marketPrice: printing.price?.marketPrice || 0,
+      // marketPrice passes absence through as null — a scan of an unpriced card
+      // must not report "$0.00" to the client. The tier fields keep their 0
+      // default: no source populates them, so they carry no information either
+      // way and nothing renders them.
+      marketPrice: printing.price?.marketPrice ?? null,
       lowPrice: printing.price?.lowPrice || 0,
       midPrice: printing.price?.midPrice || 0,
       highPrice: printing.price?.highPrice || 0,

@@ -1,12 +1,38 @@
 "use client";
 
+// ─── Catalog entry — the card detail page ───────────────────────────────────
+// Everything on this screen is a field Aura actually stores or a figure it
+// actually recorded. Deliberately ABSENT, because there is no data source
+// behind them: other listings, seller counts, listed medians, volatility
+// grades, "as low as" figures, and the rules-text block (ability / attack /
+// HP / weakness / retreat cost) — the schema has no columns for any of it.
+// Adding that block is a future ticket: it needs new Card fields plus a
+// re-import to backfill from the Pokémon API's card object.
+
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { ArrowLeft, Sparkles, Heart, Check, Loader2, Library, TrendingUp } from "lucide-react";
+import { ArrowLeft, Sparkles, Heart, Check, Loader2, Library } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useSession } from "next-auth/react";
+import { formatMarketPrice } from "@/lib/cards/market-price";
+import { PriceHistoryChart, type PriceHistoryPoint } from "./price-history-chart";
+
+/** One row of the specification block. Rendered only when the field has a
+ *  value — an empty row would imply we looked and found nothing, when in fact
+ *  we never recorded it. */
+function Spec({ label, value }: { label: string; value?: string | null }) {
+  if (!value) return null;
+  return (
+    <div className="flex items-baseline justify-between gap-4 border-b border-border py-2.5 last:border-b-0">
+      <dt className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+        {label}
+      </dt>
+      <dd className="text-right text-sm text-foreground">{value}</dd>
+    </div>
+  );
+}
 
 export default function CardDetailsPage() {
   const params = useParams();
@@ -116,6 +142,13 @@ export default function CardDetailsPage() {
   }
 
   const prices = card.prices || {};
+  const marketPrice = formatMarketPrice(prices.marketPrice);
+  const history: PriceHistoryPoint[] = Array.isArray(card.priceHistory) ? card.priceHistory : [];
+  const rarity = card.rarity?.replace(/_/g, " ");
+  // Card.types / Card.subtypes are stored as comma-joined strings.
+  const readList = (raw?: string | null) =>
+    raw?.split(",").map((s) => s.trim()).filter(Boolean).join(" · ") || null;
+  const lastUpdated = prices.lastUpdated ? new Date(prices.lastUpdated) : null;
 
   return (
     <div className="p-4 sm:p-6 lg:p-8 space-y-6 max-w-5xl mx-auto">
@@ -150,9 +183,29 @@ export default function CardDetailsPage() {
               </div>
             )}
           </div>
+
+          {/* Specification plate — sits under the object like an exhibit label.
+              Every row is a stored Card column, and a row with no value simply
+              doesn't print rather than showing an empty field.
+
+              Note: Card.artist / .types / .subtypes are columns that NOTHING
+              currently populates — no provider extracts them and
+              CandidatePrinting has no such fields (0/131 stored cards have
+              them). Those rows are wired and will light up the moment an
+              importer fills the columns; until then they correctly render
+              nothing. Populating them is the same ticket as the rules-text
+              block: contract fields + extractor work + a re-import backfill. */}
+          <dl className="mt-6 rounded-lg border border-border bg-card px-4 py-1">
+            <Spec label="Set" value={card.setName} />
+            <Spec label="Number" value={card.collectorNumber} />
+            <Spec label="Rarity" value={rarity} />
+            <Spec label="Type" value={readList(card.types)} />
+            <Spec label="Subtype" value={readList(card.subtypes)} />
+            <Spec label="Artist" value={card.artist} />
+          </dl>
         </motion.div>
 
-        {/* Right Column: catalog details + actions */}
+        {/* Right Column: valuation, recorded history, actions */}
         <motion.div
           className="md:col-span-7 lg:col-span-8 flex flex-col"
           initial={{ opacity: 0, y: 20 }}
@@ -171,7 +224,9 @@ export default function CardDetailsPage() {
                 {card.name}
               </h1>
               <p className="text-sm text-muted-foreground">
-                {card.setName} · {card.rarity?.replace(/_/g, " ")}
+                {[card.setName, rarity, card.collectorNumber && `№ ${card.collectorNumber}`]
+                  .filter(Boolean)
+                  .join(" · ")}
               </p>
             </div>
             <Badge variant="outline" className="px-3 py-1 font-mono text-[10px] uppercase tracking-wide border-brass/40 text-foreground">
@@ -182,20 +237,52 @@ export default function CardDetailsPage() {
           {/* Foil rule — the screen's single foil moment */}
           <div className="foil-edge h-px w-24 my-6" />
 
-          {/* Market Value */}
-          <div className="mb-8">
-            <h3 className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted-foreground mb-4 flex items-center gap-2">
-              <TrendingUp className="h-3.5 w-3.5 text-brass" /> Market value
-            </h3>
-            {/* Our price sources return a single market value per printing;
-                low/mid/high tiers aren't captured, so showing them would only
-                repeat the market figure four times and imply a precision we
-                don't have. One truthful number instead. */}
-            <div className="p-5 rounded-lg border border-brass/40 bg-card flex items-baseline justify-between gap-3">
-              <p className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground">Market</p>
-              <p className="font-mono text-2xl">${(prices.marketPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+          {/* Market Value.
+              Our price sources return a single market value per printing;
+              low/mid/high tiers aren't captured, so showing them would only
+              repeat the market figure four times and imply a precision we don't
+              have. One truthful number — or an honest absence.
+
+              "No market data" also covers rows stored as 0 before prices became
+              nullable; see lib/cards/market-price.ts for why that is a
+              disclosed convention rather than a guess. */}
+          <section className="mb-8">
+            <h2 className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted-foreground mb-4">
+              Market value
+            </h2>
+            <div className="rounded-lg border border-brass/40 bg-card p-6">
+              {marketPrice ? (
+                <>
+                  <p className="font-serif text-5xl leading-none tracking-tight tabular-nums">
+                    {marketPrice}
+                  </p>
+                  <p className="mt-3 font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+                    {lastUpdated
+                      ? `Last refreshed ${lastUpdated.toLocaleDateString()}`
+                      : "Quoted live from the card database"}
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="font-serif text-2xl leading-none tracking-tight text-muted-foreground">
+                    No market data
+                  </p>
+                  <p className="mt-3 text-sm text-muted-foreground">
+                    No price source has quoted this printing. Aura shows nothing rather
+                    than a figure it cannot support.
+                  </p>
+                </>
+              )}
             </div>
-          </div>
+          </section>
+
+          {/* Recorded price history */}
+          <section className="mb-8">
+            <h2 className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted-foreground mb-4">
+              Recorded history
+            </h2>
+            <PriceHistoryChart points={history} />
+          </section>
 
           {/* Actions */}
           <div className="mt-auto pt-6 flex flex-col sm:flex-row gap-3 border-t border-border">

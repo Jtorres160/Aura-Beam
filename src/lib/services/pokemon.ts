@@ -1,4 +1,4 @@
-import type { CandidatePrinting } from "@/lib/scanner/evidence";
+import type { CandidatePrinting, PrintingPrice } from "@/lib/scanner/evidence";
 import { fetchProviderJson } from "@/lib/providers/http";
 import type { ProviderFetchBudget } from "@/lib/providers/http";
 
@@ -130,12 +130,17 @@ export async function getPokemonCardById(id: string, budget: ProviderFetchBudget
 // common for freshly released sets — showed $0.00 despite real price data
 // sitting right there in the payload. Walk EVERY variant, prefer the familiar
 // ones, and fall through market → mid → directLow → low, then to cardmarket's
-// trend/average figures before conceding zero.
+// trend/average figures before conceding that the source quoted no price.
+//
+// "No price" is `null`, never 0 — see PrintingPrice.marketPrice. Coalescing
+// here is what used to make an unpriced card indistinguishable from a
+// worthless one everywhere downstream, including in the freshness cron's
+// "never overwrite a good price with a non-answer" guard.
 const PREFERRED_VARIANTS = ["holofoil", "normal", "reverseHolofoil"];
 
-function pokemonPriceOf(externalCard: any, field: string): number {
+function pokemonPriceOf(externalCard: any, field: string): number | null {
   const variants = externalCard?.tcgplayer?.prices;
-  if (!variants || typeof variants !== "object") return 0;
+  if (!variants || typeof variants !== "object") return null;
   const keys = [
     ...PREFERRED_VARIANTS.filter((k) => k in variants),
     ...Object.keys(variants).filter((k) => !PREFERRED_VARIANTS.includes(k)),
@@ -144,24 +149,24 @@ function pokemonPriceOf(externalCard: any, field: string): number {
     const value = variants[key]?.[field];
     if (typeof value === "number" && value > 0) return value;
   }
-  return 0;
+  return null;
 }
 
-function extractPokemonPrice(externalCard: any) {
+function extractPokemonPrice(externalCard: any): PrintingPrice {
   const market =
-    pokemonPriceOf(externalCard, "market") ||
-    pokemonPriceOf(externalCard, "mid") ||
-    pokemonPriceOf(externalCard, "directLow") ||
+    pokemonPriceOf(externalCard, "market") ??
+    pokemonPriceOf(externalCard, "mid") ??
+    pokemonPriceOf(externalCard, "directLow") ??
     pokemonPriceOf(externalCard, "low");
   const cm = externalCard?.cardmarket?.prices;
   const cardmarketFallback =
     [cm?.trendPrice, cm?.averageSellPrice, cm?.avg7, cm?.avg30]
-      .find((v: any) => typeof v === "number" && v > 0) ?? 0;
+      .find((v: any) => typeof v === "number" && v > 0) ?? null;
   return {
-    marketPrice: market || cardmarketFallback,
-    lowPrice: pokemonPriceOf(externalCard, "low") || null,
-    midPrice: pokemonPriceOf(externalCard, "mid") || null,
-    highPrice: pokemonPriceOf(externalCard, "high") || null,
+    marketPrice: market ?? cardmarketFallback,
+    lowPrice: pokemonPriceOf(externalCard, "low"),
+    midPrice: pokemonPriceOf(externalCard, "mid"),
+    highPrice: pokemonPriceOf(externalCard, "high"),
   };
 }
 

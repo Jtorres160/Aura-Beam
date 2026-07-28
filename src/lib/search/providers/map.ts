@@ -9,6 +9,7 @@
 
 import type { CandidatePrinting } from "@/lib/scanner/evidence";
 import type { CardSearchResult, SearchSourceId } from "@/lib/search/types";
+import { displayMarketPrice } from "@/lib/cards/market-price";
 
 /**
  * Widen a CandidatePrinting into a CardSearchResult.
@@ -16,14 +17,15 @@ import type { CardSearchResult, SearchSourceId } from "@/lib/search/types";
  * `marketPrice` is null — not 0 — when a source quotes no price. A card with an
  * unknown price is not a card worth $0.00, and the UI must be able to say so.
  * The old route coerced every missing price to 0 and rendered "$0.00" as fact.
+ * The rule itself lives in lib/cards/market-price.ts, shared with every other
+ * surface that renders a price.
  */
 export function fromCandidatePrinting(
   printing: CandidatePrinting,
   source: SearchSourceId,
   localId: string | null = null,
 ): CardSearchResult {
-  const rawPrice = printing.price?.marketPrice;
-  const marketPrice = typeof rawPrice === "number" && rawPrice > 0 ? rawPrice : null;
+  const marketPrice = displayMarketPrice(printing.price?.marketPrice);
 
   const card: CardSearchResult = {
     // ROUTABLE id — what /cards/[id] resolves. Distinct from cardIdentity(),
