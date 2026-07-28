@@ -280,6 +280,50 @@
   animation: scan-line 2s ease-in-out infinite alternate;
 }
 
+/* Processing read-head — a brass sweep travelling the card in ONE direction,
+   like a flatbed scanner or an autofocus pass. Distinct from .animate-scan-line
+   above, which alternates: a bounce reads as a pendulum, not a scan. The travel
+   overshoots the frame at both ends so the head enters and leaves cleanly
+   instead of parking at the edges. */
+@keyframes scan-sweep {
+  0% { top: -14%; opacity: 0; }
+  12% { opacity: 1; }
+  88% { opacity: 1; }
+  100% { top: 100%; opacity: 0; }
+}
+
+.animate-scan-sweep {
+  animation: scan-sweep 1.5s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+
+/* One-shot foil sheen for the success moment. Same single --foil gradient as
+   .foil-edge — this is a faster, non-looping pass of the SAME moment, not a
+   second one. */
+@keyframes foil-sheen-once {
+  0% { background-position: 0 0; opacity: 0; }
+  20% { opacity: 1; }
+  100% { background-position: 0 300%; opacity: 1; }
+}
+
+.foil-sheen-once {
+  background: var(--foil);
+  background-size: 100% 300%;
+  animation: foil-sheen-once 0.9s cubic-bezier(0.22, 1, 0.36, 1) 1 both;
+}
+
+/* Motion budget: the sweep and the sheen are decorative. Under reduced motion
+   the read-head holds still at the frame's midline (still reads as "working",
+   costs no vestibular load) and the sheen simply appears. */
+@media (prefers-reduced-motion: reduce) {
+  .animate-scan-sweep {
+    animation: none;
+    top: 50%;
+  }
+  .foil-sheen-once {
+    animation: none;
+  }
+}
+
 /* Shimmer loading state — kept (functional), now flat warm surfaces */
 @keyframes shimmer {
   0% { background-position: -200% 0; }
