@@ -37,8 +37,11 @@ import {
   type AHash,
 } from "@/lib/scanner/smart-capture";
 import { CaptureGuidance } from "./capture-guidance";
-import { ExaminingStatus } from "./examining-status";
+import { ScanProgressBar, SCAN_BAR_EXIT_MS } from "./scan-progress-bar";
+import { SoundToggle } from "./sound-toggle";
 import { confirmationTick } from "./haptics";
+import { useScanSound } from "@/hooks/use-scan-sound";
+import { primeScanAudio, playScanChime } from "@/lib/audio/scan-chime";
 // TEMPORARY dev-only calibration overlay — remove with Phase 4.5 cleanup.
 import { LiveMetricsDebugOverlay } from "./live-metrics-debug-overlay";
 import { formatMarketPrice } from "@/lib/cards/market-price";
@@ -112,6 +115,7 @@ export default function ScannerPage() {
   // Pipeline stage the server blamed for a failed scan (Phase 5.2.5) — shown
   // as a small caption in the error state so field reports say WHERE it broke.
   const [errorStage, setErrorStage] = useState<string | null>(null);
+  const [scanSound, setScanSound] = useScanSound();
   // Transient "just caught this" confirmation for bulk mode (presentational).
   const [bulkCatch, setBulkCatch] = useState<{ name: string; at: number } | null>(null);
   const [isAdding, setIsAdding] = useState(false);
@@ -212,6 +216,14 @@ export default function ScannerPage() {
   // Returns true when the camera is up and state is "scanning" — callers that
   // must not strand the UI (bulk disambiguation resume) branch on it.
   const startCamera = useCallback(async (): Promise<boolean> => {
+    // Unlock audio on this tap. Mobile browsers — iOS Safari strictest — only
+    // let an AudioContext start from inside a user gesture, and this is the
+    // gesture that begins a scanning session, so the completion chime later
+    // needs no second tap. Must run BEFORE the first await: once execution
+    // resumes after `await getUserMedia(...)` we are no longer in the gesture's
+    // call stack and iOS will refuse.
+    primeScanAudio();
+
     // Pre-flight: getUserMedia only exists in a secure context (HTTPS or
     // localhost). Opening the dev server's Network URL (http://192.168.x.x)
     // leaves navigator.mediaDevices undefined — which otherwise surfaces as a
@@ -506,6 +518,7 @@ export default function ScannerPage() {
           // or otherwise touch the queue.
           setBulkCatch({ name: card.name, at: now });
           confirmationTick();
+          playScanChime();
         }
       } else {
         // Normal Mode logic: Stop auto-scan and show result
@@ -1062,10 +1075,16 @@ export default function ScannerPage() {
     return () => clearTimeout(id);
   }, [bulkCatch]);
 
-  // Confirmation tick for a single (non-bulk) identification. Bulk fires its
-  // own per-card tick at the point of queueing.
+  // Confirmation for a single (non-bulk) identification, fired as the result
+  // state mounts so the chime lands with the foil hairline and the card's
+  // scale-settle. Bulk fires its own per-card confirmation at the point of
+  // queueing. Failures are deliberately silent — a failed scan must not sound
+  // like a win.
   useEffect(() => {
-    if (state === "result") confirmationTick();
+    if (state === "result") {
+      confirmationTick();
+      playScanChime();
+    }
   }, [state]);
 
   // Cleanup on unmount
@@ -1081,6 +1100,23 @@ export default function ScannerPage() {
   return (
     <div className="flex flex-col h-full">
       <canvas ref={canvasRef} className="hidden" />
+
+      {/* The visible processing state is deliberately wordless, so this is the
+          only place the scan's state is stated in words. Screen readers can
+          afford to be more explicit than the UI. `polite` so it never
+          interrupts, and it holds one short sentence rather than the running
+          commentary the old cycling status line produced. */}
+      <p className="sr-only" role="status" aria-live="polite">
+        {state === "processing"
+          ? "Scanning card"
+          : state === "result" && scanResult
+            ? `Card identified: ${scanResult.name}`
+            : state === "error"
+              ? `Scan failed. ${errorMessage}`
+              : bulkCatch
+                ? `Card identified: ${bulkCatch.name}`
+                : ""}
+      </p>
 
       {/* TEMPORARY flag-gated diagnostics export (Phase 4.5 auto/bulk debug):
           dev, NEXT_PUBLIC_SMART_DIAG=true, or ?diag=1. Fixed so it's tappable
@@ -1105,6 +1141,7 @@ export default function ScannerPage() {
             <h1 className="font-serif text-2xl sm:text-3xl tracking-tight">Scanner</h1>
             <p className="text-sm text-muted-foreground mt-1">Identify a card and enter it into your archive.</p>
           </div>
+          <SoundToggle sound={scanSound} onChange={setScanSound} />
         </div>
       )}
 
@@ -1154,7 +1191,6 @@ export default function ScannerPage() {
                 {/* Foil rule — this state's single foil moment. (The result state
                     carries its own; the two are mutually exclusive.) */}
                 <div className="foil-edge h-px w-16 my-3" />
-                <p className="text-sm text-muted-foreground">Place a card in the viewfinder to identify it.</p>
                 <div className="flex flex-wrap items-center justify-center gap-2 mb-6 mt-4">
                   {["All", "Pokemon", "MTG", "Yugioh"].map((g) => {
                     const label = g === "Pokemon" ? "Pokémon" : g === "MTG" ? "Magic (MTG)" : g === "Yugioh" ? "Yu-Gi-Oh!" : g;
@@ -1234,9 +1270,12 @@ export default function ScannerPage() {
                     />
                   )}
 
-                  {/* Camera Quick Restart */}
-                  <div className="absolute top-4 right-4 z-10">
-                    <Button 
+                  {/* Camera Quick Restart + sound. Sound is repeated here because
+                      the page header is hidden while the camera is live, and bulk
+                      mode — where the chime repeats most — never leaves this view. */}
+                  <div className="absolute top-4 right-4 z-10 flex items-center gap-2">
+                    <SoundToggle sound={scanSound} onChange={setScanSound} overlay />
+                    <Button
                       variant="outline" 
                       size="icon" 
                       onClick={startCamera} 
@@ -1406,17 +1445,21 @@ export default function ScannerPage() {
             {/* ── PROCESSING STATE ── */}
             {state === "processing" && (
               <motion.div 
-                key="processing" 
-                initial={{ opacity: 0, y: 15 }} 
-                animate={{ opacity: 1, y: 0 }} 
-                exit={{ opacity: 0, y: -15 }} 
+                key="processing"
+                initial={{ opacity: 0, y: 15 }}
+                animate={{ opacity: 1, y: 0 }}
+                // Exit is faster than the framer default so the snap-to-full and
+                // the handoff to the result never feel like added latency. The
+                // bar's own exit rides this same window.
+                exit={{ opacity: 0, y: -15, transition: { duration: SCAN_BAR_EXIT_MS / 1000 } }}
+                transition={{ duration: 0.28 }}
                 className="flex flex-col items-center justify-center py-12"
               >
                 {/* Card under examination. Same 63:88 .card-frame and the same
                     corner-bracket reticle as the idle slot — the brackets snap
                     INWARD on entry, so the transition from idle reads as a
                     viewfinder locking focus rather than a screen swap. */}
-                <div className="relative card-frame w-36 sm:w-40 border border-border bg-card shadow-[0_16px_32px_-24px_rgba(19,18,16,0.5)] mb-8 overflow-hidden">
+                <div className="relative card-frame w-36 sm:w-40 border border-border bg-card shadow-[0_16px_32px_-24px_rgba(19,18,16,0.5)] mb-6 overflow-hidden">
                   <motion.div
                     className="absolute"
                     initial={{ top: 2, right: 2, bottom: 2, left: 2, opacity: 0.5 }}
@@ -1438,13 +1481,10 @@ export default function ScannerPage() {
                   </div>
                 </div>
 
-                <div className="space-y-2 text-center">
-                  <h2 className="font-serif text-2xl tracking-tight text-foreground flex items-center justify-center gap-2">
-                    <Loader2 className="h-4 w-4 animate-spin text-brass" />
-                    Examining card
-                  </h2>
-                  <ExaminingStatus />
-                </div>
+                {/* Wordless by design — the sweep and the bar carry this state.
+                    Everything a screen reader needs is in the live region at
+                    the top of the scanner, which does not render visibly. */}
+                <ScanProgressBar />
               </motion.div>
             )}
 
