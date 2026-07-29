@@ -39,7 +39,11 @@ import {
 } from "@/lib/services/pokemon-catalog";
 import { searchScryfallCardByName, fetchAllMTGPrintings, formatScryfallCard, searchScryfallBySetAndCollector, searchScryfallDeepFallback, fetchScryfallCardById } from "@/lib/services/scryfall";
 import { searchYugiohCards, getYugiohPrintings, formatYugiohCard, fetchYugiohCardById } from "@/lib/services/yugioh";
-import { collectorNumberKey, foldName, type CandidatePrinting } from "@/lib/scanner/evidence";
+import { collectorNumberKey, foldName, printedTotalFromCollectorNumber, type CandidatePrinting } from "@/lib/scanner/evidence";
+
+// Moved to the evidence layer so printing ranking (rank.ts) can read the same
+// key; re-exported here so existing importers keep their path.
+export { printedTotalFromCollectorNumber };
 import { type MatchMethod, nameMatchesOcr } from "@/lib/scanner/decision";
 import { ProviderError, type ProviderFailureReason } from "@/lib/providers/http";
 
@@ -530,22 +534,6 @@ async function fetchPokemonPrintings(cardName: string, setCode?: string, collect
  * the data source differs. `db` is injectable so the M4 invariant test can drive
  * it without touching the production catalog.
  */
-/**
- * The printed total in a collector number — the "132" of "138/132".
- *
- * Returns null for anything that isn't a positive integer denominator, INCLUDING
- * a bare "138" with no slash. That null is load-bearing: no total means no key,
- * and no key means this whole match path stands down rather than guessing one.
- */
-export function printedTotalFromCollectorNumber(collectorNumber: string): number | null {
-  const denominator = collectorNumber.split("/")[1];
-  if (denominator === undefined) return null;
-  const digits = denominator.trim();
-  if (!/^\d+$/.test(digits)) return null;
-  const total = Number.parseInt(digits, 10);
-  return total > 0 ? total : null;
-}
-
 /**
  * Resolve a printing from name + collector number + printed total, WITHOUT
  * gating on the OCR'd set code (Scanner V2 · set-code-optional matching).

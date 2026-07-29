@@ -151,6 +151,25 @@ export function collectorNumberKey(cn: string): string {
 }
 
 /**
+ * The printed total in a collector number — the "132" of "138/132".
+ *
+ * Returns null for anything that isn't a positive integer denominator, INCLUDING
+ * a bare "138" with no slash. That null is load-bearing: no total means no key,
+ * and no key means any match path built on it stands down rather than guessing.
+ * Lives here beside collectorNumberKey — the two halves of the one printed
+ * string — so both candidate generation and printing ranking read it the same
+ * way.
+ */
+export function printedTotalFromCollectorNumber(collectorNumber: string): number | null {
+  const denominator = collectorNumber.split("/")[1];
+  if (denominator === undefined) return null;
+  const digits = denominator.trim();
+  if (!/^\d+$/.test(digits)) return null;
+  const total = Number.parseInt(digits, 10);
+  return total > 0 ? total : null;
+}
+
+/**
  * Reconcile one field across the two OCR passes deterministically. The strip
  * pass is the targeted sensor, so it wins on disagreement or when the full pass
  * missed the field; when both passes independently agree we trust the value
