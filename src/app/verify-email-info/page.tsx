@@ -5,11 +5,28 @@ import { Mail, ArrowRight, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Suspense } from "react";
+import { Suspense, useState } from "react";
 
 function VerifyEmailContent() {
   const searchParams = useSearchParams();
   const email = searchParams.get("email");
+  const [resendStatus, setResendStatus] = useState<"idle" | "sending" | "sent">("idle");
+
+  const handleResend = async () => {
+    if (!email || resendStatus === "sending") return;
+    setResendStatus("sending");
+    try {
+      await fetch("/api/auth/resend-verification", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      // The endpoint intentionally returns a generic success regardless.
+      setResendStatus("sent");
+    } catch {
+      setResendStatus("idle");
+    }
+  };
 
   return (
     <div className="min-h-screen flex items-center justify-center relative overflow-hidden">
@@ -35,6 +52,22 @@ function VerifyEmailContent() {
             <span className="font-semibold text-foreground">{email || "your email address"}</span>.<br/>
             Please check your email to activate your account.
           </p>
+
+          <div className="mb-6 text-sm text-muted-foreground">
+            Didn&apos;t get it?{" "}
+            {resendStatus === "sent" ? (
+              <span>Sent again — check your inbox (and spam).</span>
+            ) : (
+              <button
+                type="button"
+                onClick={handleResend}
+                disabled={!email || resendStatus === "sending"}
+                className="text-aura-purple hover:text-aura-violet font-medium underline underline-offset-2 disabled:opacity-60"
+              >
+                {resendStatus === "sending" ? "Sending…" : "Resend verification email"}
+              </button>
+            )}
+          </div>
 
           <Link href="/login">
             <Button variant="outline" className="w-full h-11 rounded-xl">
