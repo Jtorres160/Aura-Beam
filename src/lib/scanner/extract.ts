@@ -6,6 +6,7 @@
 import OpenAI from "openai";
 import { reading, SET_CN_CONFIDENCE, type FieldReading } from "@/lib/scanner/evidence";
 import { throttleVision } from "@/lib/scanner/vision-throttle";
+import { approxImageKB } from "@/lib/scanner/vision-cost";
 import { cropBottomStrip } from "@/lib/scanner/crop-strip";
 
 const openai = new OpenAI({
@@ -23,12 +24,6 @@ const openai = new OpenAI({
 // Observation ONLY: measured from the request we already send and the response
 // we already receive. Nothing is persisted, returned, retried, or branched on —
 // the OCR reading and every decision downstream are byte-identical without it.
-function approxImageKB(dataUrl: string): number {
-  const comma = dataUrl.indexOf(",");
-  const b64 = comma === -1 ? dataUrl : dataUrl.slice(comma + 1);
-  // base64 encodes 3 bytes per 4 chars; good enough for an order-of-magnitude log.
-  return Math.round((b64.length * 0.75) / 1024);
-}
 function logOcrCost(pass: string, imageUrl: string, detail: string, usage: any): void {
   const u = usage || {};
   console.log(
