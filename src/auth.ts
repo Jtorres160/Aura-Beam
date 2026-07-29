@@ -53,6 +53,28 @@ export const { handlers, auth: nextAuth, signIn, signOut } = NextAuth({
   },
   trustHost: true,
   providers: [
+    // ─── Google — the ONLY signup path while registration is gated off ───────
+    //
+    // On `allowDangerousEmailAccountLinking: true`: when a Google profile's
+    // email already matches a User row, Auth.js adopts that row instead of
+    // throwing OAuthAccountNotLinked (see @auth/core handle-login.js — the
+    // `user = userByEmail` branch). Whoever controlled that pre-existing row
+    // then shares the account with the Google signer.
+    //
+    // Why it is safe to KEEP enabled now: with isRegistrationEnabled() false,
+    // /api/auth/register refuses, and it was the only way an unauthenticated
+    // caller could put a row in `users`. The remaining creators are this
+    // provider itself (which only ever creates a row for an email Google has
+    // authenticated), prisma/seed.ts, and the development auth bypass — none
+    // reachable by a stranger against production. So no NEW takeover target
+    // can be planted, and linking is what lets an existing collector keep their
+    // collection when they switch to Google.
+    //
+    // What this does NOT fix: rows created BEFORE the gate went up. Any
+    // credentials account already in the database is still adopted on sight by
+    // a matching Google sign-in. That is a data question, not a code one — see
+    // the PR description. If registration is ever re-enabled, revisit this flag
+    // together with working email verification.
     GoogleProvider({
       clientId: process.env.GOOGLE_CLIENT_ID || "",
       clientSecret: process.env.GOOGLE_CLIENT_SECRET || "",
@@ -76,21 +98,23 @@ export const { handlers, auth: nextAuth, signIn, signOut } = NextAuth({
 
         if (!user) return null;
 
-        // If user has a password hash, verify it.
-        // Otherwise, if they are the seeded user, fallback to password verification
-        if (user.passwordHash) {
-          const isValid = verifyPassword(password, user.passwordHash);
-          if (isValid) {
-            if (!user.emailVerified) {
-              throw new EmailNotVerifiedError();
-            }
-            return user;
-          }
-        } else if (email === "ash@aura.gg" && password === "password") {
-          return user;
+        // A password hash is the ONLY way a credentials login can succeed.
+        // There is deliberately no fallback branch: a row without a hash (an
+        // OAuth-only account, or a seeded row) is not credentials-loginable at
+        // all. A previous `email === "<seed user>" && password === "password"`
+        // escape hatch lived here and granted that row's session — including
+        // its ADMIN role — to anyone who guessed it, with no email-verification
+        // check. Never reintroduce a branch that returns a user without
+        // verifying a hash.
+        if (!user.passwordHash) return null;
+
+        if (!verifyPassword(password, user.passwordHash)) return null;
+
+        if (!user.emailVerified) {
+          throw new EmailNotVerifiedError();
         }
 
-        return null;
+        return user;
       },
     }),
   ],

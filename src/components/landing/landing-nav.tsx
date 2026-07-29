@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Menu, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AuraMark } from "@/components/landing/aura-mark";
+import { signupHref } from "@/lib/registration";
 
 const navLinks = [
   { label: "Features", href: "/#features" },
@@ -49,7 +50,7 @@ export function LandingNav() {
               Log in
             </Button>
           </Link>
-          <Link href="/register">
+          <Link href={signupHref()}>
             <Button size="sm" className="text-sm font-medium">
               Get Started
             </Button>
@@ -89,7 +90,7 @@ export function LandingNav() {
                 <Link href="/login" className="block">
                   <Button variant="ghost" className="w-full justify-start">Log in</Button>
                 </Link>
-                <Link href="/register" className="block">
+                <Link href={signupHref()} className="block">
                   <Button className="w-full">Get Started</Button>
                 </Link>
               </div>

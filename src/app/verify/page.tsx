@@ -6,6 +6,7 @@ import { motion } from "framer-motion";
 import { CheckCircle2, XCircle, Loader2, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
+import { signupHref } from "@/lib/registration";
 
 function VerifyContent() {
   const searchParams = useSearchParams();
@@ -82,10 +83,14 @@ function VerifyContent() {
           
           <p className="text-muted-foreground mb-8">{message}</p>
 
+          {/* On failure this used to send the user to /register, where their
+              existing account produced a 409 — a dead end. signupHref() routes
+              to /login while registration is gated off, which is both a working
+              door (Google) and where an already-registered user belongs. */}
           {status !== "loading" && (
-            <Link href={status === "success" ? "/login" : "/register"}>
+            <Link href={status === "success" ? "/login" : signupHref()}>
               <Button className="w-full h-11 rounded-xl">
-                {status === "success" ? "Continue to Login" : "Back to Register"}
+                {status === "success" ? "Continue to Login" : "Back to Sign In"}
                 <ArrowRight className="h-4 w-4 ml-2" />
               </Button>
             </Link>
