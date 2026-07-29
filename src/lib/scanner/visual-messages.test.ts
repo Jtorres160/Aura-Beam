@@ -36,7 +36,7 @@ function candidates(n: number): CandidatePrinting[] {
   return Array.from({ length: n }, (_, i) => ({
     externalId: `id-${i}`,
     name: "Test Card",
-    game: "mtg",
+    game: "MTG",
     setName: "Test Set",
     rarity: "common",
     imageUrl: `https://example.test/full-${i}.jpg`,
