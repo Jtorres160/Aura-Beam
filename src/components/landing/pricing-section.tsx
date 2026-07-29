@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import { Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
+import { signupHref } from "@/lib/registration";
 
 const plans = [
   {
@@ -98,7 +99,7 @@ export function PricingSection() {
                 ))}
               </ul>
 
-              <Link href="/register">
+              <Link href={signupHref()}>
                 <Button
                   className="w-full h-11 font-medium"
                   variant={plan.highlighted ? "default" : "outline"}

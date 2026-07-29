@@ -1,9 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { hashPassword } from "@/lib/password";
+import { REGISTRATION_DISABLED_MESSAGE, isRegistrationEnabled } from "@/lib/registration";
 
 export async function POST(req: NextRequest) {
   try {
+    // The gate goes FIRST — before the body is read, before any database work.
+    // This is the authoritative check; the UI gating is only there so a tester
+    // never reaches a form that would land here. See src/lib/registration.ts.
+    if (!isRegistrationEnabled()) {
+      return NextResponse.json(
+        { message: REGISTRATION_DISABLED_MESSAGE, registrationDisabled: true },
+        { status: 503 }
+      );
+    }
+
     const body = await req.json();
     const { firstName, lastName, email, password } = body;
 

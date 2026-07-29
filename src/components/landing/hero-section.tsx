@@ -4,6 +4,7 @@ import Link from "next/link";
 import { motion } from "framer-motion";
 import { ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { signupHref } from "@/lib/registration";
 
 export function HeroSection() {
   return (
@@ -51,7 +52,7 @@ export function HeroSection() {
               transition={{ duration: 0.7, delay: 0.35 }}
               className="mt-10 flex flex-col sm:flex-row items-center justify-center lg:justify-start gap-4"
             >
-              <Link href="/register" className="w-full sm:w-auto">
+              <Link href={signupHref()} className="w-full sm:w-auto">
                 <Button size="lg" className="w-full text-base h-12 px-8 font-medium group">
                   Start Scanning Free
                   <ArrowRight className="ml-2 h-4 w-4 transition-transform group-hover:translate-x-1" />
