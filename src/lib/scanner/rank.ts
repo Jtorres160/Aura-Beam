@@ -3,7 +3,14 @@
 // card. Order matters: deterministic evidence (printed set/CN) beats vision, and
 // vision is only consulted where it CAN work — between different illustrations.
 
-import { assessArtworkBoundary, collectorNumberKey, type CandidatePrinting } from "@/lib/scanner/evidence";
+import {
+  SET_CN_CONFIDENCE,
+  assessArtworkBoundary,
+  collectorNumberKey,
+  printedTotalFromCollectorNumber,
+  type CandidatePrinting,
+} from "@/lib/scanner/evidence";
+import { SETCODE_OPTIONAL_MATCH_ENABLED } from "@/lib/scanner/candidates";
 import {
   type Decision,
   acceptDecision,
@@ -25,7 +32,17 @@ const VISION_MAX_ART_GROUPS = 6;
 export async function decideAmongPrintings(
   printings: CandidatePrinting[],
   scannedImageUrl: string,
-  ocr: { setCode: string; collectorNumber: string },
+  ocr: {
+    setCode: string;
+    collectorNumber: string;
+    /** Confidence of the reconciled collector-number READING (evidence.ts
+     *  SET_CN_CONFIDENCE): 0.5 full-pass only, 0.75 strip-pass only, 0.95 both
+     *  OCR passes independently agreed. Gates the CN+printed-total narrowing
+     *  below — see the comment there for the production evidence. Optional so
+     *  callers without a reconciled reading (tests, Yugioh) simply never take
+     *  that path. */
+    collectorNumberConfidence?: number;
+  },
   learningRule: LearningRuleInfo | null,
 ): Promise<Decision> {
   // Assess artwork boundary upfront — a pure property of the game/source.
@@ -53,6 +70,82 @@ export async function decideAmongPrintings(
       const method = cleanCn ? "set-cn-verified" : "single-art-group";
       return { ...acceptDecision(narrowed[0], method), artworkBoundary };
     }
+  }
+
+  // ─── CN + printed-total narrowing (set-code-independent) ──────────────────
+  // The literal setCode comparison above only succeeds when OCR's read and the
+  // candidate row happen to share a vocabulary — the stored codes are genuinely
+  // mixed (measured 2026-07-29 on catalog_cards: 90.3% of rows carry the
+  // printed-symbol ptcgoCode, 9.7% a provider slug like "sv3") and, worse, the
+  // set-code "read" is largely a model guess at a set SYMBOL that isn't text at
+  // all (matched ground truth 3/14). The number pair the card actually prints —
+  // "073/163" — is the stronger key and was being thrown away: within one
+  // name's candidate pool, collectorNumberKey + setPrintedSize pins exactly one
+  // printing for all but 41 of 2,749 multi-printing pools (worst collision 3).
+  //
+  // THE AGREEMENT GATE IS LOAD-BEARING. Replaying labeled production scans
+  // (user selections are the ground truth, per telemetry.ts) showed the
+  // full-card pass can hallucinate the ENTIRE pair, anchored on other cards in
+  // the same session: a card the user identified as me1-33 (printed 033/132)
+  // was read "038/163" — and 38/163 names a REAL Battle Styles printing of the
+  // same Pokémon, so an ungated version of this filter would have confidently
+  // accepted the wrong card (3 of 6 replayed cases from the 2026-07-29
+  // session). Every one of those hallucinations was a full-pass-only reading
+  // (0.5). Agreed readings (both OCR passes independently producing the same
+  // collector number, 0.95) replayed 1 confirmed-correct auto-resolve and 2
+  // conflicts that are only explainable as exploratory picks in degraded
+  // fallback flows — suggestive, but NOT yet the measured hit rate an ungated
+  // accept must earn. Hence the flag below. The gate itself stays regardless:
+  // a weaker-than-agreed reading falls through to the vision/user path exactly
+  // as today, no matter how cleanly it pins one candidate.
+  //
+  // Gated by SETCODE_OPTIONAL_MATCH_ENABLED — this is the ranking-layer half of
+  // the same "set-code-optional matching" feature as resolveByNameNumberTotal
+  // in candidates.ts (same method label, same doctrine), and it ships dark
+  // under the same flag so one reviewed decision, backed by the set-cn-verified
+  // baseline being collected, activates both layers together. Unset ⇒ this
+  // block is never entered and ranking is byte-identical to today's.
+  //
+  // The set code plays NO part here — not even as a tiebreaker. A disagreeing
+  // set code must not veto a unique pair match (that would reinstate the
+  // vocabulary gate this path exists to bypass), and an AGREEING one has
+  // already been claimed by the literal narrowing above at 0.97 — the two
+  // compare set codes identically, so any tie this path sees is one the set
+  // code already failed to break. 2+ pair-equal candidates fall through.
+  //
+  // setPrintedSize is only populated by Pokémon sources; where it is absent
+  // (MTG, Yugioh) or the read carries no "/total", printedTotal is null and the
+  // path stands down without touching behavior.
+  const printedTotal = SETCODE_OPTIONAL_MATCH_ENABLED
+    ? printedTotalFromCollectorNumber(ocr.collectorNumber || "")
+    : null;
+  if (printedTotal !== null && (ocr.collectorNumberConfidence ?? 0) >= SET_CN_CONFIDENCE.agree) {
+    const cnKey = collectorNumberKey(ocr.collectorNumber);
+    const pinned = printings.filter(
+      (p) =>
+        p.setPrintedSize != null &&
+        p.setPrintedSize === printedTotal &&
+        p.collectorNumber != null &&
+        collectorNumberKey(p.collectorNumber) === cnKey,
+    );
+    if (pinned.length === 1) {
+      const resolved = pinned[0];
+      console.log(`[Scanner] Agreed CN + printed total pinned one printing: ${resolved.setName} ${resolved.collectorNumber}/${resolved.setPrintedSize}`);
+      // "name-cn-total-verified" (0.9): auto-accepts interactively, where a
+      // review screen still stands between it and the collection, but stays
+      // below ACCEPT_THRESHOLD_AUTOSCAN — so in bulk mode the gate demotes it
+      // to disambiguation. Carry the full pool (best match first) so that
+      // demotion still shows the grid, not a one-card dead end.
+      const rest = printings.filter((p) => p !== resolved);
+      return {
+        ...acceptDecision(resolved, "name-cn-total-verified"),
+        candidates: [resolved, ...rest],
+        bestMatchExternalId: resolved.externalId,
+        artworkBoundary,
+      };
+    }
+    // 0 or still-ambiguous: fall through to the vision/user path unchanged —
+    // uncertainty, not a guess.
   }
 
   // Illustration guard: if every candidate shares one illustration, vision

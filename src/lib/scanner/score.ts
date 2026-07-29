@@ -114,6 +114,9 @@ export class HeuristicScorer implements Scorer {
         {
           setCode: evidence.printing.setCode?.value ?? "",
           collectorNumber: evidence.printing.collectorNumber?.value ?? "",
+          // Reading provenance, not a score: rank's CN+printed-total narrowing
+          // only acts when the two OCR passes independently agreed (0.95).
+          collectorNumberConfidence: evidence.printing.collectorNumber?.confidence,
         },
         learningRule,
       );

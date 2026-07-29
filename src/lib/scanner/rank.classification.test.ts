@@ -132,6 +132,28 @@ test("ranked narrowing and direct lookup produce identical evidence classificati
 
 // ─── Regression guard: set code ALONE is weaker and must NOT be promoted ──────
 
+// ─── Flag-off guard: CN+printed-total narrowing ships DARK ───────────────────
+// This process runs with SETCODE_OPTIONAL_MATCH_ENABLED unset, so the ranking-
+// layer pair narrowing (rank-narrowing.test.ts runs it flag-ON) must never
+// fire: an agreed number-pair reading that pins exactly one printing still
+// falls through to disambiguation, byte-identical to pre-change ranking.
+
+test("flag off: an agreed CN+printed-total pin does NOT narrow", async () => {
+  const pool: CandidatePrinting[] = [
+    printing({ externalId: "p1", game: "POKEMON", setName: "Battle Styles", setCode: "BST", setPrintedSize: 163, collectorNumber: "73", illustrationId: null, thumbnailUrl: null }),
+    printing({ externalId: "p2", game: "POKEMON", setName: "Twilight Masquerade", setCode: "TWM", setPrintedSize: 167, collectorNumber: "103", illustrationId: null, thumbnailUrl: null }),
+  ];
+  const decision = await decideAmongPrintings(
+    pool,
+    "img",
+    // Set-code read matches no row, pair pins exactly one, reading is agreed —
+    // everything the flag-on path needs. With the flag off it must still ask.
+    { setCode: "SW", collectorNumber: "073/163", collectorNumberConfidence: 0.95 },
+    null,
+  );
+  assert.equal(decision.action, "disambiguate");
+});
+
 test("set code without collector number stays single-art-group (not promoted)", async () => {
   // Only one printing carries setCode "MH2", so set-code-alone still narrows to
   // one — but without a collector number it must keep the weaker method.
