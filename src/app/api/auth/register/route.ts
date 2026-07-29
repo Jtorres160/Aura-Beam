@@ -79,13 +79,21 @@ export async function POST(req: NextRequest) {
 
     // Send the verification email
     const { sendVerificationEmail } = await import("@/lib/email");
-    await sendVerificationEmail(normalizedEmail, token);
+    const emailResult = await sendVerificationEmail(normalizedEmail, token);
 
-    // Return success without password hash
+    if (!emailResult.success) {
+      console.error("Verification email failed to send for", normalizedEmail, emailResult.error);
+    }
+
+    // Return success without password hash. The account was created either way;
+    // emailSent tells the client whether to surface a "resend" prompt immediately.
     return NextResponse.json(
       {
-        message: "Account created successfully. Please verify your email.",
+        message: emailResult.success
+          ? "Account created successfully. Please verify your email."
+          : "Account created, but we couldn't send the verification email. Please use the resend option.",
         requiresVerification: true,
+        emailSent: emailResult.success,
         user: {
           id: newUser.id,
           name: newUser.name,

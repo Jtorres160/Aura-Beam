@@ -16,7 +16,7 @@ export async function sendVerificationEmail(email: string, token: string) {
 
   try {
     const { data, error } = await resend.emails.send({
-      from: "Aura Beam <noreply@aurabeam.com>", // Update with your verified domain later
+      from: "Aura Beam <onboarding@resend.dev>", // Resend's shared test domain — no DNS verification needed. Switch to a verified custom domain once you own one; see aura/src/lib/email.ts history.
       to: email,
       subject: "Verify your email address - Aura Beam",
       html: `
