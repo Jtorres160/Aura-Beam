@@ -97,27 +97,72 @@ function retryDelayMs(err: any, attempt: number): number {
   return Math.min(Math.max((hinted ?? 0) + 250, fallback), VISION_429_MAX_WAIT_MS);
 }
 
+// ─── Span attribution (Phase 5.17C) ──────────────────────────────────────────
+// A caller timing `await throttleVision(...)` measures three very different
+// things as one number: waiting for a slot, the model round trip, and sleeping
+// out a 429 refill. A 9916ms `scoreMs` in production telemetry turned out to be
+// ~1.5s of model plus ~8.4s of our own backoff — indistinguishable at the time,
+// which is what made a token-budget problem look like a slow vision model.
+//
+// Observation ONLY: these are wall-clock readings of work the gate already
+// does. Nothing here changes pacing, retries, or what the caller receives.
+export interface VisionCallSpans {
+  /** Waiting inside the gate: concurrency slot + minimum-start spacing. */
+  gateMs: number;
+  /** Sleeping out 429 token-bucket refills between attempts. */
+  backoffMs: number;
+  /** Inside the OpenAI call itself, summed across attempts. */
+  callMs: number;
+  /** Attempts made. 1 means the call succeeded or failed without a retry. */
+  attempts: number;
+}
+
 /**
  * Run a single OpenAI vision call under the concurrency + spacing gate. Always
  * releases, even if the call throws, so a failed call can't leak a slot.
  *
  * A 429 releases the slot, waits out the token-bucket refill (bounded), and
  * re-enters the gate for another attempt; any other error rethrows untouched.
+ *
+ * `onSpans`, when passed, receives the latency breakdown once the call settles
+ * (on both the success and the give-up path). It is advisory instrumentation:
+ * it cannot affect the result, and a throw from it is swallowed.
  */
-export async function throttleVision<T>(fn: () => Promise<T>): Promise<T> {
+export async function throttleVision<T>(
+  fn: () => Promise<T>,
+  onSpans?: (spans: VisionCallSpans) => void,
+): Promise<T> {
+  const spans: VisionCallSpans = { gateMs: 0, backoffMs: 0, callMs: 0, attempts: 0 };
+  const report = () => {
+    if (!onSpans) return;
+    try { onSpans(spans); } catch { /* instrumentation must never break a scan */ }
+  };
+
   let waited = 0;
   for (let attempt = 1; ; attempt++) {
+    const gateStart = Date.now();
     await acquire();
+    spans.gateMs += Date.now() - gateStart;
+
     let delay: number;
+    const callStart = Date.now();
     try {
-      return await fn();
+      spans.attempts = attempt;
+      const result = await fn();
+      spans.callMs += Date.now() - callStart;
+      report();
+      return result;
     } catch (err: any) {
+      spans.callMs += Date.now() - callStart;
       delay = retryDelayMs(err, attempt);
       const retryable =
         is429(err) &&
         attempt < VISION_429_MAX_ATTEMPTS &&
         waited + delay <= VISION_429_TOTAL_WAIT_MS;
-      if (!retryable) throw err;
+      if (!retryable) {
+        report();
+        throw err;
+      }
       console.warn(
         `[Scanner] Vision 429 — waiting ${delay}ms for the token bucket to refill (attempt ${attempt}/${VISION_429_MAX_ATTEMPTS})`
       );
@@ -127,6 +172,8 @@ export async function throttleVision<T>(fn: () => Promise<T>): Promise<T> {
     }
     // Reached only on the retry path — the finally above has already freed the
     // slot, so this refill pause never blocks the other in-flight call.
+    const backoffStart = Date.now();
     await sleep(delay);
+    spans.backoffMs += Date.now() - backoffStart;
   }
 }
