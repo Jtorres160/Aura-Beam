@@ -15,8 +15,16 @@
 
 /** Max scan requests per user per minute (burst). */
 export const SCAN_BURST_LIMIT = 30;
-/** Max SAVED scans per user per day. */
-export const SCAN_DAILY_LIMIT = 1000;
+/**
+ * Max SAVED scans per user per day.
+ *
+ * Sized for the tester window: 1000 was a runaway guard for a single-owner
+ * world, not a cost ceiling. With multiple concurrent testers the per-user cap
+ * has to be small enough that the worst case is affordable, while staying well
+ * above what an honest session reaches (a long bulk run is tens of cards, not
+ * hundreds).
+ */
+export const SCAN_DAILY_LIMIT = 100;
 
 /**
  * Max capture-rejection reports per user per minute (Phase 5.14.3).
