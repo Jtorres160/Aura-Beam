@@ -46,3 +46,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# probe harnesses and raw capture originals — never belong in a commit.
+# Cards/ is 164MB of camera HEIC; benchmark entries are derived from it and
+# live under src/lib/scanner/benchmark/images/ instead.
+/scratch/
+/Cards/

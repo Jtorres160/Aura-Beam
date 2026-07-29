@@ -45,11 +45,55 @@ export interface VisionResult {
 // with every key in `required` and `additionalProperties: false`. Arity becomes
 // an API-enforced invariant rather than something the model tallies.
 //
-// Letters, not digits, deliberately: the separate question of whether `index`
-// is 0- or 1-based is a live, unresolved defect, and numeric keys would put a
-// thumb on that scale. Letters carry no base information, so this change is
-// orthogonal to it — `index` is read exactly as it was before.
+// Letters, not digits, deliberately: whether the model's pick is 0- or 1-based
+// was a live defect at the time, and numeric keys would have put a thumb on that
+// scale. Letters carry no base information.
+//
+// ─── The pick: keyed too — and this did NOT fix the ±1 defect ───────────────
+// The model used to answer `{"index": N}`, a NUMBER whose base it had to infer.
+// Measured over the 49-entry stratified corpus, the reported index was ALWAYS
+// either the correct candidate or the correct candidate + 1 (49/49, two reps).
+// Because a 1-based answer only lands OUT of range when the correct candidate is
+// last, the defect was invisible for first/middle positions and produced silent
+// WRONG ACCEPTS: 10 of 36 subsetted corpus entries (28%). A "realign when out of
+// range" rule was measured against the same corpus and refuted — it cannot see an
+// in-range wrong base, and left the middle-position cells bit-for-bit unchanged.
+//
+// So the pick became a LABEL, not a number: `{"pick": "c"}` names one of the very
+// same letters `scores` is keyed by, enum-constrained in the strict schema. No
+// base to infer, no counting for the model to do in either field.
+//
+// MEASURED RESULT: this did not fix it. Re-run against the same corpus, the ±1
+// signature survived UNCHANGED — every miss still exactly +1 (12/36 subsetted,
+// 0 "neither"), middle-position cells still 3/10, and the subsetted wrong-accept
+// rate rose to 33%. Letters carry no base, so the base was never the cause. The
+// scores object shifts in LOCKSTEP with the pick (argmax agrees 36/36, versus
+// 12/36 disagreement under the numeric contract), which places the fault in how
+// the model maps images to candidates — most likely counting the scanned image
+// as one of them — upstream of the reply format entirely. Last position now
+// scores 13/13 only because the enum has no letter past the Nth, so a +1
+// overflow is clamped back onto the correct answer; that cell is rescued by an
+// artifact, not understood. Do not read it as a fix.
+//
+// Kept because it is strictly better-formed than a bare integer and removes one
+// confounder from the next experiment, NOT because it solved the defect. See
+// scratch/REPORT-artgroup-letter-label.md. The open lead is message structure —
+// interleaving a text label before each candidate image, and/or separating the
+// scanned card from the candidate sequence.
+//
+// The letters are deliberately SHARED between the two fields rather than given
+// separate alphabets. `pick` names one of the keys the model has just scored, so
+// one vocabulary makes the two fields cross-checkable and reads as a single
+// question ("score every candidate, then name the winner"); two alphabets would
+// invent a second mapping for the model to get wrong, which is the class of bug
+// this whole change removes.
 const CANDIDATE_KEY_ALPHABET = "abcdefghijklmnopqrstuvwxyz";
+
+// The "none of these match" label. Multi-character, so it can never collide with
+// a candidate letter, and it is a member of the same enum — the sensor's
+// uncertainty channel is part of the contract, not an out-of-band value.
+// It decodes to index -1, which is what rank.ts routes to disambiguation.
+export const NONE_MATCH_LABEL = "none";
 
 /** Keys for N candidates, in candidate order: a, b, c, … */
 function candidateKeys(count: number): string[] {
@@ -90,9 +134,44 @@ export function decodeScores(raw: unknown, count: number): number[] | null {
   return null;
 }
 
+/**
+ * Decode the model's `pick` label into a candidate index.
+ *
+ * Returns a LABELLED outcome rather than a bare null so telemetry can tell a
+ * reply it could not read from one that named a candidate we did not offer —
+ * the same distinction `decodeVisionReply` draws for the reply as a whole.
+ *
+ * Case and surrounding whitespace are normalised. That is not leniency about
+ * the contract: a letter identifies the same candidate whatever its case, and
+ * unlike a number it carries no base for normalisation to get wrong.
+ */
+export type PickDecode =
+  | { outcome: "ok"; index: number }
+  | { outcome: "malformed" }
+  | { outcome: "out-of-range" };
+
+export function decodePick(raw: unknown, count: number): PickDecode {
+  if (typeof raw !== "string") return { outcome: "malformed" };
+  const label = raw.trim().toLowerCase();
+  // Checked before the single-character test: "none" is a real answer, and the
+  // one the scanner must never lose. It is valid at any candidate count.
+  if (label === NONE_MATCH_LABEL) return { outcome: "ok", index: -1 };
+  if (label.length !== 1) return { outcome: "malformed" };
+  const index = CANDIDATE_KEY_ALPHABET.indexOf(label);
+  if (index < 0) return { outcome: "malformed" };
+  // A real letter that names no live candidate (e.g. "d" of 3) is the label-space
+  // equivalent of the old out-of-range index. The strict enum should make it
+  // unreachable; it is still labelled rather than silently clamped.
+  if (index >= count) return { outcome: "out-of-range" };
+  return { outcome: "ok", index };
+}
+
 /** What the reply contained, for telemetry — reported whether or not it passed. */
 export interface VisionReplyShape {
+  /** The RESOLVED candidate index (-1 for "none"), whichever field it came from. */
   index?: number;
+  /** The raw `pick` label as the model wrote it, when it sent one. */
+  pick?: string;
   scoresLen?: number;
   scoresArgmax: number;
 }
@@ -105,10 +184,15 @@ export type VisionDecode =
  * Turn a parsed reply body into either a VisionResult or a labelled rejection.
  * Pure, so the reply contract is testable without a network call.
  *
- * `index` is passed through EXACTLY as the model reported it. In particular -1
- * ("none of these candidates match") is preserved: rank.ts routes it to user
- * disambiguation, and remapping it to a real candidate would convert honest
- * uncertainty into a silent wrong accept.
+ * The reply's pick arrives as a LABEL (`pick: "c"`), which this resolves to the
+ * numeric index the rest of the pipeline consumes. Resolution is a lookup in the
+ * same letter order the candidate images were attached in — it is not a
+ * correction, and nothing here shifts, clamps or realigns a candidate.
+ *
+ * "none of these candidates match" is preserved end to end: the `"none"` label
+ * decodes to -1, rank.ts routes -1 to user disambiguation, and no other path can
+ * produce it. Collapsing it onto a real candidate would convert the sensor's
+ * only uncertainty channel into a silent wrong accept.
  */
 export function decodeVisionReply(parsed: unknown, count: number): VisionDecode {
   const body = parsed as Record<string, unknown> | null | undefined;
@@ -123,16 +207,45 @@ export function decodeVisionReply(parsed: unknown, count: number): VisionDecode 
   const scores = decodeScores(rawScores, count);
   const scoresArgmax = scores && scores.length > 0 ? scores.indexOf(Math.max(...scores)) : -1;
 
-  // `parsed?.index` — NOT `parsed.index`. A reply of the literal text "null"
-  // parses fine and then throws on the property read, landing in the outer
-  // catch where it is logged as outcome=error, i.e. blamed on the transport.
-  // A reply we could read but not use is a different defect from a call we
-  // could not make, and the telemetry has to be able to tell them apart.
-  const index = typeof body?.index === "number" ? body.index : undefined;
-  const shape: VisionReplyShape = { index, scoresLen, scoresArgmax };
+  // `body?.pick` — NOT `body.pick`. A reply of the literal text "null" parses
+  // fine and then throws on the property read, landing in the outer catch where
+  // it is logged as outcome=error, i.e. blamed on the transport. A reply we
+  // could read but not use is a different defect from a call we could not make,
+  // and the telemetry has to be able to tell them apart.
+  const rawPick = body?.pick;
+  const pick = typeof rawPick === "string" ? rawPick : undefined;
 
-  if (index === undefined || scores === null) {
+  let index: number | undefined;
+  let outOfRange = false;
+
+  if (rawPick !== undefined) {
+    const decoded = decodePick(rawPick, count);
+    if (decoded.outcome === "ok") index = decoded.index;
+    else outOfRange = decoded.outcome === "out-of-range";
+  } else if (typeof body?.index === "number") {
+    // Legacy numeric pick. The strict schema below makes `index` unreachable for
+    // every candidate count the pipeline actually produces (rank.ts caps art
+    // groups at 6, well inside the alphabet), so this only covers a reply that
+    // predates the schema or one made without it. It is READ, not trusted: this
+    // is the field whose base ambiguity caused the 28% wrong-accept rate, so it
+    // is deliberately not given any realignment here either — it passes through
+    // exactly as reported and an out-of-range value is still rejected.
+    index = body.index;
+  }
+
+  const shape: VisionReplyShape = { index, pick, scoresLen, scoresArgmax };
+
+  // Unreadable scores outrank an unreadable pick: the scores feed rank.ts's
+  // decision margin, so a reply missing them is unusable regardless of its pick.
+  if (scores === null) {
     return { outcome: "rejected-malformed", result: null, shape };
+  }
+  if (index === undefined) {
+    return {
+      outcome: outOfRange ? "rejected-index-out-of-range" : "rejected-malformed",
+      result: null,
+      shape,
+    };
   }
   if (index !== -1 && !(index >= 0 && index < count)) {
     return { outcome: "rejected-index-out-of-range", result: null, shape };
@@ -168,6 +281,7 @@ function logVisionCost(input: {
   spans: VisionCallSpans | null;
   outcome: string;
   index?: number;
+  pick?: string;
   scoresArgmax?: number;
   scoresLen?: number;
 }): void {
@@ -178,10 +292,14 @@ function logVisionCost(input: {
     : "gate=? call=? backoff=? attempts=?";
   // `scoresLen` vs `candidates` is the discriminator for a malformed reply: a
   // wrong-length scores array and an out-of-range index fail the same check.
+  // `index` here is the RESOLVED candidate index; `pick` is the raw label the
+  // model wrote. Both are logged: the pair is what makes a label-resolution
+  // problem distinguishable from a recognition problem after the fact.
   const pick =
-    input.index === undefined && input.scoresLen === undefined
+    input.index === undefined && input.scoresLen === undefined && input.pick === undefined
       ? ""
-      : ` index=${input.index ?? "?"} scoresArgmax=${input.scoresArgmax ?? "?"} scoresLen=${input.scoresLen ?? "?"}`;
+      : ` pick=${input.pick ?? "?"} index=${input.index ?? "?"}`
+        + ` scoresArgmax=${input.scoresArgmax ?? "?"} scoresLen=${input.scoresLen ?? "?"}`;
   console.log(
     `[Scanner] ⏱  vision-cost art-compare | candidates=${candidateCount} ` +
     `image=${approxImageKB(scannedImageUrl)}KB detail=high ` +
@@ -205,9 +323,7 @@ export async function pickArtGroupByVision(
   let usage: any = null;
   const logCost = (
     outcome: string,
-    index?: number,
-    scoresArgmax?: number,
-    scoresLen?: number,
+    shape?: VisionReplyShape,
   ) =>
     logVisionCost({
       candidateCount: representatives.length,
@@ -215,9 +331,10 @@ export async function pickArtGroupByVision(
       usage,
       spans: spansRef.current,
       outcome,
-      index,
-      scoresArgmax,
-      scoresLen,
+      index: shape?.index,
+      pick: shape?.pick,
+      scoresArgmax: shape?.scoresArgmax,
+      scoresLen: shape?.scoresLen,
     });
 
   try {
@@ -241,27 +358,35 @@ export async function pickArtGroupByVision(
     const exampleScores = keys
       .map((k, i) => `"${k}": ${i === 0 ? "0.95" : i === 1 ? "0.25" : "0.15"}`)
       .join(", ");
+    // Every label the model may answer with, including the uncertainty channel.
+    const pickEnum = [...keys, NONE_MATCH_LABEL];
 
     const visualResponse = await throttleVision(() => openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
         {
           role: "system",
-          content: `You are an expert trading card artwork identifier. The user has scanned a physical card (first image). You are given ${representatives.length} candidate card images (images 2 through ${representatives.length + 1}). Compare the artwork, border style, foil pattern, and card layout of the scanned card against each candidate.
+          // No image is referred to by number anywhere in this prompt. The
+          // previous wording ("candidate images (images 2 through N+1)") asked
+          // the model to answer with a 0-based index while numbering the images
+          // from 1 including the scan, and the measured result was an index that
+          // was correct-or-correct+1 with an unstable base. Candidates are named
+          // ONLY by their letters now, in both the question and the answer.
+          content: `You are an expert trading card artwork identifier. The user has scanned a physical card, shown in the FIRST image. The images after it are ${representatives.length} candidate cards, labelled ${keys.join(", ")} in the order they are attached. Compare the artwork, border style, foil pattern, and card layout of the scanned card against each candidate.
 
 Respond with ONLY valid JSON in this format:
-{"index": <number>, "scores": {${keys.map((k) => `"${k}": <confidence>`).join(", ")}}}
+{"pick": <label>, "scores": {${keys.map((k) => `"${k}": <confidence>`).join(", ")}}}
 
 Where:
-- The candidate images are labelled ${keys.join(", ")}, in the order they are attached.
-- "index" is the 0-based index of the candidate that BEST matches (or -1 if none match)
+- "pick" is the LABEL of the candidate that BEST matches — one of: ${keys.map((k) => `"${k}"`).join(", ")}. Answer with the letter itself, never a number.
+- If none of the candidates match the scanned card, answer "pick": "${NONE_MATCH_LABEL}". Say so rather than naming your closest guess — a wrong pick is worse than no pick.
 - "scores" has exactly one confidence value [0.0-1.0] per candidate, under that candidate's label. Every label listed above must appear, and no others.
 - Confidence 1.0 means EXACTLY matches; 0.9+ means very close match
 - Confidence 0.1-0.4 means possible but uncertain match
 - Confidence 0.0-0.1 means does not match
 
-Example for ${representatives.length} candidates where the first candidate is the clear winner:
-{"index": 0, "scores": {${exampleScores}}}${
+Example for ${representatives.length} candidates where candidate "${keys[0]}" is the clear winner:
+{"pick": "${keys[0]}", "scores": {${exampleScores}}}${
   learningRule?.ruleType === "HINT" ? `\n\nIMPORTANT HINT from past scans: ${learningRule.content}` : ""
 }`
         },
@@ -276,11 +401,12 @@ Example for ${representatives.length} candidates where the first candidate is th
           ]
         }
       ],
-      // Arity enforcement lives here, not in the parser. Every candidate key is
-      // `required` and `additionalProperties` is false, so the API itself will
-      // not return a scores object of the wrong width. `index` is left as a
-      // plain integer — deliberately unconstrained beyond its type, so this
-      // does not alter how the model chooses or encodes it.
+      // Both the arity AND the pick are enforced here, not in the parser. Every
+      // candidate key is `required` with `additionalProperties: false`, so the
+      // API will not return a scores object of the wrong width; and `pick` is an
+      // enum over exactly the live candidate labels plus "none", so the API will
+      // not return a pick that names a candidate we did not offer. Neither field
+      // asks the model to count or to infer an index base.
       ...(keyed
         ? {
             response_format: {
@@ -291,9 +417,9 @@ Example for ${representatives.length} candidates where the first candidate is th
                 schema: {
                   type: "object",
                   additionalProperties: false,
-                  required: ["index", "scores"],
+                  required: ["pick", "scores"],
                   properties: {
-                    index: { type: "integer" },
+                    pick: { type: "string", enum: pickEnum },
                     scores: {
                       type: "object",
                       additionalProperties: false,
@@ -330,8 +456,7 @@ Example for ${representatives.length} candidates where the first candidate is th
     // reported. These should agree; a divergence means the reported pick
     // contradicts the reported evidence. Read-only — the decision uses `index`.
     const decoded = decodeVisionReply(parsed, representatives.length);
-    const { index, scoresArgmax, scoresLen } = decoded.shape;
-    logCost(decoded.outcome, index, scoresArgmax, scoresLen);
+    logCost(decoded.outcome, decoded.shape);
     return decoded.result;
   } catch (visualErr: any) {
     logCost(`error:${visualErr?.status ?? ""}${visualErr?.code ? `/${visualErr.code}` : ""}`);
