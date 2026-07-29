@@ -308,6 +308,121 @@ function logVisionCost(input: {
   );
 }
 
+// ─── Message structure: every image carries its own name ────────────────────
+// The heading that introduces each image. These are not decoration — they are
+// the load-bearing part of this call, and the reason it is a pure exported
+// function with a test rather than an inline array literal.
+//
+// The candidates used to be a bare run of images whose letters existed only in
+// the system prompt ("labelled a, b, c in the order they are attached"). That
+// asked the model to count through an image sequence that BEGINS WITH THE
+// SCANNED CARD, and the measured result was a pick that was correct-or-
+// correct+1 — precisely what counting the scan as the first candidate produces.
+// It failed SILENTLY: a +1 that stays in range is a wrong printing written into
+// a collection with no fall-through for the collector to see. 28% of the
+// stratified corpus, and two reply-schema fixes in a row could not touch it.
+//
+// Anchoring each letter to the image directly below it took the stratified
+// corpus from 24/36 to 36/36 with zero wrong accepts, across two reps, and
+// removed the +1 population entirely (12 -> 0). See
+// scratch/REPORT-artgroup-message-structure.md.
+export const SCANNED_CARD_HEADING = "SCANNED CARD:";
+export const candidateHeading = (label: string): string => `Candidate ${label}:`;
+
+/**
+ * Assemble the chat messages for the art-group comparison.
+ *
+ * Pure and exported so the structural invariant is testable without a network
+ * call: every candidate image is immediately preceded by its own heading, and
+ * the scanned card is introduced as something that is NOT a candidate. Nothing
+ * in this function may make a candidate's identity depend on its position in
+ * the content array.
+ */
+export function buildArtGroupMessages(
+  scannedImageUrl: string,
+  representatives: CandidatePrinting[],
+  learningRule: LearningRuleInfo | null,
+): OpenAI.Chat.Completions.ChatCompletionMessageParam[] {
+  // One letter per candidate, in the order the images are attached. The
+  // example is built at this width too, so it can never teach a 3-wide
+  // answer to a 2- or 4-candidate question (the measured failure).
+  const keys = candidateKeys(representatives.length);
+  const exampleScores = keys
+    .map((k, i) => `"${k}": ${i === 0 ? "0.95" : i === 1 ? "0.25" : "0.15"}`)
+    .join(", ");
+  // The exact heading strings the candidate images are attached under, quoted
+  // back in the prompt so the model is pointed at text it can actually see.
+  const candidateHeadings = keys.map((k) => `"${candidateHeading(k)}"`).join(", ");
+
+  const labeledCandidates = representatives.flatMap((p, i) => {
+    const image = {
+      type: "image_url" as const,
+      // Candidate references stay low detail to keep the call fast and cheap.
+      image_url: { url: p.thumbnailUrl as string, detail: "low" as const },
+    };
+    // Past the alphabet there is no label to anchor to — the strict schema is
+    // already dropped in that case (canKeyScores), so the image goes in bare.
+    // rank.ts caps art groups at 6, so this is unreachable in the pipeline.
+    const label = keys[i];
+    return label
+      ? [{ type: "text" as const, text: candidateHeading(label) }, image]
+      : [image];
+  });
+
+  return [
+    {
+      role: "system",
+      // No image is referred to by number OR by position anywhere in this
+      // prompt. The original wording ("candidate images (images 2 through
+      // N+1)") asked the model to answer with a 0-based index while numbering
+      // the images from 1 including the scan. Replacing the numeric answer
+      // with a letter did not help — the ±1 shift survived — so the remaining
+      // ambiguity was the mapping itself. Every image now carries its own name
+      // on the line directly above it, and this prompt points at those lines
+      // rather than at any ordering.
+      content: `You are an expert trading card artwork identifier.
+
+Every image in this request is named by the text line immediately above it:
+- "${SCANNED_CARD_HEADING}" introduces the photograph of the physical card to identify. It is NOT a candidate and has no letter.
+- ${candidateHeadings} each introduce one of the ${representatives.length} candidate cards.
+
+Read each candidate's letter off the line directly above its image. Never determine a letter by counting images or by an image's position in the request.
+
+Compare the artwork, border style, foil pattern, and card layout of the scanned card against each candidate.
+
+Respond with ONLY valid JSON in this format:
+{"pick": <label>, "scores": {${keys.map((k) => `"${k}": <confidence>`).join(", ")}}}
+
+Where:
+- "pick" is the LABEL of the candidate that BEST matches — one of: ${keys.map((k) => `"${k}"`).join(", ")}. Answer with the letter itself, never a number.
+- If none of the candidates match the scanned card, answer "pick": "${NONE_MATCH_LABEL}". Say so rather than naming your closest guess — a wrong pick is worse than no pick.
+- "scores" has exactly one confidence value [0.0-1.0] per candidate, under that candidate's label. Every label listed above must appear, and no others.
+- Confidence 1.0 means EXACTLY matches; 0.9+ means very close match
+- Confidence 0.1-0.4 means possible but uncertain match
+- Confidence 0.0-0.1 means does not match
+
+Example for ${representatives.length} candidates where candidate "${keys[0]}" is the clear winner:
+{"pick": "${keys[0]}", "scores": {${exampleScores}}}${
+        learningRule?.ruleType === "HINT"
+          ? `\n\nIMPORTANT HINT from past scans: ${learningRule.content}`
+          : ""
+      }`,
+    },
+    {
+      role: "user",
+      content: [
+        // Each image is introduced by the text part directly before it, so the
+        // letter-to-image mapping is anchored rather than positional.
+        { type: "text", text: SCANNED_CARD_HEADING },
+        // The scanned card goes in at HIGH detail — it's the one image the
+        // model must read precisely to tell near-identical artworks apart.
+        { type: "image_url", image_url: { url: scannedImageUrl, detail: "high" } },
+        ...labeledCandidates,
+      ],
+    },
+  ];
+}
+
 // ─── Vision: pick the matching art group ───────────────────────────────────
 // Returns the index and confidence scores for each candidate representative.
 // Scores are in [0, 1] and represent match confidence. Returns null when
@@ -338,44 +453,10 @@ export async function pickArtGroupByVision(
     });
 
   try {
-    // One letter per candidate, in the order the images are attached. The
-    // example is built at this width too, so it can never teach a 3-wide
-    // answer to a 2- or 4-candidate question (the measured failure).
     const keys = candidateKeys(representatives.length);
     const keyed = canKeyScores(representatives.length);
-    const exampleScores = keys
-      .map((k, i) => `"${k}": ${i === 0 ? "0.95" : i === 1 ? "0.25" : "0.15"}`)
-      .join(", ");
     // Every label the model may answer with, including the uncertainty channel.
     const pickEnum = [...keys, NONE_MATCH_LABEL];
-    // The exact heading strings the candidate images are attached under, quoted
-    // back in the prompt so the model is pointed at text it can actually see.
-    const candidateHeadings = keys.map((k) => `"Candidate ${k}:"`).join(", ");
-
-    // ─── Message structure: the label rides WITH the image ──────────────────
-    // Candidates used to be a bare run of images and the mapping from image to
-    // letter lived only in the system prompt ("labelled a, b, c in the order
-    // they are attached"). That asks the model to count positions in an image
-    // sequence that also contains the scanned card — and the measured ±1 shift
-    // is exactly what counting the scan as the first candidate would produce.
-    //
-    // Each candidate image is now immediately preceded by its own text part
-    // naming it, so a letter is anchored to the image below it rather than
-    // inferred from a position. The scanned card gets a text part of its own
-    // that says it is not a candidate.
-    const labeledCandidates = representatives.flatMap((p, i) => {
-      const image = {
-        type: "image_url" as const,
-        image_url: { url: p.thumbnailUrl as string, detail: "low" as const },
-      };
-      // Past the alphabet there is no label to anchor to — the strict schema is
-      // already dropped in that case (canKeyScores), so the image goes in bare.
-      // rank.ts caps art groups at 6, so this is unreachable in the pipeline.
-      const label = keys[i];
-      return label
-        ? [{ type: "text" as const, text: `Candidate ${label}:` }, image]
-        : [image];
-    });
 
     // Routed through the SAME gate as the two OCR passes (Phase 5.13 audit).
     // This call was the one vision request in the pipeline that bypassed it: a
@@ -386,59 +467,7 @@ export async function pickArtGroupByVision(
     // since consumed their spacing gap — so it buys burst safety for free.
     const visualResponse = await throttleVision(() => openai.chat.completions.create({
       model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "system",
-          // No image is referred to by number OR by position anywhere in this
-          // prompt. The original wording ("candidate images (images 2 through
-          // N+1)") asked the model to answer with a 0-based index while
-          // numbering the images from 1 including the scan. Replacing the
-          // numeric answer with a letter did not help — the ±1 shift survived —
-          // so the remaining ambiguity is the mapping itself: "labelled a, b, c
-          // in the order they are attached" still required counting through a
-          // sequence that begins with the scanned card. Every image now carries
-          // its own name on the line directly above it, and this prompt points
-          // at those lines rather than at any ordering.
-          content: `You are an expert trading card artwork identifier.
-
-Every image in this request is named by the text line immediately above it:
-- "SCANNED CARD:" introduces the photograph of the physical card to identify. It is NOT a candidate and has no letter.
-- ${candidateHeadings} each introduce one of the ${representatives.length} candidate cards.
-
-Read each candidate's letter off the line directly above its image. Never determine a letter by counting images or by an image's position in the request.
-
-Compare the artwork, border style, foil pattern, and card layout of the scanned card against each candidate.
-
-Respond with ONLY valid JSON in this format:
-{"pick": <label>, "scores": {${keys.map((k) => `"${k}": <confidence>`).join(", ")}}}
-
-Where:
-- "pick" is the LABEL of the candidate that BEST matches — one of: ${keys.map((k) => `"${k}"`).join(", ")}. Answer with the letter itself, never a number.
-- If none of the candidates match the scanned card, answer "pick": "${NONE_MATCH_LABEL}". Say so rather than naming your closest guess — a wrong pick is worse than no pick.
-- "scores" has exactly one confidence value [0.0-1.0] per candidate, under that candidate's label. Every label listed above must appear, and no others.
-- Confidence 1.0 means EXACTLY matches; 0.9+ means very close match
-- Confidence 0.1-0.4 means possible but uncertain match
-- Confidence 0.0-0.1 means does not match
-
-Example for ${representatives.length} candidates where candidate "${keys[0]}" is the clear winner:
-{"pick": "${keys[0]}", "scores": {${exampleScores}}}${
-  learningRule?.ruleType === "HINT" ? `\n\nIMPORTANT HINT from past scans: ${learningRule.content}` : ""
-}`
-        },
-        {
-          role: "user",
-          content: [
-            // Each image is introduced by the text part directly before it, so
-            // the letter-to-image mapping is anchored rather than positional.
-            { type: "text", text: "SCANNED CARD:" },
-            // The scanned card goes in at HIGH detail — it's the one image the
-            // model must read precisely to tell near-identical artworks apart.
-            // Candidate references stay low detail to keep the call fast/cheap.
-            { type: "image_url", image_url: { url: scannedImageUrl, detail: "high" } },
-            ...labeledCandidates
-          ]
-        }
-      ],
+      messages: buildArtGroupMessages(scannedImageUrl, representatives, learningRule),
       // Both the arity AND the pick are enforced here, not in the parser. Every
       // candidate key is `required` with `additionalProperties: false`, so the
       // API will not return a scores object of the wrong width; and `pick` is an
