@@ -338,18 +338,6 @@ export async function pickArtGroupByVision(
     });
 
   try {
-    const candidateImages = representatives.map((p) => ({
-      type: "image_url" as const,
-      image_url: { url: p.thumbnailUrl as string, detail: "low" as const }
-    }));
-
-    // Routed through the SAME gate as the two OCR passes (Phase 5.13 audit).
-    // This call was the one vision request in the pipeline that bypassed it: a
-    // full-detail scanned image plus one thumbnail per art group is the single
-    // most token-heavy call we make, and in bulk it landed on OpenAI's token
-    // bucket unpaced, alongside the next scan's OCR pair. Single scans pay
-    // nothing for this — by the time scoring runs, the OCR passes have long
-    // since consumed their spacing gap — so it buys burst safety for free.
     // One letter per candidate, in the order the images are attached. The
     // example is built at this width too, so it can never teach a 3-wide
     // answer to a 2- or 4-candidate question (the measured failure).
@@ -360,19 +348,66 @@ export async function pickArtGroupByVision(
       .join(", ");
     // Every label the model may answer with, including the uncertainty channel.
     const pickEnum = [...keys, NONE_MATCH_LABEL];
+    // The exact heading strings the candidate images are attached under, quoted
+    // back in the prompt so the model is pointed at text it can actually see.
+    const candidateHeadings = keys.map((k) => `"Candidate ${k}:"`).join(", ");
 
+    // ─── Message structure: the label rides WITH the image ──────────────────
+    // Candidates used to be a bare run of images and the mapping from image to
+    // letter lived only in the system prompt ("labelled a, b, c in the order
+    // they are attached"). That asks the model to count positions in an image
+    // sequence that also contains the scanned card — and the measured ±1 shift
+    // is exactly what counting the scan as the first candidate would produce.
+    //
+    // Each candidate image is now immediately preceded by its own text part
+    // naming it, so a letter is anchored to the image below it rather than
+    // inferred from a position. The scanned card gets a text part of its own
+    // that says it is not a candidate.
+    const labeledCandidates = representatives.flatMap((p, i) => {
+      const image = {
+        type: "image_url" as const,
+        image_url: { url: p.thumbnailUrl as string, detail: "low" as const },
+      };
+      // Past the alphabet there is no label to anchor to — the strict schema is
+      // already dropped in that case (canKeyScores), so the image goes in bare.
+      // rank.ts caps art groups at 6, so this is unreachable in the pipeline.
+      const label = keys[i];
+      return label
+        ? [{ type: "text" as const, text: `Candidate ${label}:` }, image]
+        : [image];
+    });
+
+    // Routed through the SAME gate as the two OCR passes (Phase 5.13 audit).
+    // This call was the one vision request in the pipeline that bypassed it: a
+    // full-detail scanned image plus one thumbnail per art group is the single
+    // most token-heavy call we make, and in bulk it landed on OpenAI's token
+    // bucket unpaced, alongside the next scan's OCR pair. Single scans pay
+    // nothing for this — by the time scoring runs, the OCR passes have long
+    // since consumed their spacing gap — so it buys burst safety for free.
     const visualResponse = await throttleVision(() => openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
         {
           role: "system",
-          // No image is referred to by number anywhere in this prompt. The
-          // previous wording ("candidate images (images 2 through N+1)") asked
-          // the model to answer with a 0-based index while numbering the images
-          // from 1 including the scan, and the measured result was an index that
-          // was correct-or-correct+1 with an unstable base. Candidates are named
-          // ONLY by their letters now, in both the question and the answer.
-          content: `You are an expert trading card artwork identifier. The user has scanned a physical card, shown in the FIRST image. The images after it are ${representatives.length} candidate cards, labelled ${keys.join(", ")} in the order they are attached. Compare the artwork, border style, foil pattern, and card layout of the scanned card against each candidate.
+          // No image is referred to by number OR by position anywhere in this
+          // prompt. The original wording ("candidate images (images 2 through
+          // N+1)") asked the model to answer with a 0-based index while
+          // numbering the images from 1 including the scan. Replacing the
+          // numeric answer with a letter did not help — the ±1 shift survived —
+          // so the remaining ambiguity is the mapping itself: "labelled a, b, c
+          // in the order they are attached" still required counting through a
+          // sequence that begins with the scanned card. Every image now carries
+          // its own name on the line directly above it, and this prompt points
+          // at those lines rather than at any ordering.
+          content: `You are an expert trading card artwork identifier.
+
+Every image in this request is named by the text line immediately above it:
+- "SCANNED CARD:" introduces the photograph of the physical card to identify. It is NOT a candidate and has no letter.
+- ${candidateHeadings} each introduce one of the ${representatives.length} candidate cards.
+
+Read each candidate's letter off the line directly above its image. Never determine a letter by counting images or by an image's position in the request.
+
+Compare the artwork, border style, foil pattern, and card layout of the scanned card against each candidate.
 
 Respond with ONLY valid JSON in this format:
 {"pick": <label>, "scores": {${keys.map((k) => `"${k}": <confidence>`).join(", ")}}}
@@ -393,11 +428,14 @@ Example for ${representatives.length} candidates where candidate "${keys[0]}" is
         {
           role: "user",
           content: [
+            // Each image is introduced by the text part directly before it, so
+            // the letter-to-image mapping is anchored rather than positional.
+            { type: "text", text: "SCANNED CARD:" },
             // The scanned card goes in at HIGH detail — it's the one image the
             // model must read precisely to tell near-identical artworks apart.
             // Candidate references stay low detail to keep the call fast/cheap.
             { type: "image_url", image_url: { url: scannedImageUrl, detail: "high" } },
-            ...candidateImages
+            ...labeledCandidates
           ]
         }
       ],
