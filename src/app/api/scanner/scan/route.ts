@@ -38,6 +38,7 @@ import { persistPrinting } from "@/lib/cards/persist-printing";
 import { serializeSavedCard } from "@/lib/cards/serialize-card";
 import type { DisambiguationCandidate } from "@/types/card";
 import { checkScanBurst, SCAN_DAILY_LIMIT, startOfUtcDay } from "@/lib/rate-limit";
+import { reportScanFailure } from "@/lib/observability/scan-report";
 
 // Two OCR passes + a possible vision comparison + card-DB fetches can
 // legitimately take a while; without this, a slow upstream hits the platform
@@ -163,6 +164,14 @@ export async function POST(req: NextRequest) {
         isAutoScan: Boolean(isAutoScan),
         timings,
       })), startedAt);
+      // The extraction failure path RETURNS rather than throws, so it never
+      // reaches the catch-all below. Without this call, a reader outage — the
+      // single most common way a scan dies — would be the one break that stayed
+      // invisible outside the database. Silent for "no-card": that is a verdict,
+      // and reportScanFailure is what knows the difference.
+      reportScanFailure(stage, new Error(extraction.message), {
+        game, isAutoScan: Boolean(isAutoScan), timings,
+      });
       return NextResponse.json({ success: false, stage, message: extraction.message }, { status: extraction.status });
     }
 
@@ -468,6 +477,15 @@ export async function POST(req: NextRequest) {
       });
 
       console.log(`[Scanner] ⚠ Cannot verify "${cardName}" — unavailable: ${candidates.unavailable.join(", ")}`);
+      // Warning, not an exception: to the collector this is a verdict ("we could
+      // not ask"), but to us it is an upstream card database being down — the
+      // kind of thing that otherwise only surfaces as testers reporting that
+      // "the scanner stopped working".
+      reportScanFailure("provider-unavailable", null, {
+        game: effectiveGame, isAutoScan: Boolean(isAutoScan), timings, cardName,
+        scanId: unavailableRow?.id ?? null,
+        unavailableSources: candidates.unavailable,
+      });
       // 503, not 404: 404 asserts the card does not exist. It might; we did not
       // find out. The status code has to mean what it says.
       return NextResponse.json({
@@ -531,6 +549,13 @@ export async function POST(req: NextRequest) {
         },
       }).catch(() => { /* the DB may be the failing stage */ });
     }
+
+    // Every stage that reaches here is a genuine break (the verdict paths all
+    // return above), so this is the pipeline's main exception report. The
+    // original cause is passed, not the StageError wrapper, so the Sentry stack
+    // trace points at the code that actually threw; the stage rides along as a
+    // tag and as the fingerprint.
+    reportScanFailure(stage, error?.cause_ ?? error, { timings });
 
     return NextResponse.json({ success: false, stage, message: messageForStage(stage) }, { status: 500 });
   }
