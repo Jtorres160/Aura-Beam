@@ -46,6 +46,7 @@ import { primeScanAudio, playScanChime } from "@/lib/audio/scan-chime";
 import { LiveMetricsDebugOverlay } from "./live-metrics-debug-overlay";
 import { formatMarketPrice } from "@/lib/cards/market-price";
 import { RevealPlate } from "@/components/scanner/reveal-plate";
+import { ReportIssue } from "@/components/scanner/report-issue";
 import { revealAccentHex } from "@/lib/cards/card-color";
 import type { SavedCard, DisambiguationCandidate, PostAddArchive } from "@/types/card";
 import type { ArchiveContext } from "@/types";
@@ -1548,6 +1549,22 @@ export default function ScannerPage() {
                 <Button variant="outline" className="h-11 px-8 font-medium" onClick={resetScan}>
                   <RotateCcw className="h-4 w-4 mr-2" /> Try Again
                 </Button>
+
+                {/* A failed scan is the case Sentry cannot fully explain: the
+                    stage says WHERE it broke, but only the person holding the
+                    card can say what they were scanning and how often it has
+                    happened. The stage travels with the report, so the two
+                    halves land together. No scanId: a scan that failed before
+                    its telemetry row was written has none, and inventing one
+                    would attach the complaint to the wrong attempt. */}
+                <ReportIssue
+                  surface="error"
+                  className="mt-6 w-full max-w-sm"
+                  context={{
+                    failureStage: errorStage,
+                    game: selectedGame === "All" ? null : selectedGame,
+                  }}
+                />
               </motion.div>
             )}
 
@@ -1730,6 +1747,28 @@ export default function ScannerPage() {
                     {isRejecting ? "Recording…" : "Not this card?"}
                   </button>
                 )}
+
+                {/* Sits beside "Not this card?" and does a different job. That
+                    button is measured, structured disagreement written onto the
+                    scan row (reject-match); this is the free-text channel for
+                    everything the fixed vocabulary cannot express — a wrong
+                    printing, a bad price, a card the grid never offered.
+                    Shown on a match whether or not it was added: a collector
+                    may only realise the printing is wrong after saving it. */}
+                <ReportIssue
+                  surface="result"
+                  context={{
+                    scanId: scanResult.historyId,
+                    cardId: scanResult.id,
+                    cardName: scanResult.name,
+                    // confidence 0 means "no scorer ran" (the scan truth-boundary
+                    // convention), so it is sent as null — an absent reading, not
+                    // a claim of 0% certainty.
+                    confidence: scanResult.confidence > 0 ? scanResult.confidence : null,
+                    matchMethod: scanResult.method ?? null,
+                    game: scanResult.game,
+                  }}
+                />
 
                 <div className="flex gap-3 pt-2">
                   <Button variant="outline" className="flex-1 h-12" onClick={resetScan}>
