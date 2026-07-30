@@ -69,8 +69,16 @@ async function loadCard(fixture: (typeof FIXTURES)[number]): Promise<PreviewCard
   }
 }
 
-export default async function RevealPreviewPage() {
+export default async function RevealPreviewPage({
+  searchParams,
+}: {
+  // `?cols=baseline,identity` narrows the grid to a subset of treatments, so the
+  // final A-vs-B decision can be reviewed without the rejected arms competing
+  // for attention. Omitted ⇒ all five.
+  searchParams: Promise<{ cols?: string }>;
+}) {
   if (process.env.NODE_ENV === "production") notFound();
+  const { cols } = await searchParams;
 
   // Sequential, not Promise.all: Scryfall asks for ~100ms between requests, and
   // a review page has no reason to hammer a free API.
@@ -81,5 +89,10 @@ export default async function RevealPreviewPage() {
     await new Promise((r) => setTimeout(r, 120));
   }
 
-  return <RevealComparisonGrid cards={cards} />;
+  return (
+    <RevealComparisonGrid
+      cards={cards}
+      only={cols ? cols.split(",").map((c) => c.trim()).filter(Boolean) : undefined}
+    />
+  );
 }

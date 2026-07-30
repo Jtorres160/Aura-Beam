@@ -40,7 +40,15 @@ function identityAccent(card: PreviewCard): CardAccent {
     : accentFromPokemonTypes(card.pokemonTypes);
 }
 
-export function RevealComparisonGrid({ cards }: { cards: PreviewCard[] }) {
+export function RevealComparisonGrid({
+  cards,
+  only,
+}: {
+  cards: PreviewCard[];
+  /** Column keys to show; undefined ⇒ all of them. */
+  only?: string[];
+}) {
+  const columns = only?.length ? COLUMNS.filter((c) => only.includes(c.key)) : COLUMNS;
   // null = not read yet; a present key with null value = extraction returned
   // nothing usable, which the grid must show as "no color", not as a blank cell.
   const [art, setArt] = useState<Record<string, string | null>>({});
@@ -68,9 +76,9 @@ export function RevealComparisonGrid({ cards }: { cards: PreviewCard[] }) {
         </p>
         <h1 className="font-serif text-3xl sm:text-4xl mt-2">A card&apos;s own color, at the reveal</h1>
         <p className="mt-3 max-w-2xl text-sm text-muted-foreground">
-          Five treatments of the same moment, on real cards through the real{" "}
+          {columns.length} treatment{columns.length === 1 ? "" : "s"} of the same moment, on real cards through the real{" "}
           <span className="font-mono text-xs">RevealPlate</span>. The foil hairline stays neutral in
-          all four — it remains the screen&apos;s single foil moment.
+          every one — it remains the screen&apos;s single foil moment.
         </p>
       </header>
 
@@ -101,8 +109,9 @@ export function RevealComparisonGrid({ cards }: { cards: PreviewCard[] }) {
                 </span>
               </div>
 
-              <div className="grid grid-cols-2 lg:grid-cols-5 gap-x-5 gap-y-10">
-                {COLUMNS.map((col) => (
+              <div className="grid gap-x-5 gap-y-10"
+                style={{ gridTemplateColumns: `repeat(${columns.length}, minmax(0, 1fr))` }}>
+                {columns.map((col) => (
                   <div key={col.key} className="flex flex-col items-center">
                     <p className="font-mono text-[11px] uppercase tracking-[0.14em] text-foreground">
                       {col.title}
