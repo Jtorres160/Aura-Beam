@@ -46,6 +46,7 @@ import { primeScanAudio, playScanChime } from "@/lib/audio/scan-chime";
 import { LiveMetricsDebugOverlay } from "./live-metrics-debug-overlay";
 import { formatMarketPrice } from "@/lib/cards/market-price";
 import { RevealPlate } from "@/components/scanner/reveal-plate";
+import { revealAccentHex } from "@/lib/cards/card-color";
 import type { SavedCard, DisambiguationCandidate, PostAddArchive } from "@/types/card";
 import type { ArchiveContext } from "@/types";
 
@@ -1670,11 +1671,17 @@ export default function ScannerPage() {
                   Identified · New entry
                 </p>
 
-                {/* The card itself, entering the archive. Extracted to
-                    <RevealPlate> so the design-preview route can render the SAME
-                    markup; `accent` is left null here, which is the reveal that
-                    ships today. Nothing about this state's appearance changed. */}
-                <RevealPlate name={scanResult.name} imageUrl={scanResult.imageUrl} accent={null} />
+                {/* The card itself, entering the archive. The accent is a wash in
+                    the card's OWN declared color — MTG mana identity, Pokémon
+                    energy type — so every reveal differs because every card does.
+                    Returns null for a card that declares no color (colorless MTG,
+                    Trainer/Energy, Yu-Gi-Oh!), and the reveal stays flat: absence
+                    of a color is never dressed up as one. */}
+                <RevealPlate
+                  name={scanResult.name}
+                  imageUrl={scanResult.imageUrl}
+                  accent={revealAccentHex(scanResult)}
+                />
 
                 {/* Foil rule — the screen's single foil moment. Now draws itself
                     out from the centre as the card settles, so the confirmation

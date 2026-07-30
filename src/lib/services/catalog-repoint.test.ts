@@ -10,6 +10,19 @@
 //      exact inverse; this proves the round trip is lossless, INCLUDING prices,
 //      the null-set edge, and the ptcgoCode-vs-id setCode fallback.
 //
+//      ONE DOCUMENTED EXCEPTION: `types` (the Pokémon energy type, added for the
+//      reveal accent — see lib/cards/card-color.ts). catalog_cards has no column
+//      for it, so a local hit CANNOT answer it. The round-trip assertion below
+//      therefore covers every resolution field and asserts the divergence
+//      explicitly, rather than quietly widening to accommodate it: a local hit
+//      must leave `types` UNDEFINED — "this source does not carry the field" —
+//      and must never emit `[]`, which would be the card claiming to have no
+//      type. Consequence, measured: 57/57 of the Pokémon cards users have
+//      actually scanned are present in catalog_cards, so with the flag on in
+//      production every Pokémon reveal currently renders flat. Closing that needs
+//      a nullable `types` column on catalog_cards plus a build-catalog backfill —
+//      a schema change, deliberately not bundled into the design wiring.
+//
 //   2. FAIL-OPEN — a local miss or a local error never asserts "not found". It
 //      returns null so the caller falls through to the live API. A miss must
 //      degrade to today's behavior, not to a worse one.
@@ -119,6 +132,21 @@ function fakeDb(opts: {
   return db;
 }
 
+/**
+ * Assert a local catalog hit matches the live-API answer across every resolution
+ * field, and that it reports `types` as UNKNOWN rather than fabricating one.
+ *
+ * The held-out field is stated in exactly one place — here — so widening the
+ * exception later takes a deliberate edit to a named helper instead of quietly
+ * loosening four separate deepEqual calls. See the PARITY note at the top.
+ */
+function assertCatalogParity(local: CandidatePrinting, live: CandidatePrinting) {
+  const { types: _liveTypes, ...liveResolution } = live;
+  const { types: localTypes, ...localResolution } = local;
+  assert.deepEqual(localResolution, liveResolution);
+  assert.equal(localTypes, undefined, "a local hit must not fabricate a type answer");
+}
+
 // ─── 1. Parity: a local hit == the live-API answer ───────────────────────────
 
 describe("formatCatalogCard — lossless inverse of formatPokemonCard", () => {
@@ -128,8 +156,9 @@ describe("formatCatalogCard — lossless inverse of formatPokemonCard", () => {
       const live = formatPokemonCard(apiCard);
       // What a local catalog hit returns for the row build-catalog stored:
       const local = formatCatalogCard(rowFromPrinting(live));
-      // The load-bearing claim of the whole task: identical.
-      assert.deepEqual(local, live);
+      // The load-bearing claim of the whole task: identical across every
+      // resolution field, with `types` held out — see the PARITY note above.
+      assertCatalogParity(local, live);
     });
   }
 
@@ -185,7 +214,7 @@ describe("catalogSearchBySetAndNumber — matches the live query's tolerances", 
     const db = fakeDb({ findMany: () => [row] });
     const out = await catalogSearchBySetAndNumber("BS", "1", db);
     assert.equal(out.length, 1);
-    assert.deepEqual(out[0], formatPokemonCard(apiCards.holo));
+    assertCatalogParity(out[0], formatPokemonCard(apiCards.holo));
   });
 });
 
@@ -195,7 +224,8 @@ describe("catalogFetchCardById — by-id local re-fetch", () => {
     const db = fakeDb({ findUnique: () => row });
     const out = await catalogFetchCardById("base1-1", db);
     assert.deepEqual(db.lastWhere, { externalId: "base1-1" });
-    assert.deepEqual(out, formatPokemonCard(apiCards.holo));
+    assert.ok(out, "expected a formatted printing");
+    assertCatalogParity(out, formatPokemonCard(apiCards.holo));
   });
 
   test("a miss returns null (caller falls through to the live API)", async () => {
@@ -221,10 +251,9 @@ describe("fetchPokemonPrintingsLocal — fail-open, never a fabricated absence",
       "set-cn-verified",
     );
     // Card data is exactly the live-path answer.
-    assert.deepEqual(
-      outcome!.status === "found" ? outcome!.fallbackCard : null,
-      formatPokemonCard(apiCards.holo),
-    );
+    const fallbackCard = outcome!.status === "found" ? outcome!.fallbackCard : null;
+    assert.ok(fallbackCard, "expected a fallback card");
+    assertCatalogParity(fallbackCard, formatPokemonCard(apiCards.holo));
   });
 
   test("all printings of a name come back as candidates", async () => {

@@ -43,5 +43,13 @@ export function serializeSavedCard(input: SerializeSavedCardInput): SavedCard {
     imageUrl: localCard.imageUrl,
     thumbnailUrl: localCard.thumbnailUrl,
     historyId,
+    // Reveal accent evidence, taken from the PRINTING rather than the stored row
+    // — same reason prices are: the printing is the authoritative resolution, and
+    // Card has no clean column for either field (its `types` is a mixed
+    // "Fire,Stage 2" string, populated on 0 of 157 rows). Both keys are omitted
+    // entirely when the source did not carry the field, so a consumer can tell
+    // "colorless" (`[]`) apart from "unknown" (absent).
+    ...(printing.colorIdentity ? { colorIdentity: printing.colorIdentity } : {}),
+    ...(printing.types ? { types: printing.types } : {}),
   };
 }

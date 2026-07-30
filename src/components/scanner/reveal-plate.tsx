@@ -3,11 +3,13 @@
 // ═══════════════════════════════════════════════════════════
 // Aura — Reveal plate (design exploration, Phase R1)
 // ═══════════════════════════════════════════════════════════
-// The card-landing visual of the post-scan reveal, lifted VERBATIM out of
-// scanner/page.tsx's result state so there is exactly one copy of it. The
-// scanner renders this with `accent={null}`, which is byte-for-byte the reveal
-// that ships today; the design-preview route renders the same component with a
-// real accent so a comparison screenshot is the same markup, not a mockup of it.
+// The card-landing visual of the post-scan reveal. Both the scanner result state
+// and the /dev/reveal-preview comparison render THIS component, so the design
+// review and production can never drift apart — a comparison screenshot is the
+// same markup, not a mockup of it.
+//
+// The scanner passes revealAccentHex(scanResult) (card-color.ts); the preview
+// passes each treatment's candidate colour, including `null` for the baseline.
 //
 // The accent is a WASH, not a glow: a wide, heavily-blurred bounce behind the
 // card plus an accent-tinted drop shadow — the color a physical card would spill

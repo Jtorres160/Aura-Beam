@@ -93,12 +93,18 @@ export function accentFromColorIdentity(identity: readonly string[] | null | und
 // neutral rather than guessed at.
 
 const POKEMON_PIGMENTS: Record<string, { hex: string; label: string }> = {
-  fire: { hex: "#B4623A", label: "Fire" },
+  // Ember. Was #B4623A until the palette guard in card-color.test.ts measured it
+  // at 0.51 saturation — the one pigment in the map that broke the ≤0.5 ceiling
+  // this file claims to hold. Re-cut at S 0.44 / L 0.45, and kept at hue 24° so
+  // it stays distinguishable from MTG's oxide Red at 13°.
+  fire: { hex: "#A56940", label: "Fire" },
   water: { hex: "#4E7590", label: "Water" },
   grass: { hex: "#4F7355", label: "Grass" },
   // Lightning as antique amber, NOT yellow — saturated yellow is the single
-  // fastest way to make a warm-neutral page look like a toy.
-  lightning: { hex: "#A8842F", label: "Lightning" },
+  // fastest way to make a warm-neutral page look like a toy. The first cut
+  // (#A8842F) proved that point against its author: the palette guard measured
+  // it at 0.563 saturation, the worst offender in the map. Re-cut at S 0.44.
+  lightning: { hex: "#A58A40", label: "Lightning" },
   psychic: { hex: "#7A5470", label: "Psychic" },
   // Leather brown, kept clearly cooler/darker than Fire so the two never blur.
   fighting: { hex: "#8C6248", label: "Fighting" },
@@ -120,6 +126,48 @@ export function accentFromPokemonTypes(types: readonly string[] | null | undefin
   if (!pigment) return NEUTRAL_ACCENT;
   if (pigment.hex === NEUTRAL_HEX) return { ...NEUTRAL_ACCENT, label: pigment.label };
   return { ...pigment, source: "pokemon-type" };
+}
+
+// ─── Game dispatch ──────────────────────────────────────────────────────────
+
+/** The accent-relevant fields of a resolved card. Structural, so both SavedCard
+ *  (the scanner reveal) and the design-preview fixtures satisfy it. */
+export interface AccentSource {
+  game: string;
+  colorIdentity?: string[] | null;
+  types?: string[] | null;
+}
+
+/**
+ * Resolve the reveal accent for a card, picking the right declared-identity field
+ * for its game. ONE dispatcher, used by both the scanner reveal and the design
+ * comparison, so the two can never disagree about what a card's color is.
+ *
+ * Yu-Gi-Oh! returns neutral: it publishes no color-identity field at all, so
+ * there is nothing to derive an accent from and the reveal stays flat. That is
+ * the same answer the design comparison reached — art extraction was rejected
+ * for inventing colors (see clampToHouse), and inventing one here would be the
+ * same mistake in a different layer.
+ */
+export function accentForCard(card: AccentSource): CardAccent {
+  switch (card.game) {
+    case "MTG":
+      return accentFromColorIdentity(card.colorIdentity);
+    case "POKEMON":
+      return accentFromPokemonTypes(card.types);
+    default:
+      return NEUTRAL_ACCENT;
+  }
+}
+
+/**
+ * The hex the reveal should wash with, or null to stay flat. Collapses the
+ * "declares no color" case to null so callers do not have to know that a neutral
+ * CardAccent means "render nothing".
+ */
+export function revealAccentHex(card: AccentSource): string | null {
+  const accent = accentForCard(card);
+  return accent.source === "neutral" ? null : accent.hex;
 }
 
 // ─── The house clamp ────────────────────────────────────────────────────────

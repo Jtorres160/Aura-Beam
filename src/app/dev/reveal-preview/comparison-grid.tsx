@@ -9,8 +9,7 @@
 import { useEffect, useState } from "react";
 import { RevealPlate } from "@/components/scanner/reveal-plate";
 import {
-  accentFromColorIdentity,
-  accentFromPokemonTypes,
+  accentForCard,
   clampToHouse,
   REVIEWED_WARM_PULL,
   type CardAccent,
@@ -34,10 +33,10 @@ const COLUMNS = [
   { key: "clamped", title: "E · Art, S/L clamp", blurb: "Art hue kept. No rotation." },
 ] as const;
 
+/** Column B is now literally what the scanner reveal renders — same dispatcher,
+ *  so this comparison cannot drift away from production. */
 function identityAccent(card: PreviewCard): CardAccent {
-  return card.game === "MTG"
-    ? accentFromColorIdentity(card.colorIdentity)
-    : accentFromPokemonTypes(card.pokemonTypes);
+  return accentForCard({ game: card.game, colorIdentity: card.colorIdentity, types: card.pokemonTypes });
 }
 
 export function RevealComparisonGrid({
