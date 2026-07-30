@@ -45,6 +45,7 @@ import { primeScanAudio, playScanChime } from "@/lib/audio/scan-chime";
 // TEMPORARY dev-only calibration overlay — remove with Phase 4.5 cleanup.
 import { LiveMetricsDebugOverlay } from "./live-metrics-debug-overlay";
 import { formatMarketPrice } from "@/lib/cards/market-price";
+import { RevealPlate } from "@/components/scanner/reveal-plate";
 import type { SavedCard, DisambiguationCandidate, PostAddArchive } from "@/types/card";
 import type { ArchiveContext } from "@/types";
 
@@ -1669,30 +1670,11 @@ export default function ScannerPage() {
                   Identified · New entry
                 </p>
 
-                {/* The card itself, entering the archive */}
-                <motion.div
-                  initial={{ opacity: 0, y: 18, scale: 0.94 }}
-                  animate={{ opacity: 1, y: 0, scale: [0.94, 1.015, 1] }}
-                  transition={{
-                    duration: 0.55,
-                    ease: [0.22, 1, 0.36, 1],
-                    // Slight overshoot then settle — the card "lands" in the
-                    // archive instead of simply fading up.
-                    scale: { duration: 0.55, times: [0, 0.62, 1], ease: [0.22, 1, 0.36, 1] },
-                  }}
-                  className="mx-auto w-44 sm:w-52"
-                >
-                  <div className="card-frame border border-border bg-muted shadow-[0_24px_48px_-24px_rgba(19,18,16,0.5)]">
-                    {scanResult.imageUrl ? (
-                      /* eslint-disable-next-line @next/next/no-img-element */
-                      <img src={scanResult.imageUrl} alt={scanResult.name} className="w-full h-full object-cover" />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center">
-                        <Sparkles className="h-8 w-8 text-muted-foreground/40" />
-                      </div>
-                    )}
-                  </div>
-                </motion.div>
+                {/* The card itself, entering the archive. Extracted to
+                    <RevealPlate> so the design-preview route can render the SAME
+                    markup; `accent` is left null here, which is the reveal that
+                    ships today. Nothing about this state's appearance changed. */}
+                <RevealPlate name={scanResult.name} imageUrl={scanResult.imageUrl} accent={null} />
 
                 {/* Foil rule — the screen's single foil moment. Now draws itself
                     out from the centre as the card settles, so the confirmation
