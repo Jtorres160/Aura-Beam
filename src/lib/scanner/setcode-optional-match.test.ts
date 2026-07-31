@@ -41,6 +41,7 @@ function row(over: Partial<CatalogCardRow> & Pick<CatalogCardRow, "externalId" |
     rarity: "Common",
     imageUrl: null,
     thumbnailUrl: null,
+    types: null,
     marketPrice: null,
     lowPrice: null,
     midPrice: null,

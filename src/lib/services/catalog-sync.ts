@@ -30,7 +30,7 @@ const API_SETS = "https://api.pokemontcg.io/v2/sets";
 // select carries everything formatPokemonCard() reads: rarity + set (ptcgoCode,
 // id, name, printedTotal, updatedAt) + images + tcgplayer/cardmarket prices. This
 // is the one line that makes a catalog row full instead of embed-only.
-export const CARD_SELECT = "id,name,number,rarity,set,images,tcgplayer,cardmarket";
+export const CARD_SELECT = "id,name,number,rarity,set,images,tcgplayer,cardmarket,types";
 // Set enumeration carries updatedAt so the cron can detect a set that changed
 // upstream since we last stored it (mirrors card_fingerprints.sourceUpdatedAt).
 const SET_SELECT = "id,name,releaseDate,updatedAt";
@@ -152,6 +152,17 @@ export function parseSetReleaseDate(raw: unknown): Date | null {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
+// catalog_cards.types is a single column, so CandidatePrinting.types (string[]
+// | undefined) is flattened to one of three states, mirroring the mana-color
+// convention in card-color.ts: undefined (source didn't carry the field, e.g. a
+// pre-M-CATALOG row or a Trainer/Energy card) is stored as null; [] ("this card
+// declares no type") is stored as ""; a real type list joins on ",". Read back
+// by the exact inverse in pokemon-catalog.ts's formatCatalogCard.
+export function encodeCatalogTypes(types: string[] | undefined): string | null {
+  if (types === undefined) return null;
+  return types.join(",");
+}
+
 // ─── Per-card upsert ───────────────────────────────────────────────────────────
 // Stores formatPokemonCard()'s OWN output, so it cannot drift from what candidate
 // generation expects. Prices are (re-)seeded here with priceUpdatedAt=now; the
@@ -175,6 +186,7 @@ export async function upsertCatalogCard(db: CatalogSyncDb, card: any): Promise<v
     rarity: p.rarity,
     imageUrl: p.imageUrl ?? null,
     thumbnailUrl: p.thumbnailUrl ?? null,
+    types: encodeCatalogTypes(p.types),
     marketPrice: p.price?.marketPrice ?? null,
     lowPrice: p.price?.lowPrice ?? null,
     midPrice: p.price?.midPrice ?? null,

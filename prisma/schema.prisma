@@ -553,6 +553,7 @@ model CatalogCard {
   rarity          String   @default("Common")
   imageUrl        String?                      // images.large || images.small
   thumbnailUrl    String?                      // images.small
+  types           String?                      // comma-joined types.join(","), e.g. "Fire"; null = unknown, distinct from "" (no type)
 
   // Live price group — seeded at import, owned by the M5 refresh cron.
   marketPrice     Float?

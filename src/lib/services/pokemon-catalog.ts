@@ -47,6 +47,7 @@ export interface CatalogCardRow {
   rarity: string;
   imageUrl: string | null;
   thumbnailUrl: string | null;
+  types: string | null;
   marketPrice: number | null;
   lowPrice: number | null;
   midPrice: number | null;
@@ -80,11 +81,22 @@ const CATALOG_SELECT = {
   rarity: true,
   imageUrl: true,
   thumbnailUrl: true,
+  types: true,
   marketPrice: true,
   lowPrice: true,
   midPrice: true,
   highPrice: true,
 } as const;
+
+/** Exact inverse of encodeCatalogTypes() (catalog-sync.ts): null (row predates
+ *  this column, or the source never carried the field) stays undefined —
+ *  absence, not a claim; "" ("this card declares no type") becomes []; a
+ *  comma-joined list splits back into its array. */
+function decodeCatalogTypes(raw: string | null | undefined): string[] | undefined {
+  if (raw == null) return undefined;
+  if (raw === "") return [];
+  return raw.split(",");
+}
 
 /**
  * A catalog_cards row → CandidatePrinting: the exact inverse of
@@ -107,6 +119,7 @@ export function formatCatalogCard(row: CatalogCardRow): CandidatePrinting {
     rarity: row.rarity,
     imageUrl: row.imageUrl,
     thumbnailUrl: row.thumbnailUrl,
+    types: decodeCatalogTypes(row.types),
     price: {
       marketPrice: row.marketPrice ?? null,
       lowPrice: row.lowPrice ?? null,

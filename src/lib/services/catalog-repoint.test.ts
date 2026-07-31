@@ -8,20 +8,17 @@
 //      live API path would have produced for the same printing. The catalog
 //      stores formatPokemonCard()'s own output, and formatCatalogCard() is its
 //      exact inverse; this proves the round trip is lossless, INCLUDING prices,
-//      the null-set edge, and the ptcgoCode-vs-id setCode fallback.
+//      the null-set edge, the ptcgoCode-vs-id setCode fallback, AND `types` (the
+//      Pokémon energy type, added for the reveal accent — see
+//      lib/cards/card-color.ts): catalog_cards.types flattens the array to one
+//      of three states (encodeCatalogTypes/decodeCatalogTypes in
+//      catalog-sync.ts/pokemon-catalog.ts) so undefined ("source doesn't carry
+//      the field") and [] ("card declares no type") never collapse together.
 //
-//      ONE DOCUMENTED EXCEPTION: `types` (the Pokémon energy type, added for the
-//      reveal accent — see lib/cards/card-color.ts). catalog_cards has no column
-//      for it, so a local hit CANNOT answer it. The round-trip assertion below
-//      therefore covers every resolution field and asserts the divergence
-//      explicitly, rather than quietly widening to accommodate it: a local hit
-//      must leave `types` UNDEFINED — "this source does not carry the field" —
-//      and must never emit `[]`, which would be the card claiming to have no
-//      type. Consequence, measured: 57/57 of the Pokémon cards users have
-//      actually scanned are present in catalog_cards, so with the flag on in
-//      production every Pokémon reveal currently renders flat. Closing that needs
-//      a nullable `types` column on catalog_cards plus a build-catalog backfill —
-//      a schema change, deliberately not bundled into the design wiring.
+//      NOTE: the column existing does not mean the data does. Rows imported
+//      before this column shipped store `types = null` until a build-catalog
+//      backfill runs — until then, a hit on an un-backfilled row still reports
+//      `types: undefined`, which is the correct honest answer, not a bug.
 //
 //   2. FAIL-OPEN — a local miss or a local error never asserts "not found". It
 //      returns null so the caller falls through to the live API. A miss must
@@ -40,6 +37,7 @@ import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 
 import { formatPokemonCard } from "@/lib/services/pokemon";
+import { encodeCatalogTypes } from "@/lib/services/catalog-sync";
 import {
   CATALOG_LOCAL_ENABLED,
   formatCatalogCard,
@@ -85,6 +83,17 @@ const apiCards: Record<string, any> = {
     images: { small: "s.png", large: "l.png" },
     tcgplayer: { prices: { normal: { market: 1.26 } } },
   },
+  // Carries `types` — the reveal-accent evidence path (card-color.ts).
+  typed: {
+    id: "sv3-125",
+    name: "Charizard ex",
+    number: "125",
+    rarity: "Double Rare",
+    set: { id: "sv3", name: "Obsidian Flames", ptcgoCode: "OBF", printedTotal: 197 },
+    images: { small: "s.png", large: "l.png" },
+    tcgplayer: { prices: { holofoil: { market: 89.99 } } },
+    types: ["Fire"],
+  },
 };
 
 /** Reproduce exactly what scripts/build-catalog.mjs persists from a formatted
@@ -100,6 +109,7 @@ function rowFromPrinting(p: CandidatePrinting): CatalogCardRow {
     rarity: p.rarity,
     imageUrl: p.imageUrl ?? null,
     thumbnailUrl: p.thumbnailUrl ?? null,
+    types: encodeCatalogTypes(p.types),
     marketPrice: p.price?.marketPrice ?? null,
     lowPrice: p.price?.lowPrice ?? null,
     midPrice: p.price?.midPrice ?? null,
@@ -132,19 +142,10 @@ function fakeDb(opts: {
   return db;
 }
 
-/**
- * Assert a local catalog hit matches the live-API answer across every resolution
- * field, and that it reports `types` as UNKNOWN rather than fabricating one.
- *
- * The held-out field is stated in exactly one place — here — so widening the
- * exception later takes a deliberate edit to a named helper instead of quietly
- * loosening four separate deepEqual calls. See the PARITY note at the top.
- */
+/** Assert a local catalog hit matches the live-API answer across every field,
+ *  `types` included — see the PARITY note at the top. */
 function assertCatalogParity(local: CandidatePrinting, live: CandidatePrinting) {
-  const { types: _liveTypes, ...liveResolution } = live;
-  const { types: localTypes, ...localResolution } = local;
-  assert.deepEqual(localResolution, liveResolution);
-  assert.equal(localTypes, undefined, "a local hit must not fabricate a type answer");
+  assert.deepEqual(local, live);
 }
 
 // ─── 1. Parity: a local hit == the live-API answer ───────────────────────────
@@ -157,10 +158,19 @@ describe("formatCatalogCard — lossless inverse of formatPokemonCard", () => {
       // What a local catalog hit returns for the row build-catalog stored:
       const local = formatCatalogCard(rowFromPrinting(live));
       // The load-bearing claim of the whole task: identical across every
-      // resolution field, with `types` held out — see the PARITY note above.
+      // resolution field, including `types` — see the PARITY note above.
       assertCatalogParity(local, live);
     });
   }
+
+  test("a row imported before the types column existed reports types as unknown, not no-type", () => {
+    // build-catalog hasn't backfilled this row yet: types is null in Postgres,
+    // same as any row from before this column shipped.
+    const live = formatPokemonCard(apiCards.typed);
+    const row = { ...rowFromPrinting(live), types: null };
+    const local = formatCatalogCard(row);
+    assert.equal(local.types, undefined, "an un-backfilled row must not fabricate 'no type'");
+  });
 
   test("an unpriced card surfaces marketPrice null on BOTH paths — never 0", () => {
     // The distinction this asserts: "no source quoted a price" is null, and a

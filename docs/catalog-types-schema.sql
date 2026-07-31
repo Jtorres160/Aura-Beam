@@ -1,0 +1,49 @@
+-- ─── catalog_cards.types column ────────────────────────────────────────────
+-- Additive DDL for CatalogCard.types (prisma/schema.prisma). Run this against
+-- the database BEFORE deploying the design/reveal-card-color branch; until the
+-- column exists, catalog-sync.ts's upsertCatalogCard() would fail on any row
+-- write (it now always sets `types`), and the local-catalog read path
+-- (formatCatalogCard / decodeCatalogTypes in pokemon-catalog.ts) would error
+-- on a SELECT it does not know how to build.
+--
+-- ─── WHY THIS IS A HAND-WRITTEN FILE AND NOT `prisma db push` ────────────────
+--
+-- This repo has no migrations directory, so `db push` is the usual path. Do NOT
+-- use it here. `prisma migrate diff` against the live database reports drift
+-- beyond this column — pgvector/HNSW indexes on card_fingerprints that Prisma's
+-- schema language cannot represent (see docs/scan-feedback-schema.sql for the
+-- exact DROP INDEX / ALTER COLUMN statements it would emit). A push would take
+-- out the fingerprint index's query path as a side effect of adding one column.
+--
+-- This statement is additive only: one new nullable column, no default, on an
+-- existing table. It touches nothing else.
+--
+-- ─── Why nullable, no default ─────────────────────────────────────────────────
+--
+-- `types` distinguishes three states end to end (see encodeCatalogTypes /
+-- decodeCatalogTypes in catalog-sync.ts / pokemon-catalog.ts, and the PARITY
+-- note atop catalog-repoint.test.ts): NULL = "we don't know" (every row that
+-- predates this column, until a catalog rebuild backfills it), '' = "this card
+-- declares no type" (Trainer/Energy cards), and a comma-joined list = a real
+-- Pokémon energy type. A DEFAULT would collapse NULL and '' into the same
+-- value and silently turn "unknown" into a false claim of "no type."
+--
+-- ─── Backfill ──────────────────────────────────────────────────────────────
+--
+-- No separate backfill script is needed. scripts/build-catalog.mjs already
+-- writes `types` on every upsert (it delegates to catalog-sync.ts's
+-- upsertCatalogCard, which now calls encodeCatalogTypes on every card). A
+-- resumed FULL run (the default, no --set flag) SKIPS rows that already exist,
+-- so it will NOT backfill existing rows on its own — re-run with --no-resume
+-- to force every existing row to be re-upserted with `types` populated:
+--
+--   node scripts/build-catalog.mjs --no-resume
+--
+-- Until that rebuild runs, existing rows report types = null → the reveal
+-- accent sees `undefined` (decodeCatalogTypes's "absence, not a claim"
+-- convention) and renders flat, exactly as it did before this column existed.
+-- That is correct, not a bug — see catalog-repoint.test.ts's
+-- "a row imported before the types column existed reports types as unknown,
+-- not no-type" test.
+
+ALTER TABLE "catalog_cards" ADD COLUMN IF NOT EXISTS "types" TEXT;
