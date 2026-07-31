@@ -45,6 +45,9 @@ import { primeScanAudio, playScanChime } from "@/lib/audio/scan-chime";
 // TEMPORARY dev-only calibration overlay — remove with Phase 4.5 cleanup.
 import { LiveMetricsDebugOverlay } from "./live-metrics-debug-overlay";
 import { formatMarketPrice } from "@/lib/cards/market-price";
+import { RevealPlate } from "@/components/scanner/reveal-plate";
+import { ReportIssue } from "@/components/scanner/report-issue";
+import { revealAccentHex } from "@/lib/cards/card-color";
 import type { SavedCard, DisambiguationCandidate, PostAddArchive } from "@/types/card";
 import type { ArchiveContext } from "@/types";
 
@@ -1546,6 +1549,22 @@ export default function ScannerPage() {
                 <Button variant="outline" className="h-11 px-8 font-medium" onClick={resetScan}>
                   <RotateCcw className="h-4 w-4 mr-2" /> Try Again
                 </Button>
+
+                {/* A failed scan is the case Sentry cannot fully explain: the
+                    stage says WHERE it broke, but only the person holding the
+                    card can say what they were scanning and how often it has
+                    happened. The stage travels with the report, so the two
+                    halves land together. No scanId: a scan that failed before
+                    its telemetry row was written has none, and inventing one
+                    would attach the complaint to the wrong attempt. */}
+                <ReportIssue
+                  surface="error"
+                  className="mt-6 w-full max-w-sm"
+                  context={{
+                    failureStage: errorStage,
+                    game: selectedGame === "All" ? null : selectedGame,
+                  }}
+                />
               </motion.div>
             )}
 
@@ -1669,30 +1688,17 @@ export default function ScannerPage() {
                   Identified · New entry
                 </p>
 
-                {/* The card itself, entering the archive */}
-                <motion.div
-                  initial={{ opacity: 0, y: 18, scale: 0.94 }}
-                  animate={{ opacity: 1, y: 0, scale: [0.94, 1.015, 1] }}
-                  transition={{
-                    duration: 0.55,
-                    ease: [0.22, 1, 0.36, 1],
-                    // Slight overshoot then settle — the card "lands" in the
-                    // archive instead of simply fading up.
-                    scale: { duration: 0.55, times: [0, 0.62, 1], ease: [0.22, 1, 0.36, 1] },
-                  }}
-                  className="mx-auto w-44 sm:w-52"
-                >
-                  <div className="card-frame border border-border bg-muted shadow-[0_24px_48px_-24px_rgba(19,18,16,0.5)]">
-                    {scanResult.imageUrl ? (
-                      /* eslint-disable-next-line @next/next/no-img-element */
-                      <img src={scanResult.imageUrl} alt={scanResult.name} className="w-full h-full object-cover" />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center">
-                        <Sparkles className="h-8 w-8 text-muted-foreground/40" />
-                      </div>
-                    )}
-                  </div>
-                </motion.div>
+                {/* The card itself, entering the archive. The accent is a wash in
+                    the card's OWN declared color — MTG mana identity, Pokémon
+                    energy type — so every reveal differs because every card does.
+                    Returns null for a card that declares no color (colorless MTG,
+                    Trainer/Energy, Yu-Gi-Oh!), and the reveal stays flat: absence
+                    of a color is never dressed up as one. */}
+                <RevealPlate
+                  name={scanResult.name}
+                  imageUrl={scanResult.imageUrl}
+                  accent={revealAccentHex(scanResult)}
+                />
 
                 {/* Foil rule — the screen's single foil moment. Now draws itself
                     out from the centre as the card settles, so the confirmation
@@ -1741,6 +1747,28 @@ export default function ScannerPage() {
                     {isRejecting ? "Recording…" : "Not this card?"}
                   </button>
                 )}
+
+                {/* Sits beside "Not this card?" and does a different job. That
+                    button is measured, structured disagreement written onto the
+                    scan row (reject-match); this is the free-text channel for
+                    everything the fixed vocabulary cannot express — a wrong
+                    printing, a bad price, a card the grid never offered.
+                    Shown on a match whether or not it was added: a collector
+                    may only realise the printing is wrong after saving it. */}
+                <ReportIssue
+                  surface="result"
+                  context={{
+                    scanId: scanResult.historyId,
+                    cardId: scanResult.id,
+                    cardName: scanResult.name,
+                    // confidence 0 means "no scorer ran" (the scan truth-boundary
+                    // convention), so it is sent as null — an absent reading, not
+                    // a claim of 0% certainty.
+                    confidence: scanResult.confidence > 0 ? scanResult.confidence : null,
+                    matchMethod: scanResult.method ?? null,
+                    game: scanResult.game,
+                  }}
+                />
 
                 <div className="flex gap-3 pt-2">
                   <Button variant="outline" className="flex-1 h-12" onClick={resetScan}>

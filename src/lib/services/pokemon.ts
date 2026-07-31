@@ -188,6 +188,9 @@ export function formatPokemonCard(externalCard: any): CandidatePrinting {
     rarity: externalCard.rarity || "Common",
     imageUrl: externalCard.images?.large || externalCard.images?.small || null,
     thumbnailUrl: externalCard.images?.small || null,
-    price: extractPokemonPrice(externalCard)
+    price: extractPokemonPrice(externalCard),
+    // Reveal accent evidence (card-color.ts). Trainer/Energy cards carry no
+    // `types` at all — left undefined rather than [] so absence stays absence.
+    types: Array.isArray(externalCard.types) ? externalCard.types : undefined,
   };
 }

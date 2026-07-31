@@ -1,8 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { Mail, MessageSquare, Send, Sparkles, CheckCircle2 } from "lucide-react";
+import { AlertCircle, Mail, MessageSquare, Send, Sparkles, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  CONTACT_MESSAGE_MAX,
+  CONTACT_RECIPIENT,
+  parseContactMessage,
+  type ContactMessage,
+} from "@/lib/contact";
 
 export default function ContactPage() {
   const [formData, setFormData] = useState({
@@ -13,19 +19,65 @@ export default function ContactPage() {
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSubmitted, setIsSubmitted] = useState(false);
+  // The failure half, which did not exist before: this form could only ever
+  // succeed. `field` names the input at fault for a validation rejection so the
+  // visitor is not left hunting for what we objected to.
+  const [error, setError] = useState<{ field?: keyof ContactMessage; message: string } | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError(null);
+
+    // Same parser the route runs. Catching a bad address here saves a round
+    // trip; it does not replace the server's check, which is the real gate.
+    const parsed = parseContactMessage(formData);
+    if (!parsed.ok) {
+      setError({ field: parsed.field, message: parsed.message });
+      return;
+    }
+
     setIsSubmitting(true);
+    try {
+      const res = await fetch("/api/contact", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(parsed.value),
+      });
+      const json = await res.json().catch(() => null);
 
-    // Simulate form submission delay
-    // In production, this can send data to your NestJS backend or a service like Resend/Formspree
-    await new Promise((resolve) => setTimeout(resolve, 1500));
+      // Both halves must agree before we claim delivery. `res.ok` alone is not
+      // enough — a proxy or a redirect can return a 200 that never reached the
+      // route, and this form's entire bug was announcing a send that never
+      // happened.
+      if (!res.ok || !json?.success) {
+        setError({
+          field: json?.field,
+          message: json?.message || "We couldn't send your message — it wasn't received.",
+        });
+        return;
+      }
 
-    setIsSubmitting(false);
-    setIsSubmitted(true);
-    setFormData({ name: "", email: "", subject: "general", message: "" });
+      // Cleared ONLY after a confirmed send. On any failure the typed message
+      // stays exactly where it is: someone who just wrote three paragraphs must
+      // not have them erased by our outage.
+      setIsSubmitted(true);
+      setFormData({ name: "", email: "", subject: "general", message: "" });
+    } catch {
+      // Network failure. The request may never have left the browser; either
+      // way we did not see it land, so we do not say it did.
+      setError({
+        message: "Your message didn't send — check your connection and try again.",
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
+
+  /** Red ring on the input the server (or the parser) objected to. */
+  const fieldClass = (field: keyof ContactMessage) =>
+    error?.field === field
+      ? "border-destructive focus:ring-destructive/50"
+      : "border-border focus:ring-primary/50";
 
   return (
     <div className="space-y-12 max-w-4xl mx-auto">
@@ -52,8 +104,12 @@ export default function ContactPage() {
             </p>
 
             <div className="space-y-4 pt-2">
+              {/* Link and label both come from CONTACT_RECIPIENT — the same
+                  constant the API route delivers to. Previously the mailto:
+                  pointed at support@aurabeam.com while the text beside it read
+                  a different address, so one of the two was always wrong. */}
               <a
-                href="mailto:support@aurabeam.com"
+                href={`mailto:${CONTACT_RECIPIENT}`}
                 className="flex items-center gap-3 text-sm text-muted-foreground hover:text-primary transition-colors group"
               >
                 <div className="h-9 w-9 rounded-lg bg-primary/10 flex items-center justify-center text-primary group-hover:bg-primary/20 transition-colors">
@@ -61,7 +117,7 @@ export default function ContactPage() {
                 </div>
                 <div>
                   <p className="text-xs font-medium text-foreground">Email Support</p>
-                  <p className="text-xs">jtorres160@yahoo.com</p>
+                  <p className="text-xs">{CONTACT_RECIPIENT}</p>
                 </div>
               </a>
             </div>
@@ -113,8 +169,10 @@ export default function ContactPage() {
                       required
                       placeholder="Your Name"
                       value={formData.name}
+                      disabled={isSubmitting}
+                      aria-invalid={error?.field === "name"}
                       onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                      className="w-full bg-background/50 border border-border rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all placeholder:text-muted-foreground/50"
+                      className={`w-full bg-background/50 border rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 transition-all placeholder:text-muted-foreground/50 disabled:opacity-50 ${fieldClass("name")}`}
                     />
                   </div>
                   <div className="space-y-1.5">
@@ -127,8 +185,10 @@ export default function ContactPage() {
                       required
                       placeholder="you@example.com"
                       value={formData.email}
+                      disabled={isSubmitting}
+                      aria-invalid={error?.field === "email"}
                       onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                      className="w-full bg-background/50 border border-border rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all placeholder:text-muted-foreground/50"
+                      className={`w-full bg-background/50 border rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 transition-all placeholder:text-muted-foreground/50 disabled:opacity-50 ${fieldClass("email")}`}
                     />
                   </div>
                 </div>
@@ -140,8 +200,9 @@ export default function ContactPage() {
                   <select
                     id="subject"
                     value={formData.subject}
+                    disabled={isSubmitting}
                     onChange={(e) => setFormData({ ...formData, subject: e.target.value })}
-                    className="w-full bg-background/50 border border-border rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all appearance-none"
+                    className={`w-full bg-background/50 border rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 transition-all appearance-none disabled:opacity-50 ${fieldClass("subject")}`}
                   >
                     <option value="general" className="bg-card">General Inquiry</option>
                     <option value="support" className="bg-card">Technical Support</option>
@@ -159,12 +220,41 @@ export default function ContactPage() {
                     id="message"
                     required
                     rows={4}
+                    maxLength={CONTACT_MESSAGE_MAX}
                     placeholder="Tell us what we can help with..."
                     value={formData.message}
+                    disabled={isSubmitting}
+                    aria-invalid={error?.field === "message"}
                     onChange={(e) => setFormData({ ...formData, message: e.target.value })}
-                    className="w-full bg-background/50 border border-border rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all placeholder:text-muted-foreground/50 resize-none"
+                    className={`w-full bg-background/50 border rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 transition-all placeholder:text-muted-foreground/50 resize-none disabled:opacity-50 ${fieldClass("message")}`}
                   />
                 </div>
+
+                {/* A failed send is stated plainly and the form keeps every
+                    word that was typed. The one thing this must never do is
+                    clear itself and look like it worked — which is precisely
+                    what the old setTimeout handler did on every submission. */}
+                {error && (
+                  <div
+                    role="alert"
+                    className="flex items-start gap-2.5 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3"
+                  >
+                    <AlertCircle className="h-4 w-4 shrink-0 text-destructive mt-0.5" />
+                    <div className="space-y-1">
+                      <p className="text-xs text-destructive leading-relaxed">{error.message}</p>
+                      {/* Only offered when the send itself failed, not when the
+                          visitor simply mistyped something they can fix here. */}
+                      {!error.field && (
+                        <a
+                          href={`mailto:${CONTACT_RECIPIENT}`}
+                          className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground transition-colors"
+                        >
+                          Email {CONTACT_RECIPIENT} directly
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                )}
 
                 <Button
                   type="submit"
@@ -173,6 +263,10 @@ export default function ContactPage() {
                 >
                   {isSubmitting ? (
                     <>Sending...</>
+                  ) : error && !error.field ? (
+                    <>
+                      Try Sending Again <Send className="h-3.5 w-3.5" />
+                    </>
                   ) : (
                     <>
                       Send Message <Send className="h-3.5 w-3.5" />

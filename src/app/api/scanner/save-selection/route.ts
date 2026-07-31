@@ -9,6 +9,7 @@ import { getArchiveContext } from "@/lib/scanner/archive-context";
 import { persistPrinting } from "@/lib/cards/persist-printing";
 import { serializeSavedCard } from "@/lib/cards/serialize-card";
 import { messageForStage, messageForUnavailableSelection, runStage, stageOfError } from "@/lib/scanner/failure";
+import { reportScanFailure } from "@/lib/observability/scan-report";
 
 // The user looked at the physical card and picked — that's ground truth.
 const USER_SELECTION_CONFIDENCE = Math.round(METHOD_CONFIDENCE["user-selection"] * 100);
@@ -164,6 +165,13 @@ export async function POST(req: NextRequest) {
           reason: lookup.reason,
         });
       }
+      // Same upstream outage as the scan route's provider-unavailable branch,
+      // reached one step later. Warning level, so a dark source is visible to us
+      // without being counted as an Aura bug.
+      reportScanFailure("selection-provider", null, {
+        game, scanId: scanId ?? null, cardName,
+        unavailableSources: [lookup.label],
+      });
       return NextResponse.json(
         {
           success: false,
@@ -265,6 +273,9 @@ export async function POST(req: NextRequest) {
       `[SaveSelection] Failed at stage "${stage}" — game=${game ?? "?"} card="${cardName ?? "?"}" externalId=${externalId ?? "?"} localId=${localCardId ?? "?"}:`,
       causeMessage
     );
+    // scanId is block-scoped to the try; the externalId is the identifier that
+    // survives to here and is the one worth grouping a save failure by.
+    reportScanFailure(stage, error?.cause_ ?? error, { game, cardName });
     return NextResponse.json({ success: false, stage, message: messageForStage(stage) }, { status: 500 });
   }
 }

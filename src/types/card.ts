@@ -49,6 +49,15 @@ export interface SavedCard {
   imageUrl: string | null;
   thumbnailUrl: string | null;
   historyId: string;
+  /** MTG mana color identity from the resolving printing (["U"], ["B","G"], or
+   *  `[]` for a colorless card). Undefined when the source did not carry the
+   *  field — which is NOT the same as `[]`; see CandidatePrinting.colorIdentity.
+   *  Consumed only by the reveal accent (card-color.ts). */
+  colorIdentity?: string[];
+  /** Pokémon energy type(s) from the resolving printing (["Fire"]). Undefined on
+   *  Trainer/Energy cards and on printings served from the local catalog, which
+   *  does not store the field. Same accent-only use. */
+  types?: string[];
 }
 
 /**

@@ -226,6 +226,37 @@
   background: var(--foil);
 }
 
+/* Reveal wash (Phase R1 · design exploration) — the light a just-identified
+   card spills onto the surface behind it, in that card's OWN color. Sits under
+   the card, never over it. Deliberately NOT a corona: the gradient is offset
+   downward and blurred well past its own edge, so it reads as bounce light on a
+   surface rather than a glowing panel. Opacity is a whisper by design; the
+   pigment is already clamped upstream (card-color.ts) so it can never be neon.
+   `--reveal-accent` is supplied per-card by the markup. */
+.reveal-wash {
+  position: absolute;
+  inset: -22% -18% -14%;
+  pointer-events: none;
+  background: radial-gradient(
+    ellipse 62% 54% at 50% 56%,
+    var(--reveal-accent) 0%,
+    color-mix(in oklab, var(--reveal-accent) 40%, transparent) 42%,
+    transparent 74%
+  );
+  filter: blur(26px);
+  /* Paper ground: the wash competes with a bright surface. 0.16 was tried first
+     and measured too faint — at native resolution on #FAFAF7 it did not register
+     as color at all, only as a slight dirtying of the paper. 0.22 reads as a
+     tint on the paper while still sitting well below the card's own contrast. */
+  opacity: 0.22;
+}
+
+.dark .reveal-wash {
+  /* Ink ground: the viewfinder is dark, so the same pigment needs more presence
+     to register at all — this is still under a fifth of full strength. */
+  opacity: 0.3;
+}
+
 /* ============================================================
    DEPRECATED COMPATIBILITY SHIMS
    These class names are still referenced across the app. Their

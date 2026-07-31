@@ -38,6 +38,7 @@ model User {
   decks          Deck[]
   portfolioSnapshots PortfolioSnapshot[]
   captureRejections  CaptureRejection[]
+  scanFeedback       ScanFeedback[]
 
   @@map("users")
 }
@@ -112,6 +113,7 @@ model Card {
   scanHistory     ScanHistory[]
   watchlist       Watchlist[]
   recognitionMemory RecognitionMemory[]
+  scanFeedback    ScanFeedback[]
 
   @@index([name])
   @@index([game])
@@ -240,6 +242,75 @@ model CaptureRejection {
   @@index([createdAt])
   @@index([userId, createdAt])
   @@map("capture_rejections")
+}
+
+// ─── Scan Feedback ──────────────────────────────────────────────────
+// One row per issue a collector reports from the scanner screen.
+//
+// This is a HUMAN CLAIM, not a measurement — which is why it is its own table
+// and not a column on ScanHistory. A scan row records what Aura did; a feedback
+// row records what someone thinks about it. Merging them would make a scan's
+// own record editable by opinion, and would leave "how many scans have we run"
+// answerable only by excluding rows. They are joined by `scanId` instead, so
+// the pairing is available to a query without either fact contaminating the
+// other.
+//
+// NOTHING READS THESE ROWS. No scan is relabelled by a report, no ranking is
+// adjusted, no learning rule is derived. `Not this card?` (reject-match) is the
+// measured, structured disagreement channel and it writes onto the scan itself;
+// this is the free-text channel beside it, for what a fixed vocabulary cannot
+// say. Treating a complaint as ground truth would be exactly the substitution
+// the evidence layer exists to prevent.
+//
+// Every context column is nullable and every one is COPIED FROM STATE THE
+// CLIENT ALREADY HELD at the moment of the report — the tester describes the
+// problem, never the plumbing. A value we do not have is stored as null; it is
+// never back-filled, inferred, or defaulted to a placeholder.
+//
+// The write is NOT best-effort. Unlike telemetry (a dropped row is one lost
+// measurement), a dropped report is a person told their complaint was received
+// when it was not. The route surfaces a failed write as a failed submission.
+
+model ScanFeedback {
+  id           String   @id @default(cuid())
+  userId       String
+  // One of SCAN_FEEDBACK_CATEGORIES (scan-feedback.ts) — validated at the route
+  // boundary, so an unknown value is rejected rather than stored.
+  category     String
+  // One of SCAN_FEEDBACK_SURFACES: result | error. Which screen it was filed
+  // from; a complaint about a match and one about a failure are different
+  // populations even when the category matches.
+  surface      String
+  // The collector's own words. Null when they submitted a category alone.
+  message      String?
+
+  // ─── Attached scan context (all nullable, none inferred) ───────────
+  // The scan attempt this is about. Not a foreign key: a report must survive
+  // the scan row being deleted, and a scan that never produced a row (an early
+  // parse failure) can still be reported on.
+  scanId       String?
+  // The Card the scan resolved to, when it resolved to one. SetNull on delete —
+  // losing the card must not delete the complaint about it.
+  cardId       String?
+  cardName     String?
+  // 0–100, the scorer's confidence at the time of the report. Null means no
+  // scorer ran (or the client had no reading) — NOT low confidence.
+  confidence   Int?
+  // The MatchMethod behind an accept, or null on a failed scan.
+  matchMethod  String?
+  // The FailureStage the server blamed, or a client-side "capture:<reason>".
+  // Null on a successful scan.
+  failureStage String?
+  game         String?
+  createdAt    DateTime @default(now())
+
+  user User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  card Card? @relation(fields: [cardId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+  @@index([userId, createdAt])
+  @@index([scanId])
+  @@map("scan_feedback")
 }
 
 // ─── Recognition Memory (Phase 5.18) ────────────────────────────────

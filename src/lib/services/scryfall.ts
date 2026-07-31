@@ -226,5 +226,10 @@ export function formatScryfallCard(externalCard: any): CandidatePrinting {
     finishes: externalCard.finishes || [],
     promoTypes: externalCard.promo_types || [],
     lang: externalCard.lang || null,
+    // Reveal accent evidence (card-color.ts). `color_identity` is always present
+    // on a real Scryfall card, and `[]` is its truthful answer for a colorless
+    // one — so the array is passed through as-is rather than `|| []`-defaulted,
+    // which would turn "source didn't say" into "the card says colorless".
+    colorIdentity: Array.isArray(externalCard.color_identity) ? externalCard.color_identity : undefined,
   };
 }

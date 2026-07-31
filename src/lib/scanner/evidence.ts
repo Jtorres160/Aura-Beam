@@ -255,6 +255,16 @@ export interface CandidatePrinting {
   finishes?: string[];
   promoTypes?: string[];
   lang?: string | null;
+  /** MTG mana color identity exactly as Scryfall declares it — ["U"], ["B","G"],
+   *  or `[]` for a genuinely colorless card. An EMPTY ARRAY and `undefined` mean
+   *  different things and must not be collapsed: `[]` is the card answering
+   *  "no colors", `undefined` is this source not carrying the field at all.
+   *  Read only by the reveal's accent (card-color.ts) — never by scoring. */
+  colorIdentity?: string[];
+  /** Pokémon energy type(s) exactly as the Pokémon TCG API declares them —
+   *  ["Fire"], ["Water"]. Absent on Trainer/Energy cards, which legitimately
+   *  have no type. Same read-only accent use as colorIdentity. */
+  types?: string[];
 }
 
 // ─── Text normalization (shared, layer-neutral) ──────────────────────────────
