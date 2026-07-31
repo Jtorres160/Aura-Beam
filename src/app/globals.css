@@ -353,6 +353,14 @@
   .foil-sheen-once {
     animation: none;
   }
+  /* .animate-scan-line was missed here originally — its only consumer is the
+     vault-theme auto-scan guide-frame laser (scanner/page.tsx), so under
+     reduced motion it gets the same treatment as .animate-scan-sweep above:
+     hold still at the frame's midline rather than keep animating. */
+  .animate-scan-line {
+    animation: none;
+    top: 50%;
+  }
 }
 
 /* Shimmer loading state — kept (functional), now flat warm surfaces */
