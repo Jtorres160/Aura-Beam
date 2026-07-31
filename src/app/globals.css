@@ -353,6 +353,14 @@
   .foil-sheen-once {
     animation: none;
   }
+  /* .animate-scan-line was missed here originally — its only consumer is the
+     vault-theme auto-scan guide-frame laser (scanner/page.tsx), so under
+     reduced motion it gets the same treatment as .animate-scan-sweep above:
+     hold still at the frame's midline rather than keep animating. */
+  .animate-scan-line {
+    animation: none;
+    top: 50%;
+  }
 }
 
 /* Shimmer loading state — kept (functional), now flat warm surfaces */
@@ -391,6 +399,73 @@
    search, watchlist, admin, info) reference them: .glass, .glass-elevated,
    .gradient-text, .gradient-bg, .mesh-gradient. Delete each shim as its
    remaining consumers are redesigned. */
+
+/* ============================================================
+   SCANNER — "Luxury Vault" (deliberate exception)
+   Requested 2026-07-29 for the scanner screen ONLY: gold glass,
+   glow, and gradient — everything the Collector's Instrument
+   system above exists to avoid. Scoped entirely to `.vault-*`
+   classes so it cannot leak into Collection/Search/etc, which
+   keep the flat brass/ink system unchanged.
+   ============================================================ */
+
+.vault-glass {
+  background: rgba(20, 17, 10, 0.82);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border: 1px solid rgba(212, 175, 55, 0.28);
+  box-shadow: 0 8px 32px -8px rgba(0, 0, 0, 0.55), inset 0 0 16px rgba(212, 175, 55, 0.05);
+}
+
+.vault-gold-text {
+  background: linear-gradient(135deg, #fff0c3 0%, #d4af37 50%, #9a7b38 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* Ambient glow behind the viewfinder/frame — the mockup's radial page glow,
+   sized down to sit behind one card frame instead of a whole screen. */
+.vault-ambient::before {
+  content: "";
+  position: absolute;
+  inset: -18%;
+  z-index: -1;
+  background: radial-gradient(ellipse at center, rgba(212, 175, 55, 0.16) 0%, transparent 70%);
+  filter: blur(32px);
+  pointer-events: none;
+}
+
+/* The laser band itself — a tall gradient with a near-white hot leading edge,
+   not a hairline. Matches the mockup's .laser-line-gold: fades in from
+   nothing, builds through amber, and burns white at the traveling edge. Pair
+   with a height utility (h-14 to h-28 depending on frame) and one of the
+   motion classes below. */
+.vault-laser {
+  background: linear-gradient(
+    180deg,
+    rgba(212, 175, 55, 0) 0%,
+    rgba(212, 175, 55, 0.22) 55%,
+    rgba(255, 224, 130, 0.95) 92%,
+    #ffffff 100%
+  );
+  box-shadow: 0 4px 20px 2px rgba(212, 175, 55, 0.65), 0 0 12px 2px rgba(255, 255, 255, 0.7);
+}
+
+@keyframes vault-badge-pulse {
+  0%, 100% { opacity: 0.5; filter: drop-shadow(0 0 4px rgba(212, 175, 55, 0.5)); }
+  50% { opacity: 1; filter: drop-shadow(0 0 10px rgba(212, 175, 55, 0.85)); }
+}
+
+.vault-badge-dot {
+  animation: vault-badge-pulse 1.8s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vault-badge-dot {
+    animation: none;
+  }
+}
 
 /* ============================================================
    Layout utilities (unchanged)

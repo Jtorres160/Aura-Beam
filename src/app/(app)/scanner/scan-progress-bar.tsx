@@ -1,6 +1,6 @@
 "use client";
 
-import { motion, useReducedMotion } from "framer-motion";
+import { motion, useReducedMotion, AnimatePresence } from "framer-motion";
 import { useEffect, useState } from "react";
 
 /**
@@ -59,7 +59,7 @@ export function ScanProgressBar() {
       aria-hidden="true"
     >
       <motion.div
-        className="h-full rounded-full bg-brass"
+        className="h-full rounded-full bg-gradient-to-r from-amber-700 via-amber-400 to-yellow-200 shadow-[0_0_8px_rgba(212,175,55,0.7)]"
         initial={{ width: "6%" }}
         animate={
           isSlow && !reduceMotion
@@ -84,6 +84,44 @@ export function ScanProgressBar() {
             : { duration: 0.2 },
         }}
       />
+    </div>
+  );
+}
+
+/** How long each phase word holds before the next one crossfades in. Chosen to
+ *  outlast the crossfade itself (250ms) with room to read the word. */
+const VAULT_PHASE_HOLD_MS = 1400;
+
+/**
+ * Luxury-vault flavor text cycling under the progress bar. Same discipline as
+ * ScanProgressBar: isolated so its own interval doesn't re-render the scanner
+ * tree, and it never claims a real stage — see VAULT_SCAN_PHASES at its
+ * definition for why the wording stays generic.
+ */
+export function VaultScanPhaseLabel({ phases }: { phases: readonly string[] }) {
+  const [index, setIndex] = useState(0);
+  const reduceMotion = useReducedMotion();
+
+  useEffect(() => {
+    if (reduceMotion) return;
+    const id = setInterval(() => setIndex((i) => (i + 1) % phases.length), VAULT_PHASE_HOLD_MS);
+    return () => clearInterval(id);
+  }, [phases.length, reduceMotion]);
+
+  return (
+    <div className="h-4 overflow-hidden text-center">
+      <AnimatePresence mode="wait">
+        <motion.span
+          key={index}
+          initial={{ opacity: 0, y: 4 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -4 }}
+          transition={{ duration: 0.25 }}
+          className="block font-mono text-[11px] uppercase tracking-[0.2em] text-amber-400/90"
+        >
+          {phases[index]}
+        </motion.span>
+      </AnimatePresence>
     </div>
   );
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useCallback, useEffect } from "react";
+import { Cinzel } from "next/font/google";
 import { motion, AnimatePresence } from "framer-motion";
 import { useSession } from "next-auth/react";
 import { useScannerState } from "@/components/providers/scanning-context";
@@ -37,7 +38,7 @@ import {
   type AHash,
 } from "@/lib/scanner/smart-capture";
 import { CaptureGuidance } from "./capture-guidance";
-import { ScanProgressBar, SCAN_BAR_EXIT_MS } from "./scan-progress-bar";
+import { ScanProgressBar, SCAN_BAR_EXIT_MS, VaultScanPhaseLabel } from "./scan-progress-bar";
 import { SoundToggle } from "./sound-toggle";
 import { confirmationTick } from "./haptics";
 import { useScanSound } from "@/hooks/use-scan-sound";
@@ -132,6 +133,23 @@ const SCAN_FRAME_W =
  * load-bearing for the crop and must not be touched.
  */
 const GUIDE_W = "w-[min(86%,calc(64svh*5/7))]";
+
+/** Display serif for the "Luxury Vault" scanner theme — scoped to this file
+ *  only. The rest of the app's headings stay on Instrument Serif; this is a
+ *  deliberate one-screen exception (see globals.css · SCANNER — "Luxury
+ *  Vault"), not a system-wide type change. */
+const cinzel = Cinzel({ weight: ["400", "600", "700"], subsets: ["latin"] });
+
+/** Rotating flavor text for the processing state. Purely decorative — like the
+ *  read-head sweep it reports "work is happening," never a real stage; the
+ *  scan is one POST with no observable phases. Kept generic (no invented
+ *  capability like foil/serial verification Aura doesn't perform). */
+const VAULT_SCAN_PHASES = [
+  "ALIGNING FRAME",
+  "READING CARD DATA",
+  "MATCHING ARCHIVE",
+  "FINALIZING",
+] as const;
 
 export default function ScannerPage() {
   const { data: session } = useSession();
@@ -1165,7 +1183,7 @@ export default function ScannerPage() {
       {state !== "scanning" && (
         <div className="p-4 sm:p-6 border-b border-border flex justify-between items-center">
           <div>
-            <h1 className="font-serif text-2xl sm:text-3xl tracking-tight">Scanner</h1>
+            <h1 className={cn(cinzel.className, "vault-gold-text text-2xl sm:text-3xl tracking-wide")}>Scanner</h1>
             <p className="text-sm text-muted-foreground mt-1">Identify a card and enter it into your archive.</p>
           </div>
           <SoundToggle sound={scanSound} onChange={setScanSound} />
@@ -1189,15 +1207,15 @@ export default function ScannerPage() {
                     The outer .card-frame keeps the 63:88 aspect untouched: it is
                     the same geometry the live viewfinder guide uses for ROI
                     capture, so only what's drawn INSIDE it changes here. */}
-                <div className={cn("card-frame border border-border bg-card shadow-[0_16px_32px_-24px_rgba(19,18,16,0.5)] mb-5 relative", SCAN_FRAME_W)}>
-                  {/* Corner-bracket reticle — echoes the brass brackets on the
+                <div className={cn("vault-ambient card-frame border border-amber-500/30 bg-card shadow-[0_0_20px_-6px_rgba(212,175,55,0.35)] mb-5 relative", SCAN_FRAME_W)}>
+                  {/* Corner-bracket reticle — echoes the gold brackets on the
                       live guide frame (see the scanning state) so idle and
                       active read as the same instrument. */}
                   <div className="absolute inset-3">
-                    <div className="absolute top-0 left-0 h-4 w-4 border-t border-l border-brass/45" />
-                    <div className="absolute top-0 right-0 h-4 w-4 border-t border-r border-brass/45" />
-                    <div className="absolute bottom-0 left-0 h-4 w-4 border-b border-l border-brass/45" />
-                    <div className="absolute bottom-0 right-0 h-4 w-4 border-b border-r border-brass/45" />
+                    <div className="absolute top-0 left-0 h-4 w-4 border-t border-l border-amber-400/70 shadow-[0_0_8px_rgba(212,175,55,0.5)]" />
+                    <div className="absolute top-0 right-0 h-4 w-4 border-t border-r border-amber-400/70 shadow-[0_0_8px_rgba(212,175,55,0.5)]" />
+                    <div className="absolute bottom-0 left-0 h-4 w-4 border-b border-l border-amber-400/70 shadow-[0_0_8px_rgba(212,175,55,0.5)]" />
+                    <div className="absolute bottom-0 right-0 h-4 w-4 border-b border-r border-amber-400/70 shadow-[0_0_8px_rgba(212,175,55,0.5)]" />
                   </div>
                   {/* Focus reticle — drawn hairline, not a filled camera glyph. */}
                   <div className="absolute inset-0 flex items-center justify-center">
@@ -1214,7 +1232,7 @@ export default function ScannerPage() {
                     </svg>
                   </div>
                 </div>
-                <h2 className="font-serif text-2xl">Ready to scan</h2>
+                <h2 className={cn(cinzel.className, "text-2xl text-amber-200")}>Ready to scan</h2>
                 {/* Foil rule — this state's single foil moment. (The result state
                     carries its own; the two are mutually exclusive.) */}
                 <div className="foil-edge h-px w-16 my-3" />
@@ -1243,7 +1261,7 @@ export default function ScannerPage() {
                 </div>
                 <Button
                   onClick={startCamera}
-                  className="h-12 px-8 font-medium text-base w-full max-w-xs ring-1 ring-brass/35 ring-offset-2 ring-offset-background hover:ring-brass/60 shadow-[0_10px_24px_-16px_rgba(19,18,16,0.7)]"
+                  className="h-12 px-8 font-semibold text-base w-full max-w-xs bg-gradient-to-r from-amber-600 via-amber-400 to-amber-500 text-neutral-950 hover:from-amber-500 hover:via-amber-300 hover:to-amber-400 shadow-[0_10px_28px_-12px_rgba(212,175,55,0.6)] border-0"
                 >
                   <Camera className="h-5 w-5 mr-2" /> Open Camera
                 </Button>
@@ -1354,14 +1372,20 @@ export default function ScannerPage() {
                     <div className="absolute inset-0 flex items-center justify-center">
                       {/* Guide frame at true trading-card proportions. Aspect kept
                           identical to before — this box drives ROI capture. */}
-                      <div ref={guideRef} className={cn("relative aspect-[2.5/3.5] border border-white/25 rounded-lg transition-all duration-1000", GUIDE_W)}>
-                        <div className="absolute -top-px -left-px w-8 h-8 border-t-2 border-l-2 rounded-tl-lg border-brass" />
-                        <div className="absolute -top-px -right-px w-8 h-8 border-t-2 border-r-2 rounded-tr-lg border-brass" />
-                        <div className="absolute -bottom-px -left-px w-8 h-8 border-b-2 border-l-2 rounded-bl-lg border-brass" />
-                        <div className="absolute -bottom-px -right-px w-8 h-8 border-b-2 border-r-2 rounded-br-lg border-brass" />
+                      <div ref={guideRef} className={cn("relative aspect-[2.5/3.5] border border-amber-400/20 rounded-lg transition-all duration-1000", GUIDE_W)}>
+                        <div className="absolute -top-px -left-px w-8 h-8 border-t-2 border-l-2 rounded-tl-lg border-amber-400 shadow-[0_0_12px_rgba(212,175,55,0.7)]" />
+                        <div className="absolute -top-px -right-px w-8 h-8 border-t-2 border-r-2 rounded-tr-lg border-amber-400 shadow-[0_0_12px_rgba(212,175,55,0.7)]" />
+                        <div className="absolute -bottom-px -left-px w-8 h-8 border-b-2 border-l-2 rounded-bl-lg border-amber-400 shadow-[0_0_12px_rgba(212,175,55,0.7)]" />
+                        <div className="absolute -bottom-px -right-px w-8 h-8 border-b-2 border-r-2 rounded-br-lg border-amber-400 shadow-[0_0_12px_rgba(212,175,55,0.7)]" />
 
                         {isAutoScan && (
-                          <div className="absolute left-0 right-0 h-px bg-gradient-to-r from-transparent via-brass to-transparent animate-scan-line opacity-90" />
+                          // Own overflow-hidden layer, separate from the guide frame
+                          // itself: the corner brackets above bleed OUTSIDE this box
+                          // on purpose (-top-px/-left-px), so clipping had to be
+                          // scoped to just the laser band, not the whole frame.
+                          <div className="absolute inset-0 overflow-hidden rounded-lg">
+                            <div className="vault-laser absolute left-0 right-0 h-16 sm:h-20 animate-scan-line" />
+                          </div>
                         )}
                       </div>
                     </div>
@@ -1494,32 +1518,42 @@ export default function ScannerPage() {
                 {/* Frame and bar share one width container so the bar always
                     reads as the frame's own readout, at every viewport. */}
                 <div className={cn("flex flex-col items-center", SCAN_FRAME_W)}>
-                <div className="relative card-frame w-full border border-border bg-card shadow-[0_16px_32px_-24px_rgba(19,18,16,0.5)] mb-6 overflow-hidden">
+                {/* Status badge — the vault's "still working" chip. Text rotates
+                    (VaultScanPhaseLabel below carries the same discipline: it
+                    never claims a real stage) so this only needs a fixed label. */}
+                <div className="vault-glass mb-4 flex items-center gap-2 rounded-full px-3 py-1">
+                  <span className="vault-badge-dot h-1.5 w-1.5 rounded-full bg-amber-400" />
+                  <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-amber-200">
+                    Searching pattern
+                  </span>
+                </div>
+
+                <div className="vault-ambient relative card-frame w-full border border-amber-500/30 bg-card shadow-[0_0_24px_-4px_rgba(212,175,55,0.35)] mb-4 overflow-hidden">
                   <motion.div
                     className="absolute"
                     initial={{ top: 2, right: 2, bottom: 2, left: 2, opacity: 0.5 }}
                     animate={{ top: 12, right: 12, bottom: 12, left: 12, opacity: 1 }}
                     transition={{ duration: 0.34, ease: [0.22, 1, 0.36, 1] }}
                   >
-                    <div className="absolute top-0 left-0 h-4 w-4 border-t border-l border-brass" />
-                    <div className="absolute top-0 right-0 h-4 w-4 border-t border-r border-brass" />
-                    <div className="absolute bottom-0 left-0 h-4 w-4 border-b border-l border-brass" />
-                    <div className="absolute bottom-0 right-0 h-4 w-4 border-b border-r border-brass" />
+                    <div className="absolute top-0 left-0 h-4 w-4 border-t border-l border-amber-400 shadow-[0_0_10px_rgba(212,175,55,0.7)]" />
+                    <div className="absolute top-0 right-0 h-4 w-4 border-t border-r border-amber-400 shadow-[0_0_10px_rgba(212,175,55,0.7)]" />
+                    <div className="absolute bottom-0 left-0 h-4 w-4 border-b border-l border-amber-400 shadow-[0_0_10px_rgba(212,175,55,0.7)]" />
+                    <div className="absolute bottom-0 right-0 h-4 w-4 border-b border-r border-amber-400 shadow-[0_0_10px_rgba(212,175,55,0.7)]" />
                   </motion.div>
 
-                  {/* Read-head: a brass line with a soft trailing glow, sweeping
-                      one direction on a loop. Purely decorative — it reports
-                      that work is happening, never how far along it is. */}
-                  <div className="absolute left-0 right-0 h-10 animate-scan-sweep">
-                    <div className="absolute inset-x-0 bottom-0 h-full bg-gradient-to-b from-transparent to-brass/20" />
-                    <div className="absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-brass to-transparent" />
-                  </div>
+                  {/* Read-head: a tall gold band with a hot leading edge,
+                      sweeping one direction on a loop. Purely decorative — it
+                      reports that work is happening, never how far along. */}
+                  <div className="vault-laser absolute left-0 right-0 h-28 animate-scan-sweep" />
                 </div>
 
-                {/* Wordless by design — the sweep and the bar carry this state.
-                    Everything a screen reader needs is in the live region at
+                <VaultScanPhaseLabel phases={VAULT_SCAN_PHASES} />
+
+                {/* Everything a screen reader needs is in the live region at
                     the top of the scanner, which does not render visibly. */}
-                <ScanProgressBar />
+                <div className="mt-2 w-full">
+                  <ScanProgressBar />
+                </div>
                 </div>
               </motion.div>
             )}
@@ -1684,8 +1718,8 @@ export default function ScannerPage() {
             {state === "result" && scanResult && !isBulkMode && (
               <motion.div key="result" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, y: -12 }} className="py-4 space-y-5">
                 {/* Catalog entry caption */}
-                <p className="text-center font-mono text-[11px] uppercase tracking-[0.2em] text-muted-foreground">
-                  Identified · New entry
+                <p className="text-center font-mono text-[11px] uppercase tracking-[0.2em] text-amber-500/80">
+                  Match found · New entry
                 </p>
 
                 {/* The card itself, entering the archive. The accent is a wash in
@@ -1709,27 +1743,52 @@ export default function ScannerPage() {
                   transition={{ duration: 0.45, delay: 0.28, ease: [0.22, 1, 0.36, 1] }}
                   className="foil-edge h-px w-24 mx-auto" />
 
-                {/* Catalog details */}
-                <div className="text-center space-y-1">
-                  <h3 className="font-serif text-2xl sm:text-3xl leading-tight">{scanResult.name}</h3>
-                  <p className="text-sm text-muted-foreground">{scanResult.set}</p>
-                  <p className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
-                    {[scanResult.game, scanResult.rarity?.replace(/_/g, " ")].filter(Boolean).join(" · ")}
-                  </p>
-                </div>
+                {/* Catalog details — vault-glass drawer. Every field below is a
+                    real value off scanResult; nothing here is invented for the
+                    look (see the 2026-07-29 decision to drop the mockup's PSA
+                    grade, which Aura has no basis to report). */}
+                <div className="vault-glass rounded-2xl p-4">
+                  <div className="text-center space-y-1">
+                    <h3 className={cn(cinzel.className, "text-xl sm:text-2xl leading-tight text-amber-50")}>{scanResult.name}</h3>
+                    <p className="text-sm text-neutral-400">{scanResult.set}</p>
+                  </div>
 
-                <div className="flex items-baseline justify-center gap-2">
-                  <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Market</span>
-                  <span className="font-mono text-xl text-foreground">${scanResult.prices?.marketPrice?.toFixed(2) || "0.00"}</span>
-                </div>
+                  <div className="flex items-baseline justify-center gap-2 mt-2">
+                    <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-neutral-400">Market</span>
+                    <span className="font-mono text-xl text-emerald-400">${scanResult.prices?.marketPrice?.toFixed(2) || "0.00"}</span>
+                  </div>
 
-                {/* Archive context (Phase 5 · Batch 2) — what this card means
-                    in the user's own collection. One quiet catalog line. */}
-                {archiveCaption(scanResult.archive) && (
-                  <p className="text-center font-mono text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
-                    {archiveCaption(scanResult.archive)}
-                  </p>
-                )}
+                  {/* Specs grid — GAME / CONFIDENCE / RARITY, all read straight off
+                      scanResult. confidence===0 means "no scorer ran" (a scan
+                      truth-boundary convention, not a claim of 0% certainty), so
+                      it renders as "—" rather than a fabricated-looking 0%. */}
+                  <div className="grid grid-cols-3 gap-2 py-2.5 border-y border-amber-500/15 my-3 text-center text-xs">
+                    <div className="bg-black/20 p-1.5 rounded-lg border border-amber-500/10">
+                      <span className="text-[9px] text-neutral-400 block font-mono uppercase tracking-wide">Game</span>
+                      <span className="font-mono font-bold text-amber-300">{scanResult.game}</span>
+                    </div>
+                    <div className="bg-black/20 p-1.5 rounded-lg border border-amber-500/10">
+                      <span className="text-[9px] text-neutral-400 block font-mono uppercase tracking-wide">Confidence</span>
+                      <span className="font-mono font-bold text-emerald-400">
+                        {scanResult.confidence > 0 ? `${scanResult.confidence}%` : "—"}
+                      </span>
+                    </div>
+                    <div className="bg-black/20 p-1.5 rounded-lg border border-amber-500/10">
+                      <span className="text-[9px] text-neutral-400 block font-mono uppercase tracking-wide">Rarity</span>
+                      <span className="font-mono font-bold text-amber-300">
+                        {scanResult.rarity?.replace(/_/g, " ") || "—"}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Archive context (Phase 5 · Batch 2) — what this card means
+                      in the user's own collection. One quiet catalog line. */}
+                  {archiveCaption(scanResult.archive) && (
+                    <p className="text-center font-mono text-[11px] uppercase tracking-[0.14em] text-neutral-400">
+                      {archiveCaption(scanResult.archive)}
+                    </p>
+                  )}
+                </div>
 
                 {/* "Not this card" is the only way a collector can tell us an
                     auto-accepted match was wrong. Without it, disagreement and
@@ -1774,7 +1833,11 @@ export default function ScannerPage() {
                   <Button variant="outline" className="flex-1 h-12" onClick={resetScan}>
                     <RotateCcw className="h-4 w-4 mr-2" /> Scan Next
                   </Button>
-                  <Button className="flex-1 h-12" onClick={handleAddToCollection} disabled={isAdding || addSuccess}>
+                  <Button
+                    className="flex-1 h-12 font-semibold bg-gradient-to-r from-amber-600 via-amber-400 to-amber-500 text-neutral-950 hover:from-amber-500 hover:via-amber-300 hover:to-amber-400 shadow-[0_10px_28px_-12px_rgba(212,175,55,0.6)] border-0 disabled:opacity-60"
+                    onClick={handleAddToCollection}
+                    disabled={isAdding || addSuccess}
+                  >
                     {addSuccess ? (
                       <><Check className="h-4 w-4 mr-2" /> Added</>
                     ) : isAdding ? (
