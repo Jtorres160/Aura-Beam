@@ -34,8 +34,17 @@ export const CONTACT_SUBJECT_LABELS: Record<ContactSubject, string> = {
 /** Where a real submission is delivered. One constant so the page's visible
  *  address, its mailto: link and the route's recipient cannot drift apart —
  *  they did before this existed (the page showed support@aurabeam.com in the
- *  link and jtorres160@yahoo.com in the text beside it). */
-export const CONTACT_RECIPIENT = "jtorres160@yahoo.com";
+ *  link and jtorres160@yahoo.com in the text beside it).
+ *
+ *  Pinned to the Resend ACCOUNT email rather than jtorres160@yahoo.com: this
+ *  app has no verified sending domain, so Resend's sandbox mode refuses any
+ *  `to` address except the account owner's own — confirmed 2026-07-31 by a
+ *  live send that came back 403 validation_error. Every recipient in this
+ *  codebase (this constant AND sendVerificationEmail's target) is bound by
+ *  the same restriction; this is the one address guaranteed to work without
+ *  a verified domain. Revert to jtorres160@yahoo.com once a domain is
+ *  verified at resend.com/domains and `from` is updated to use it. */
+export const CONTACT_RECIPIENT = "knockoutjosie@gmail.com";
 
 export const CONTACT_NAME_MAX = 120;
 export const CONTACT_EMAIL_MAX = 254; // RFC 5321 practical address ceiling

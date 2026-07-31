@@ -114,5 +114,7 @@ test("a null or non-object body is rejected, not treated as empty", () => {
 
 test("the recipient is a single source of truth", () => {
   // The page's mailto:, its visible label and the route's `to:` all read this.
-  assert.equal(CONTACT_RECIPIENT, "jtorres160@yahoo.com");
+  // Pinned to the Resend account address, not jtorres160@yahoo.com — see the
+  // comment on CONTACT_RECIPIENT for why (no verified sending domain yet).
+  assert.equal(CONTACT_RECIPIENT, "knockoutjosie@gmail.com");
 });
